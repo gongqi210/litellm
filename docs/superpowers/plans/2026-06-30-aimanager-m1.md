@@ -170,7 +170,7 @@ git add aimanager/policy.py aimanager/asgi.py aimanager/tests/test_policy.py aim
 git commit -m "feat: add AiManager route allowlist"
 ```
 
-Current note: policy, ASGI wrapper, Dockerfile runtime source copy, compose entrypoint, and local tests are complete. Before M1 trial, add a route inventory check with full proxy dependencies and run a real container boot to prove LiteLLM lifespan/migrations, `/v1/models`, blocked-route no-outbound, and spend logging.
+Current note: policy, ASGI wrapper, Dockerfile runtime source copy, compose entrypoint, and local tests are complete. Compose now starts `aimanager.litellm_entrypoint`, which preserves LiteLLM CLI initialization while overriding the final uvicorn app to `aimanager.asgi:app`. A local runtime smoke proved LiteLLM migrations/lifespan, health, `/v1/models`, and representative blocked routes. Before M1 trial, add the full provider blocked-route curl matrix, outbound instrumentation, and spend-log proof.
 
 ## Task 3: M1-B Key Governance and Enforced Params
 
@@ -308,8 +308,69 @@ git add docs/aimanager/1_acceptance_criteria.md aimanager/README.md 项目知识
 git commit -m "docs: record AiManager M1 evidence"
 ```
 
+## Task 6: M1-A Runtime Entrypoint Hardening
+
+**Files:**
+- Create: `aimanager/litellm_entrypoint.py`
+- Create: `aimanager/tests/test_litellm_entrypoint.py`
+- Modify: `aimanager/docker-compose.yml`
+- Modify: `aimanager/tests/test_config.py`
+- Modify: `aimanager/README.md`
+- Modify: `docs/aimanager/1_acceptance_criteria.md`
+- Modify: `项目知识图谱.md`
+
+- [x] **Step 1: Write failing entrypoint tests**
+
+Test that the AiManager entrypoint preserves LiteLLM's uvicorn arguments while replacing only the app target with `aimanager.asgi:app`.
+
+- [x] **Step 2: Verify red**
+
+Run:
+
+```bash
+PYTHONPATH="$PWD" uv run --no-project --with pytest --with pyyaml pytest aimanager/tests/test_litellm_entrypoint.py -q
+```
+
+Expected: FAIL because `aimanager.litellm_entrypoint` does not exist.
+
+- [x] **Step 3: Implement CLI wrapper**
+
+Implement `aimanager.litellm_entrypoint` so runtime still goes through LiteLLM CLI config/DB/migration setup, then overrides uvicorn's app to `aimanager.asgi:app`.
+
+- [x] **Step 4: Update compose contract**
+
+Change compose to start `python -m aimanager.litellm_entrypoint --config=/app/config.yaml --host=0.0.0.0 --port=4000 --enforce_prisma_migration_check`.
+
+- [x] **Step 5: Add runtime fail-fast and build target checks**
+
+Ensure compose uses Docker `target: runtime` instead of a no-op build arg, and ensure `aimanager.litellm_entrypoint` refuses to start without non-empty `LITELLM_MASTER_KEY`, `YCAPI_BASE_URL`, and `YCAPI_API_TOKEN`.
+
+- [x] **Step 6: Verify local contract**
+
+Run:
+
+```bash
+PYTHONPATH="$PWD" uv run --no-project --with pytest --with pyyaml pytest aimanager/tests/test_config.py::test_compose_uses_aimanager_litellm_entrypoint aimanager/tests/test_litellm_entrypoint.py -q
+docker compose -f aimanager/docker-compose.yml config
+```
+
+Expected: PASS.
+
+- [x] **Step 7: Verify local runtime smoke**
+
+Run with local placeholder credentials:
+
+```bash
+LITELLM_MASTER_KEY=aimanager-local-master-key \
+YCAPI_BASE_URL=https://ycapi.ycaicloud.com/v1 \
+YCAPI_API_TOKEN=aimanager-local-ycapi-token \
+docker compose -f aimanager/docker-compose.yml up -d --force-recreate --no-build
+```
+
+Observed: Postgres and AiManager started healthy, LiteLLM Prisma migrations and post-migration sanity check completed, `GET /health/liveliness` returned 200, `GET /v1/models` returned only the three ycapi-backed models, and `POST /anthropic/messages` plus `POST /config/update` returned AiManager 403 policy errors.
+
 ## Self-Review
 
-- Spec coverage: Tasks 1 and 2 cover the hard M1-A P0 items from the synthesis design. Task 3 covers key governance. Task 4 adds finance aggregation, reconciliation, and audit event foundations. Task 5 records acceptance evidence. Full spend-log, runtime budget blocking, key lifecycle emitters, and live ycapi verification remain separate follow-up work because they need a running proxy and real or mock upstream integration.
+- Spec coverage: Tasks 1 and 2 cover the hard M1-A P0 items from the synthesis design. Task 3 covers key governance. Task 4 adds finance aggregation, reconciliation, and audit event foundations. Task 5 records acceptance evidence. Task 6 hardens startup so the ASGI boundary does not bypass LiteLLM CLI initialization and proves a local container boot. Full spend-log, runtime budget blocking, key lifecycle emitters, full provider blocked-route matrix, and live ycapi verification remain separate follow-up work.
 - Placeholder scan: no `TODO`, `TBD`, or unspecified “handle edge cases” instructions are used.
 - Type consistency: all planned Python modules live under `aimanager/`, tests use `pytest`, and commands match the existing project validation pattern.

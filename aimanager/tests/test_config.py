@@ -40,17 +40,27 @@ def test_aimanager_config_is_locked_to_ycapi() -> None:
             assert params["output_cost_per_token"] > 0
 
 
-def test_compose_uses_aimanager_asgi_entrypoint() -> None:
+def test_compose_uses_aimanager_litellm_entrypoint() -> None:
     compose = yaml.safe_load(COMPOSE_PATH.read_text(encoding="utf-8"))
     service = compose["services"]["aimanager"]
 
-    assert service["entrypoint"] == ["python", "-m", "uvicorn"]
+    assert service["build"]["target"] == "runtime"
+    assert "target" not in service["build"].get("args", {})
+    assert service["entrypoint"] == ["python", "-m", "aimanager.litellm_entrypoint"]
     assert service["command"] == [
-        "aimanager.asgi:app",
+        "--config=/app/config.yaml",
         "--host=0.0.0.0",
         "--port=4000",
+        "--enforce_prisma_migration_check",
     ]
     assert service["environment"]["CONFIG_FILE_PATH"] == "/app/config.yaml"
+    assert "LITELLM_MASTER_KEY" in service["environment"]
+    assert service["environment"]["LITELLM_MASTER_KEY"] is None
+    assert service["environment"]["YCAPI_BASE_URL"] == (
+        "${YCAPI_BASE_URL:-https://ycapi.ycaicloud.com/v1}"
+    )
+    assert "YCAPI_API_TOKEN" in service["environment"]
+    assert service["environment"]["YCAPI_API_TOKEN"] is None
 
 
 def test_runtime_dockerfile_copies_aimanager_package() -> None:

@@ -22,7 +22,17 @@ Pricing fields are explicit and nonzero so LiteLLM cannot silently inherit same-
 
 ## Runtime Boundary
 
-The local deployment starts `aimanager.asgi:app` with `CONFIG_FILE_PATH=/app/config.yaml`. The AiManager ASGI wrapper is the primary runtime boundary in front of the LiteLLM proxy app.
+The local deployment starts `python -m aimanager.litellm_entrypoint --config=/app/config.yaml`. This keeps LiteLLM's CLI initialization path for config loading, database URL handling, migration checks, and server options, while overriding the final uvicorn app to `aimanager.asgi:app`.
+
+`aimanager.asgi` is the primary runtime boundary in front of the LiteLLM proxy app. It forwards lifespan events to the wrapped LiteLLM app so startup and shutdown hooks still run.
+
+The entrypoint fails fast unless these runtime environment variables are non-empty:
+
+- `LITELLM_MASTER_KEY`
+- `YCAPI_BASE_URL`
+- `YCAPI_API_TOKEN`
+
+`docker-compose.yml` explicitly passes these variables into the container from either the shell or `aimanager/.env`; this keeps local `docker compose -f aimanager/docker-compose.yml up` checks aligned with production startup behavior.
 
 M1 business API allowlist:
 
@@ -111,6 +121,8 @@ PYTHONPATH="$PWD" uv run --no-project --with pytest --with pyyaml pytest aimanag
 docker compose -f aimanager/docker-compose.yml config
 ```
 
+The rendered compose config must show `build.target: runtime`, `entrypoint: ["python", "-m", "aimanager.litellm_entrypoint"]`, `--config=/app/config.yaml`, and `--enforce_prisma_migration_check`.
+
 Smoke test after `.env` is populated:
 
 ```bash
@@ -128,4 +140,15 @@ curl -i http://localhost:4000/v1beta/models/gemini-2.5-flash:generateContent \
   -d '{}'
 ```
 
-The last command must return an AiManager 403 policy error and must not reach ycapi. A full runtime boot, model-list check, nonzero spend-log check, and live ycapi chat/image smoke are still required before M1 can enter business trial.
+The last command must return an AiManager 403 policy error and must not reach ycapi.
+
+Latest local runtime smoke evidence:
+
+- `docker compose -f aimanager/docker-compose.yml up -d --force-recreate --no-build` started Postgres and AiManager with local placeholder credentials.
+- LiteLLM Prisma migrations and post-migration sanity check completed; application startup reached `Application startup complete`.
+- `GET /health/liveliness` returned 200.
+- `GET /v1/models` returned only `gemini-2.5-flash`, `deepseek-chat`, and `ycapi-image-1`.
+- `POST /anthropic/messages` returned 403 with `x-aimanager-policy-code: aimanager_passthrough_blocked`.
+- `POST /config/update` returned 403 with `x-aimanager-policy-code: aimanager_config_immutable`.
+
+Remaining before business trial: full blocked-provider curl matrix, mock/live ycapi chat and image calls, and proof that LiteLLM spend logs record nonzero chargeable usage.
