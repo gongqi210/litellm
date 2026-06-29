@@ -42,9 +42,9 @@ def normalize_key_request(payload: dict[str, Any], *, shared_key: bool = False) 
     _validate_required_top_level(normalized)
     metadata = _validate_metadata(normalized)
     _validate_models(normalized["models"])
-    _validate_positive_number(normalized["max_budget"], "max_budget")
-    _validate_positive_number(normalized["rpm_limit"], "rpm_limit")
-    _validate_positive_number(normalized["tpm_limit"], "tpm_limit")
+    normalized["max_budget"] = _normalize_positive_number(normalized["max_budget"], "max_budget")
+    normalized["rpm_limit"] = _normalize_positive_number(normalized["rpm_limit"], "rpm_limit")
+    normalized["tpm_limit"] = _normalize_positive_number(normalized["tpm_limit"], "tpm_limit")
 
     if shared_key:
         metadata["enforced_params"] = list(SHARED_KEY_ENFORCED_PARAMS)
@@ -77,14 +77,34 @@ def _validate_models(models: Any) -> None:
             raise KeyGovernanceError("models must list explicit AiManager model names")
 
 
-def _validate_positive_number(value: Any, field_name: str) -> None:
-    if (
-        not isinstance(value, (int, float))
-        or isinstance(value, bool)
-        or not math.isfinite(value)
-        or value <= 0
-    ):
+def _normalize_positive_number(value: Any, field_name: str) -> int | float:
+    parsed_value: int | float
+    if isinstance(value, bool):
         raise KeyGovernanceError(f"{field_name} must be a positive number")
+    if isinstance(value, int):
+        parsed_value = value
+    elif isinstance(value, float):
+        parsed_value = value
+    elif isinstance(value, str):
+        stripped_value = value.strip()
+        if not stripped_value:
+            raise KeyGovernanceError(f"{field_name} must be a positive number")
+        try:
+            parsed_float = float(stripped_value)
+        except ValueError as exc:
+            raise KeyGovernanceError(f"{field_name} must be a positive number") from exc
+        parsed_value = int(parsed_float) if parsed_float.is_integer() else parsed_float
+    else:
+        raise KeyGovernanceError(f"{field_name} must be a positive number")
+
+    try:
+        is_finite = math.isfinite(parsed_value)
+    except OverflowError as exc:
+        raise KeyGovernanceError(f"{field_name} must be a positive number") from exc
+
+    if not is_finite or parsed_value <= 0:
+        raise KeyGovernanceError(f"{field_name} must be a positive number")
+    return parsed_value
 
 
 def _is_missing(value: Any) -> bool:

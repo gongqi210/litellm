@@ -41,13 +41,29 @@ def test_business_surface_blocks_litellm_management_routes() -> None:
     blocked_routes = [
         ("GET", "/ui"),
         ("GET", "/ui/"),
+        ("GET", "/"),
+        ("HEAD", "/"),
         ("POST", "/login"),
         ("POST", "/key/generate"),
         ("GET", "/key/info"),
+        ("POST", "/v2/key/info"),
         ("POST", "/team/new"),
+        ("GET", "/v2/team/list"),
         ("POST", "/user/new"),
         ("GET", "/spend/logs"),
         ("GET", "/global/spend"),
+        ("GET", "/litellm-asset-prefix/_next/static/chunks/app.js"),
+        ("GET", "/__next._tree.txt"),
+        ("GET", "/get/ui_settings"),
+        ("GET", "/get/ui_theme_settings"),
+        ("GET", "/sso/get/ui_settings"),
+        ("GET", "/litellm/.well-known/litellm-ui-config"),
+        ("GET", "/public/litellm_blog_posts"),
+        ("GET", "/health/readiness/details"),
+        ("GET", "/v2/user/info"),
+        ("GET", "/tag/list"),
+        ("GET", "/project/list"),
+        ("GET", "/api/plugins"),
     ]
 
     for method, path in blocked_routes:
@@ -58,23 +74,47 @@ def test_business_surface_blocks_litellm_management_routes() -> None:
 
 def test_management_surface_allows_litellm_management_routes() -> None:
     allowed_routes = [
+        ("GET", "/"),
+        ("HEAD", "/"),
         ("GET", "/ui"),
         ("GET", "/ui/"),
         ("GET", "/ui/assets/logo.png"),
+        ("GET", "/litellm-asset-prefix/_next/static/chunks/app.js"),
+        ("GET", "/litellm-asset-prefix/_next/static/css/app.css"),
+        ("GET", "/litellm-asset-prefix/_next/static/media/font.woff2"),
+        ("GET", "/__next._tree.txt"),
+        ("GET", "/litellm/.well-known/litellm-ui-config"),
+        ("GET", "/public/litellm_blog_posts"),
+        ("GET", "/health/license"),
+        ("GET", "/health/readiness/details"),
+        ("GET", "/get/ui_settings"),
+        ("GET", "/get/ui_theme_settings"),
+        ("GET", "/sso/get/ui_settings"),
         ("POST", "/login"),
         ("POST", "/v2/login"),
         ("POST", "/key/generate"),
         ("GET", "/key/info"),
+        ("POST", "/v2/key/info"),
         ("POST", "/key/block"),
         ("POST", "/team/new"),
         ("GET", "/team/list"),
+        ("GET", "/v2/team/list"),
         ("POST", "/user/new"),
         ("GET", "/user/list"),
+        ("GET", "/v2/user/info"),
         ("GET", "/spend/logs"),
         ("GET", "/global/spend"),
         ("GET", "/global/spend/report"),
         ("GET", "/global/activity"),
         ("POST", "/budget/new"),
+        ("GET", "/tag/list"),
+        ("GET", "/project/list"),
+        ("GET", "/v2/guardrails/list"),
+        ("GET", "/guardrails/list"),
+        ("GET", "/v1/agents"),
+        ("GET", "/policies/list"),
+        ("GET", "/prompts/list"),
+        ("GET", "/api/plugins"),
         ("GET", "/model/info"),
         ("GET", "/config/yaml"),
     ]
@@ -137,6 +177,7 @@ def test_management_surface_does_not_unlock_uncommitted_inference_routes() -> No
         ("POST", "/v1/responses"),
         ("POST", "/responses"),
         ("POST", "/v1/messages"),
+        ("POST", "/v1/agents"),
     ]
 
     for method, path in blocked_routes:
@@ -843,6 +884,39 @@ def test_management_surface_normalizes_key_generate_before_forwarding() -> None:
     assert messages[0]["status"] == 204
     assert forwarded_bodies[0]["metadata"]["cost_center_id"] == "cc-market"
     assert "enforced_params" not in forwarded_bodies[0]["metadata"]
+
+
+def test_management_surface_coerces_admin_ui_numeric_strings_before_forwarding() -> None:
+    forwarded_bodies: list[dict[str, object]] = []
+    payload = _valid_key_generate_payload()
+    payload["max_budget"] = "100.5"
+    payload["rpm_limit"] = "60"
+    payload["tpm_limit"] = "120000"
+
+    async def downstream(scope, receive, send) -> None:  # type: ignore[no-untyped-def]
+        message = await receive()
+        forwarded_bodies.append(json.loads(message["body"]))
+        await send({"type": "http.response.start", "status": 204, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+
+    app = YcapiOnlyAllowlistMiddleware(downstream, surface="management")
+
+    messages = asyncio.run(
+        _call_asgi(
+            app,
+            "POST",
+            "/key/generate",
+            body=json.dumps(payload).encode("utf-8"),
+        )
+    )
+
+    assert messages[0]["status"] == 204
+    assert forwarded_bodies[0]["max_budget"] == 100.5
+    assert isinstance(forwarded_bodies[0]["max_budget"], float)
+    assert forwarded_bodies[0]["rpm_limit"] == 60
+    assert isinstance(forwarded_bodies[0]["rpm_limit"], int)
+    assert forwarded_bodies[0]["tpm_limit"] == 120000
+    assert isinstance(forwarded_bodies[0]["tpm_limit"], int)
 
 
 def test_management_surface_adds_enforced_params_for_shared_key_generate() -> None:

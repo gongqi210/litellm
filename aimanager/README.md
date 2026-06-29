@@ -98,7 +98,7 @@ Shared keys must set `metadata.shared_key=true`; AiManager then calls `normalize
 ]
 ```
 
-The helper, management-surface ASGI wiring, and running API key-creation path are tested locally. UI automation for the same flow remains useful but is not required for AC-08.
+The helper, management-surface ASGI wiring, running API key-creation path, and LiteLLM Admin UI key-creation flow are tested locally. The UI sends numeric form values as strings; AiManager normalizes those strings to numbers before forwarding the governed payload to LiteLLM.
 
 Runtime inference enforcement for LiteLLM `metadata.enforced_params` is an Enterprise feature in this fork. AiManager can create shared keys with the required metadata, but spend-log smoke defaults to a non-shared employee key; exercising `--shared-key` against inference requires a LiteLLM Enterprise license or an AiManager-owned OSS enforcement layer.
 
@@ -255,6 +255,19 @@ PYTHONPATH="$PWD" uv run --no-project --with pyyaml python -m aimanager.scripts.
 
 Expected result: `PASS`, `freeze_status=200`, `freeze_reject_status=401`, `revoke_status=200`, `revoke_reject_status=401`, and `audit_events=key_frozen,key_revoked`. The smoke creates two disposable governed employee keys, proves each key can call the business surface before disposition, freezes one key through the admin surface and verifies subsequent business inference is rejected with `Key is blocked`, revokes the other key and verifies subsequent business inference is rejected as an invalid token, then polls the admin container logs for structured `key_frozen` and `key_revoked` audit events with actor, reason, request id, key alias, and governance dimensions. It never prints the virtual key.
 
+Admin UI governed key-creation smoke:
+
+```bash
+LITELLM_MASTER_KEY=aimanager-local-master-key \
+PYTHONPATH="$PWD" uv run --no-project --with playwright python -m aimanager.scripts.smoke_admin_ui_key_creation \
+  --master-key aimanager-local-master-key \
+  --admin-base-url http://127.0.0.1:4001 \
+  --browser-executable "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+  --timeout 60
+```
+
+Expected result: `PASS`, `reject_status=400`, `accept_status=200`, and `policy_code=aimanager_key_governance_invalid`. The smoke logs in to the management Admin UI, opens the create-key modal with a smoke team and model preselected, proves a UI-originated request without governance metadata fails closed before LiteLLM, fills the required governance metadata, verifies the captured UI `/key/generate` request carries user/team/model/budget/rate-limit/duration/metadata fields, creates the key successfully, and deletes the disposable key without printing it. This local smoke injects the trusted `x-aimanager-role=proxy_admin` header to exercise the management surface; it validates governance and normalization, not the production SSO/reverse-proxy RBAC path.
+
 Postgres-down runtime smoke:
 
 ```bash
@@ -309,6 +322,7 @@ Latest local runtime smoke evidence:
 - Local tests also prove management `POST /key/generate` rejects missing governance metadata with `aimanager_key_governance_invalid`, forwards normalized valid payloads, and injects `enforced_params` for `metadata.shared_key=true`.
 - Runtime admin-surface smoke with rebuilt `aimanager-litellm:local` proved `POST /key/generate` without governance metadata returns HTTP 400, `x-aimanager-policy-code: aimanager_key_governance_invalid`, preserves `x-litellm-call-id`, and emits a matching `policy_blocked` audit event without Authorization/Bearer leakage.
 - Runtime valid shared-key smoke proved `POST /key/generate` returns the required employee/team/model/budget/rate-limit/expiry fields plus department/project/cost-center/scenario/approver metadata and `metadata.enforced_params`; the local smoke key was deleted immediately after verification.
+- Admin UI governed key-creation smoke proved a UI-originated `/key/generate` request without metadata fails closed with HTTP 400 `aimanager_key_governance_invalid`, then succeeds after filling governance metadata, budget, rate limits, duration, team, model, and key alias. The smoke also verified Admin UI numeric string values are normalized by AiManager governance before reaching LiteLLM, and the disposable key was deleted after verification.
 - Mock ycapi runtime spend smoke proved `POST /v1/chat/completions` and `POST /v1/images/generations` through AiManager write nonzero `LiteLLM_SpendLogs.spend`: chat `3.3e-06`, image `0.01`. Rows were recorded as `openai/gemini-2.5-flash` and `openai/ycapi-image-1`.
 - Mock ycapi runtime budget-block smoke proved a disposable governed key with `max_budget=0.005` can spend `0.01` on a successful image request, then receive HTTP 429 `budget_exceeded` on the next business request. The response and LiteLLM container log both recorded `Budget has been exceeded! ... Current cost: 0.01, Max budget: 0.005`; AiManager also emitted a structured `aimanager_audit_event` with `event_type=budget_blocked`, `severity=high`, and `reason=budget_exceeded`.
 - Mock ycapi runtime key-lifecycle smoke proved admin `POST /key/block` freezes a governed key, subsequent business chat returns HTTP 401 with `Key is blocked`, admin `POST /key/delete` revokes a second governed key, subsequent business chat returns HTTP 401 invalid-token/not-found, and the admin container logs contain `key_frozen` and `key_revoked` `aimanager_audit_event` records with actor `aimanager-ci`, disposition reasons, request ids, key aliases, and governance dimensions.
@@ -316,4 +330,4 @@ Latest local runtime smoke evidence:
 - Local observability tests prove management `GET /metrics` is served by AiManager without reaching downstream LiteLLM, business `/metrics` remains blocked, audit events increment `aimanager_audit_events_total`, downstream 429/5xx increment `aimanager_http_responses_total`, and `export_observability` emits JSON metrics plus alert records from audit logs and request-status rows.
 - Local error-contract tests prove allowed downstream LiteLLM/ycapi 429 JSON errors preserve the upstream `error` object, inject top-level `request_id` aligned with `x-litellm-call-id`, keep 401/403/404 fallback types stable, pass successful streaming chunks through unchanged, and convert non-JSON downstream 5xx errors to OpenAI-compatible JSON without leaking Bearer, `sk-*`, ycapi token text, or DSN passwords.
 
-Remaining before business trial: UI automation for the key creation flow, production ycapi bill evidence, live ycapi smoke with the production token policy, production admin SSO/reverse-proxy header stripping, and production alert routing from the management metrics/report output.
+Remaining before business trial: production ycapi bill evidence, live ycapi smoke with the production token policy, production admin SSO/reverse-proxy header stripping, and production alert routing from the management metrics/report output.

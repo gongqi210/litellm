@@ -70,15 +70,41 @@ MANAGEMENT_ROUTE_PREFIXES = (
     "/global/activity",
 )
 
-MANAGEMENT_READ_ROUTES = {
+MANAGEMENT_STATIC_PREFIXES = (
+    "/litellm-asset-prefix/_next/static",
+    "/_next/static",
+)
+
+MANAGEMENT_EXACT_ROUTES = {
+    ("GET", "/"),
+    ("HEAD", "/"),
+    ("GET", "/__next._tree.txt"),
     ("GET", "/metrics"),
     ("GET", "/config/yaml"),
     ("GET", "/config/list"),
     ("GET", "/config/field/info"),
+    ("GET", "/get/ui_settings"),
+    ("GET", "/get/ui_theme_settings"),
+    ("GET", "/health/license"),
+    ("GET", "/health/readiness/details"),
+    ("GET", "/litellm/.well-known/litellm-ui-config"),
     ("GET", "/model/info"),
     ("GET", "/model_group/info"),
     ("GET", "/model_group/list"),
     ("GET", "/models"),
+    ("GET", "/public/litellm_blog_posts"),
+    ("GET", "/sso/get/ui_settings"),
+    ("GET", "/tag/list"),
+    ("GET", "/project/list"),
+    ("GET", "/v2/user/info"),
+    ("GET", "/v2/team/list"),
+    ("GET", "/v2/guardrails/list"),
+    ("GET", "/guardrails/list"),
+    ("GET", "/v1/agents"),
+    ("GET", "/policies/list"),
+    ("GET", "/prompts/list"),
+    ("GET", "/api/plugins"),
+    ("POST", "/v2/key/info"),
 }
 
 MODEL_WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
@@ -196,6 +222,8 @@ def _is_model_write(method: str, path: str) -> bool:
 
 
 def _is_management_route(method: str, path: str) -> bool:
+    if method == "GET" and _starts_with_any(path, MANAGEMENT_STATIC_PREFIXES):
+        return True
     if _starts_with_any(path, MANAGEMENT_ROUTE_PREFIXES):
         return True
-    return (method, path) in MANAGEMENT_READ_ROUTES
+    return (method, path) in MANAGEMENT_EXACT_ROUTES
