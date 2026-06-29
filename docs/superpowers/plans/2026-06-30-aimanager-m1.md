@@ -30,7 +30,7 @@
 - Modify: `aimanager/tests/test_config.py`
 - Modify: `aimanager/config.yaml`
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 Add tests that:
 
@@ -57,7 +57,7 @@ general_settings:
 
 Also add image pricing tests where `output_cost_per_image` is rejected and `input_cost_per_image <= 0` is rejected.
 
-- [ ] **Step 2: Verify red**
+- [x] **Step 2: Verify red**
 
 Run:
 
@@ -67,11 +67,11 @@ PYTHONPATH="$PWD" uv run --no-project --with pytest --with pyyaml pytest aimanag
 
 Expected: FAIL because the validator currently accepts zero chat prices and the wrong image price key.
 
-- [ ] **Step 3: Implement validator checks**
+- [x] **Step 3: Implement validator checks**
 
 Update `validate_config.py` so chat models require positive numeric `input_cost_per_token` and `output_cost_per_token`; image models require positive numeric `input_cost_per_image` and reject `output_cost_per_image`.
 
-- [ ] **Step 4: Fix M1 config**
+- [x] **Step 4: Fix M1 config**
 
 Set placeholder internal transfer prices in `aimanager/config.yaml`:
 
@@ -83,7 +83,7 @@ input_cost_per_image: 0.01
 
 These are nonzero M1 technical guardrail prices, not final finance-approved transfer prices.
 
-- [ ] **Step 5: Verify green**
+- [x] **Step 5: Verify green**
 
 Run:
 
@@ -94,7 +94,7 @@ PYTHONPATH="$PWD" uv run --no-project --with pytest --with pyyaml pytest aimanag
 
 Expected: validator PASS, pytest PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add aimanager/scripts/validate_config.py aimanager/tests/test_config.py aimanager/config.yaml
@@ -109,7 +109,7 @@ git commit -m "feat: enforce AiManager nonzero pricing"
 - Create: `aimanager/tests/test_policy.py`
 - Modify: `aimanager/docker-compose.yml`
 
-- [ ] **Step 1: Write failing route policy tests**
+- [x] **Step 1: Write failing route policy tests**
 
 Tests must assert:
 
@@ -125,7 +125,7 @@ Tests must assert:
 - `POST /model/new` is blocked.
 - Error bodies include `error.code` and top-level `request_id`.
 
-- [ ] **Step 2: Verify red**
+- [x] **Step 2: Verify red**
 
 Run:
 
@@ -135,15 +135,15 @@ PYTHONPATH="$PWD" uv run --no-project --with pytest --with pyyaml pytest aimanag
 
 Expected: FAIL because `aimanager.policy` does not exist.
 
-- [ ] **Step 3: Implement pure policy**
+- [x] **Step 3: Implement pure policy**
 
 Implement method/path matching with exact business allowlist and explicit blocked prefixes/suffixes. Keep the module independent of LiteLLM imports so tests are fast.
 
-- [ ] **Step 4: Implement ASGI wrapper**
+- [x] **Step 4: Implement ASGI wrapper**
 
 `aimanager/asgi.py` imports `litellm.proxy.proxy_server.app`, wraps it with middleware, and exports `app`. The middleware returns OpenAI-compatible 403 JSON for blocked paths and forwards allowed paths to LiteLLM.
 
-- [ ] **Step 5: Verify green**
+- [x] **Step 5: Verify green**
 
 Run:
 
@@ -153,7 +153,7 @@ PYTHONPATH="$PWD" uv run --no-project --with pytest --with pyyaml pytest aimanag
 
 Expected: PASS.
 
-- [ ] **Step 6: Compose config check**
+- [x] **Step 6: Compose config check**
 
 Update compose to launch the ASGI app and run:
 
@@ -169,6 +169,8 @@ Expected: PASS and rendered command starts `aimanager.asgi:app`.
 git add aimanager/policy.py aimanager/asgi.py aimanager/tests/test_policy.py aimanager/docker-compose.yml
 git commit -m "feat: add AiManager route allowlist"
 ```
+
+Current note: policy, ASGI wrapper, Dockerfile runtime source copy, compose entrypoint, and local tests are complete. Before M1 trial, add a route inventory check with full proxy dependencies and run a real container boot to prove LiteLLM lifespan/migrations, `/v1/models`, blocked-route no-outbound, and spend logging.
 
 ## Task 3: M1-B Key Governance and Enforced Params
 

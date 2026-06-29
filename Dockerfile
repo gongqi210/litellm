@@ -114,6 +114,9 @@ COPY --from=builder /app/litellm/proxy/prisma_migration.py /app/litellm/proxy/pr
 # working directory on sys.path; litellm/proxy/hooks resolves
 # enterprise.enterprise_hooks from it)
 COPY --from=builder /app/enterprise /app/enterprise
+# AiManager wraps the LiteLLM proxy app at runtime; keep it as source so
+# uvicorn can import aimanager.asgi:app from /app.
+COPY --from=builder /app/aimanager /app/aimanager
 # Prisma binaries live in $HOME/.cache (default prisma-python location),
 # which is /root/.cache here. Copy only the Prisma subdirs — copying the
 # whole /root/.cache drags in the uv build cache (~660 MB, includes a

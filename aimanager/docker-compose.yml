@@ -13,10 +13,16 @@ services:
     environment:
       DATABASE_URL: "postgresql://${POSTGRES_USER:-aimanager}:${POSTGRES_PASSWORD:-aimanager}@db:5432/${POSTGRES_DB:-aimanager}"
       STORE_MODEL_IN_DB: "False"
+      CONFIG_FILE_PATH: "/app/config.yaml"
     volumes:
       - ./config.yaml:/app/config.yaml:ro
+    entrypoint:
+      - "python"
+      - "-m"
+      - "uvicorn"
     command:
-      - "--config=/app/config.yaml"
+      - "aimanager.asgi:app"
+      - "--host=0.0.0.0"
       - "--port=4000"
     depends_on:
       db:

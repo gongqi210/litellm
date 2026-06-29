@@ -11,6 +11,9 @@ from aimanager.scripts.validate_config import (
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CONFIG_PATH = PROJECT_ROOT / "aimanager" / "config.yaml"
+COMPOSE_PATH = PROJECT_ROOT / "aimanager" / "docker-compose.yml"
+DOCKERFILE_PATH = PROJECT_ROOT / "Dockerfile"
+ENV_EXAMPLE_PATH = PROJECT_ROOT / "aimanager" / ".env.example"
 
 
 def test_aimanager_config_is_locked_to_ycapi() -> None:
@@ -29,6 +32,40 @@ def test_aimanager_config_is_locked_to_ycapi() -> None:
         assert params["model"].startswith("openai/")
         assert params["api_base"] == "os.environ/YCAPI_BASE_URL"
         assert params["api_key"] == "os.environ/YCAPI_API_TOKEN"
+        if model["model_name"] == "ycapi-image-1":
+            assert "output_cost_per_image" not in params
+            assert params["input_cost_per_image"] > 0
+        else:
+            assert params["input_cost_per_token"] > 0
+            assert params["output_cost_per_token"] > 0
+
+
+def test_compose_uses_aimanager_asgi_entrypoint() -> None:
+    compose = yaml.safe_load(COMPOSE_PATH.read_text(encoding="utf-8"))
+    service = compose["services"]["aimanager"]
+
+    assert service["entrypoint"] == ["python", "-m", "uvicorn"]
+    assert service["command"] == [
+        "aimanager.asgi:app",
+        "--host=0.0.0.0",
+        "--port=4000",
+    ]
+    assert service["environment"]["CONFIG_FILE_PATH"] == "/app/config.yaml"
+
+
+def test_runtime_dockerfile_copies_aimanager_package() -> None:
+    dockerfile = DOCKERFILE_PATH.read_text(encoding="utf-8")
+
+    assert "COPY --from=builder /app/aimanager /app/aimanager" in dockerfile
+
+
+def test_env_example_uses_non_secret_placeholders() -> None:
+    env_example = ENV_EXAMPLE_PATH.read_text(encoding="utf-8")
+
+    assert "sk-" not in env_example
+    assert "AKIA" not in env_example
+    assert "AIza" not in env_example
+    assert "BEGIN PRIVATE KEY" not in env_example
 
 
 def test_validator_rejects_direct_vendor_upstream(tmp_path: Path) -> None:
@@ -68,6 +105,42 @@ general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
   store_model_in_db: false
 """,
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigValidationError, match="input_cost_per_token"):
+        validate_aimanager_config(bad_config)
+
+
+@pytest.mark.parametrize(
+    "bad_value",
+    [False, True, "0.01", -0.1, float("nan"), float("inf")],
+)
+def test_validator_rejects_non_finite_or_non_numeric_chat_pricing(
+    tmp_path: Path, bad_value: object
+) -> None:
+    bad_config = tmp_path / "bad-chat-price-type.yaml"
+    bad_config.write_text(
+        yaml.safe_dump(
+            {
+                "model_list": [
+                    {
+                        "model_name": "gemini-2.5-flash",
+                        "litellm_params": {
+                            "model": "openai/gemini-2.5-flash",
+                            "api_base": "os.environ/YCAPI_BASE_URL",
+                            "api_key": "os.environ/YCAPI_API_TOKEN",
+                            "input_cost_per_token": bad_value,
+                            "output_cost_per_token": 0.000001,
+                        },
+                    }
+                ],
+                "general_settings": {
+                    "master_key": "os.environ/LITELLM_MASTER_KEY",
+                    "store_model_in_db": False,
+                },
+            }
+        ),
         encoding="utf-8",
     )
 

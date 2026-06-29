@@ -1,0 +1,133 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+
+ALLOWED_BUSINESS_ROUTES = {
+    ("GET", "/v1/models"),
+    ("POST", "/v1/chat/completions"),
+    ("POST", "/v1/images/generations"),
+}
+
+ALLOWED_HEALTH_ROUTES = {
+    ("GET", "/health"),
+    ("GET", "/health/liveliness"),
+    ("GET", "/health/readiness"),
+}
+
+PROVIDER_PASSTHROUGH_PREFIXES = (
+    "/anthropic",
+    "/gemini",
+    "/bedrock",
+    "/openai",
+    "/openai_passthrough",
+    "/cohere",
+    "/vllm",
+    "/mistral",
+    "/azure",
+    "/azure_ai",
+    "/watsonx",
+    "/cursor",
+    "/vertex_ai",
+    "/vertex-ai",
+)
+
+CONFIG_IMMUTABLE_PREFIXES = (
+    "/pass-through-endpoints",
+    "/config/update",
+)
+
+MODEL_WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+
+
+@dataclass(frozen=True)
+class RouteDecision:
+    allowed: bool
+    code: str
+    message: str
+    status_code: int = 403
+
+
+def evaluate_route(method: str, path: str) -> RouteDecision:
+    normalized_method = method.upper()
+    normalized_path = _normalize_path(path)
+
+    if (normalized_method, normalized_path) in ALLOWED_BUSINESS_ROUTES:
+        return _allowed()
+    if (normalized_method, normalized_path) in ALLOWED_HEALTH_ROUTES:
+        return _allowed()
+
+    if _is_google_native_route(normalized_path):
+        return RouteDecision(
+            allowed=False,
+            code="aimanager_google_native_blocked",
+            message="AiManager blocks Google native model endpoints; use /v1/chat/completions",
+        )
+
+    if _starts_with_any(normalized_path, PROVIDER_PASSTHROUGH_PREFIXES):
+        return RouteDecision(
+            allowed=False,
+            code="aimanager_passthrough_blocked",
+            message="AiManager blocks provider passthrough routes; use ycapi-backed /v1 endpoints",
+        )
+
+    if _starts_with_any(normalized_path, CONFIG_IMMUTABLE_PREFIXES):
+        return _config_immutable()
+
+    if _is_model_write(normalized_method, normalized_path):
+        return _config_immutable()
+
+    return RouteDecision(
+        allowed=False,
+        code="aimanager_route_not_allowed",
+        message=f"Route {normalized_method} {normalized_path} is not allowed by AiManager M1 policy",
+    )
+
+
+def build_policy_error_body(decision: RouteDecision, request_id: str) -> dict[str, object]:
+    return {
+        "error": {
+            "message": decision.message,
+            "type": "permission_error",
+            "param": None,
+            "code": decision.code,
+        },
+        "request_id": request_id,
+    }
+
+
+def _allowed() -> RouteDecision:
+    return RouteDecision(allowed=True, code="ok", message="allowed", status_code=200)
+
+
+def _config_immutable() -> RouteDecision:
+    return RouteDecision(
+        allowed=False,
+        code="aimanager_config_immutable",
+        message="AiManager policy blocks runtime configuration and model writes",
+    )
+
+
+def _normalize_path(path: str) -> str:
+    normalized = path.split("?", 1)[0].strip() or "/"
+    if not normalized.startswith("/"):
+        normalized = f"/{normalized}"
+    if len(normalized) > 1:
+        normalized = normalized.rstrip("/")
+    return normalized
+
+
+def _is_google_native_route(path: str) -> bool:
+    if ":generateContent" not in path and ":streamGenerateContent" not in path:
+        return False
+    return path.startswith("/v1beta/models/") or path.startswith("/models/")
+
+
+def _starts_with_any(path: str, prefixes: tuple[str, ...]) -> bool:
+    return any(path == prefix or path.startswith(f"{prefix}/") for prefix in prefixes)
+
+
+def _is_model_write(method: str, path: str) -> bool:
+    if method not in MODEL_WRITE_METHODS:
+        return False
+    return path == "/model" or path.startswith("/model/")

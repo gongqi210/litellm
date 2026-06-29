@@ -18,7 +18,19 @@ AiManager is the company-facing LiteLLM management layer for ycapi. It keeps Lit
 | `deepseek-chat` | `openai/deepseek-chat` | chat |
 | `ycapi-image-1` | `openai/ycapi-image-1` | image generation |
 
-Pricing fields are set explicitly to `0.0` to avoid silently inheriting LiteLLM built-in prices for same-named public models. Set AiManager resale rates before relying on spend budgets as the customer-facing ledger.
+Pricing fields are explicit and nonzero so LiteLLM cannot silently inherit same-named public model prices or record zero image spend. Current values are M1 technical guardrail prices; finance-approved transfer prices still need a recorded `pricing_version`, approver, currency, tax mode, and effective date before production chargeback.
+
+## Runtime Boundary
+
+The local deployment starts `aimanager.asgi:app` with `CONFIG_FILE_PATH=/app/config.yaml`. The AiManager ASGI wrapper is the primary runtime boundary in front of the LiteLLM proxy app.
+
+M1 business API allowlist:
+
+- `GET /v1/models`
+- `POST /v1/chat/completions`
+- `POST /v1/images/generations`
+
+M1 blocks provider passthrough, Google native `:generateContent` routes, `/pass-through-endpoints`, `/config/update`, model write routes, and uncommitted business APIs such as `/v1/embeddings` and `/v1/completions`.
 
 ## Run
 
@@ -36,7 +48,7 @@ Admin UI: <http://localhost:4000/ui>
 ```bash
 cd /Volumes/AI-projects/01-yca-AiManager
 uv run --no-project --with pyyaml python -m aimanager.scripts.validate_config aimanager/config.yaml
-PYTHONPATH="$PWD" uv run --no-project --with pytest --with pyyaml pytest aimanager/tests/test_config.py -q
+PYTHONPATH="$PWD" uv run --no-project --with pytest --with pyyaml pytest aimanager/tests -q
 docker compose -f aimanager/docker-compose.yml config
 ```
 
@@ -50,4 +62,11 @@ curl -s http://localhost:4000/v1/chat/completions \
   -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
   -H "Content-Type: application/json" \
   -d '{"model":"gemini-2.5-flash","messages":[{"role":"user","content":"Reply with exactly: ok"}]}'
+
+curl -i http://localhost:4000/v1beta/models/gemini-2.5-flash:generateContent \
+  -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{}'
 ```
+
+The last command must return an AiManager 403 policy error and must not reach ycapi. A full runtime boot, model-list check, nonzero spend-log check, and live ycapi chat/image smoke are still required before M1 can enter business trial.

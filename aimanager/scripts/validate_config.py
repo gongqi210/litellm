@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import sys
 from pathlib import Path
 from typing import Any
@@ -130,7 +131,12 @@ def _validate_general_settings(config: dict[str, Any]) -> None:
 
 def _validate_positive_number(params: dict[str, Any], model_name: str, field_name: str) -> None:
     value = params.get(field_name)
-    if not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0:
+    if (
+        not isinstance(value, (int, float))
+        or isinstance(value, bool)
+        or not math.isfinite(value)
+        or value <= 0
+    ):
         raise ConfigValidationError(f"{model_name}: {field_name} must be a positive number")
 
 

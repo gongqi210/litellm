@@ -1,6 +1,6 @@
 # AiManager Acceptance Criteria v3
 
-日期：2026-06-29
+日期：2026-06-30
 
 ## 状态口径
 
@@ -32,6 +32,22 @@
 | AC-17 | 故障场景 | mock ycapi 429/5xx、Postgres down、配置错误 | 返回可解释错误，不切直连供应商 |
 | AC-18 | `.env.example` 安全 | secret scan | 仅占位变量，无真实密钥 |
 | AC-19 | live smoke 口径 | 缺真实 `YCAPI_API_TOKEN` 时 | 必须标 `BLOCKED`，不得伪装 `PASS` |
+
+## 当前 M1-A 本地证据
+
+| 编号 | 当前状态 | 证据 | 说明 |
+| --- | --- | --- | --- |
+| AC-01 | PASS | `uv run --no-project --with pyyaml python -m aimanager.scripts.validate_config aimanager/config.yaml`；`pytest aimanager/tests/test_config.py` | 已拒绝供应商直连、passthrough 配置、零价格、NaN/inf/非数字价格、错误 image 计价键 |
+| AC-02 | BLOCKED | `pytest aimanager/tests/test_policy.py` | policy 单测已覆盖 provider passthrough、Google native、`/config/update`、模型写路径、默认拒绝；仍需运行中 proxy curl 和无 outbound 证据 |
+| AC-03 | BLOCKED | 需要运行中 proxy 或 mock proxy | 当前仅完成静态模型清单配置，未启动服务验证 `/v1/models` 响应 |
+| AC-05 | BLOCKED | `validate_config.py` + `pytest aimanager/tests/test_config.py` | `ycapi-image-1` 已改用 `input_cost_per_image > 0`；仍需 mock/live 调用证明 spend log 非零 |
+| AC-07 | BLOCKED | `pytest aimanager/tests/test_policy.py` | AiManager 自有 policy error 已返回 OpenAI-compatible body + `request_id`；LiteLLM 原生错误包装仍需集成验证 |
+| AC-09 | BLOCKED | `validate_config.py` + `pytest aimanager/tests/test_config.py` | 配置层已禁止零计价和错误 image 键；财务审批价与真实 spend 非零仍需后续验证 |
+| AC-15 | BLOCKED | `docker compose -f aimanager/docker-compose.yml config` | compose 已改为 `python -m uvicorn aimanager.asgi:app` 并设置 `CONFIG_FILE_PATH=/app/config.yaml`；未做真实容器启动和网络暴露检查 |
+| AC-17 | BLOCKED | `pytest aimanager/tests/test_policy.py` | policy 层证明不会切 provider passthrough；ycapi 429/5xx、DB down 还未跑 |
+| AC-18 | PASS | `pytest aimanager/tests/test_config.py::test_env_example_uses_non_secret_placeholders`；`rg` secret-like 扫描 | `.env.example` 只保留非密钥占位符，未命中 `sk-`、`AKIA`、`AIza`、private key 等模式 |
+
+上表中的 `BLOCKED` 项不是失败，而是完整 AC 还缺运行中 proxy、mock/live ycapi、spend log、预算阻断、RBAC 或审计证据。M1 试点前必须解除这些 `BLOCKED` 项。
 
 ## M2 业务试点验收项
 
