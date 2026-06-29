@@ -5,6 +5,9 @@ from decimal import Decimal
 from aimanager.finance import (
     aggregate_daily_usage,
     aggregate_monthly_usage,
+    build_finance_export_bundle,
+    normalize_spend_record,
+    normalize_ycapi_bill_record,
     reconcile_monthly_usage,
 )
 
@@ -201,3 +204,134 @@ def test_failed_requests_are_counted_and_paid_spend_is_not_lost() -> None:
     assert row["successful_requests"] == 0
     assert row["failed_requests"] == 1
     assert row["spend"] == Decimal("0.01")
+
+
+def test_litellm_spend_log_metadata_is_normalized_for_finance_dimensions() -> None:
+    record = normalize_spend_record(
+        {
+            "startTime": "2026-06-30T02:15:00Z",
+            "request_id": "req_litellm_1",
+            "call_type": "completion",
+            "user": "u_market_1",
+            "model": "openai/gemini-2.5-flash",
+            "prompt_tokens": 150,
+            "completion_tokens": 40,
+            "total_tokens": 190,
+            "spend": "2.00",
+            "currency": "cny",
+            "status": "success",
+            "metadata": {
+                "user_api_key_alias": "market-campaign-key",
+                "user_api_key_metadata": {
+                    "department_id": "dept_market",
+                    "project_id": "proj_launch",
+                    "cost_center_id": "cc_growth",
+                    "pricing_version": "m1-2026-06",
+                },
+                "spend_logs_metadata": {
+                    "scenario_l1": "marketing",
+                    "scenario_l2": "campaign-copy",
+                    "image_count": 1,
+                },
+            },
+        }
+    )
+
+    assert record["date"] == "2026-06-30"
+    assert record["month"] == "2026-06"
+    assert record["department_id"] == "dept_market"
+    assert record["project_id"] == "proj_launch"
+    assert record["cost_center_id"] == "cc_growth"
+    assert record["user_id"] == "u_market_1"
+    assert record["key_alias"] == "market-campaign-key"
+    assert record["model"] == "gemini-2.5-flash"
+    assert record["endpoint"] == "/v1/chat/completions"
+    assert record["image_count"] == 1
+    assert record["currency"] == "CNY"
+    assert record["pricing_version"] == "m1-2026-06"
+
+
+def test_ycapi_bill_rows_are_normalized_for_monthly_reconciliation() -> None:
+    row = normalize_ycapi_bill_record(
+        {
+            "billing_month": "2026-06",
+            "model_name": "openai/gemini-2.5-flash",
+            "api_path": "/v1/chat/completions",
+            "input_tokens": "150",
+            "output_tokens": "40",
+            "tokens": "190",
+            "image_count": "0",
+            "amount": "2.10",
+            "currency": "cny",
+        }
+    )
+
+    assert row == {
+        "month": "2026-06",
+        "model": "gemini-2.5-flash",
+        "endpoint": "/v1/chat/completions",
+        "prompt_tokens": 150,
+        "completion_tokens": 40,
+        "total_tokens": 190,
+        "image_count": 0,
+        "spend": Decimal("2.10"),
+        "currency": "CNY",
+    }
+
+
+def test_finance_export_bundle_contains_usage_monthly_and_reconciliation_rows() -> None:
+    bundle = build_finance_export_bundle(
+        spend_rows=[
+            _spend_row(
+                started_at="2026-06-30T10:15:00+08:00",
+                model="openai/gemini-2.5-flash",
+                prompt_tokens=150,
+                completion_tokens=40,
+                total_tokens=190,
+                spend="2.00",
+            )
+        ],
+        ycapi_bill_rows=[
+            {
+                "billing_month": "2026-06",
+                "model_name": "gemini-2.5-flash",
+                "api_path": "/v1/chat/completions",
+                "prompt_tokens": 150,
+                "completion_tokens": 40,
+                "total_tokens": 190,
+                "amount": "2.10",
+                "currency": "CNY",
+            }
+        ],
+    )
+
+    assert set(bundle) == {
+        "aimanager_usage_daily.csv",
+        "aimanager_finance_monthly.csv",
+        "aimanager_reconciliation.csv",
+    }
+    usage_row = bundle["aimanager_usage_daily.csv"][0]
+    assert usage_row["date"] == "2026-06-30"
+    assert usage_row["department_id"] == "dept_market"
+    assert usage_row["project_id"] == "proj_launch"
+    assert usage_row["key_alias"] == "market-campaign-key"
+    assert usage_row["model"] == "gemini-2.5-flash"
+    assert usage_row["total_tokens"] == 190
+    assert usage_row["spend"] == Decimal("2.00")
+
+    monthly_row = bundle["aimanager_finance_monthly.csv"][0]
+    assert monthly_row["month"] == "2026-06"
+    assert monthly_row["cost_center_id"] == "cc_growth"
+    assert monthly_row["close_status"] == "ready"
+
+    reconciliation_row = bundle["aimanager_reconciliation.csv"][0]
+    assert reconciliation_row["model"] == "gemini-2.5-flash"
+    assert reconciliation_row["prompt_tokens"] == 150
+    assert reconciliation_row["completion_tokens"] == 40
+    assert reconciliation_row["total_tokens"] == 190
+    assert reconciliation_row["image_count"] == 0
+    assert reconciliation_row["aimanager_amount"] == Decimal("2.00")
+    assert reconciliation_row["ycapi_amount"] == Decimal("2.10")
+    assert reconciliation_row["difference"] == Decimal("0.10")
+    assert reconciliation_row["currency"] == "CNY"
+    assert reconciliation_row["status"] == "matched"

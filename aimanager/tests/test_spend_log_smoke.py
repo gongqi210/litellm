@@ -79,12 +79,24 @@ def test_spend_log_smoke_passes_when_chat_and_image_spend_rows_are_nonzero() -> 
             assert payload is not None
             assert payload["user"] == "employee-smoke-001"
             assert payload["metadata"]["scenario_l1"] == "engineering"  # type: ignore[index]
+            assert payload["metadata"]["department_id"] == "dept_smoke"  # type: ignore[index]
+            assert payload["metadata"]["project_id"] == "proj_aimanager_runtime_smoke"  # type: ignore[index]
+            assert payload["metadata"]["cost_center_id"] == "cc_smoke"  # type: ignore[index]
+            assert payload["metadata"]["currency"] == "CNY"  # type: ignore[index]
+            assert payload["metadata"]["pricing_version"] == "m1-runtime-smoke"  # type: ignore[index]
+            assert payload["metadata"]["image_count"] == 0  # type: ignore[index]
             return _json_response({"id": "chatcmpl-smoke", "object": "chat.completion"})
         if url.endswith("/v1/images/generations"):
             assert headers["Authorization"] == "Bearer sk-virtual-smoke"
             assert payload is not None
             assert payload["user"] == "employee-smoke-001"
             assert payload["metadata"]["scenario_l1"] == "engineering"  # type: ignore[index]
+            assert payload["metadata"]["department_id"] == "dept_smoke"  # type: ignore[index]
+            assert payload["metadata"]["project_id"] == "proj_aimanager_runtime_smoke"  # type: ignore[index]
+            assert payload["metadata"]["cost_center_id"] == "cc_smoke"  # type: ignore[index]
+            assert payload["metadata"]["currency"] == "CNY"  # type: ignore[index]
+            assert payload["metadata"]["pricing_version"] == "m1-runtime-smoke"  # type: ignore[index]
+            assert payload["metadata"]["image_count"] == 1  # type: ignore[index]
             return _json_response({"created": 1, "data": [{"url": "https://example.invalid/smoke.png"}]})
         if url.endswith("/key/delete"):
             assert headers["x-aimanager-actor"] == "aimanager-ci"

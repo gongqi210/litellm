@@ -95,12 +95,25 @@ Runtime inference enforcement for LiteLLM `metadata.enforced_params` is an Enter
 
 `aimanager.finance` provides pure helpers for the finance export layer:
 
-- `normalize_spend_record(row)` converts LiteLLM spend-log-like rows into AiManager finance dimensions.
+- `normalize_spend_record(row)` converts LiteLLM `SpendLogs`-shaped rows into AiManager finance dimensions, including camelCase `startTime`, `call_type` endpoint inference, provider-prefixed `openai/<model>` normalization, and nested `metadata.user_api_key_metadata` / `metadata.spend_logs_metadata`.
+- `normalize_ycapi_bill_record(row)` converts ycapi monthly bill rows from JSON/CSV-style fields into the reconciliation contract.
 - `aggregate_daily_usage(rows)` groups usage by date, department, project, cost center, employee, key, model, endpoint, currency, and pricing version.
 - `aggregate_monthly_usage(rows)` produces the same governance dimensions at month grain for finance close.
 - `reconcile_monthly_usage(aimanager_rows, ycapi_rows)` compares AiManager monthly totals with ycapi bill rows and marks differences as `matched` or `needs_review`.
+- `build_finance_export_bundle(spend_rows=..., ycapi_bill_rows=...)` returns the three M1 finance exports: `aimanager_usage_daily.csv`, `aimanager_finance_monthly.csv`, and `aimanager_reconciliation.csv`.
 
-Money values use `Decimal`. Missing ownership dimensions are kept visible as `unassigned` instead of being dropped. These helpers are tested locally but are not yet wired to LiteLLM `SpendLogs`, scheduled exports, or real ycapi bill ingestion.
+Money values use `Decimal`. Missing ownership dimensions are kept visible as `unassigned` instead of being dropped; monthly close rows with missing department/project/cost center are marked `close_status=blocked_unassigned`.
+
+Local export command:
+
+```bash
+PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.export_finance \
+  --spend-file /path/to/litellm-spendlogs.json \
+  --ycapi-bill-file /path/to/ycapi-monthly-bill.csv \
+  --output-dir /tmp/aimanager-finance-export
+```
+
+`--spend-file` and `--ycapi-bill-file` accept JSON arrays or CSV files. Real production ycapi bill files or API output still need to be supplied during monthly close; the local importer and export schema are covered by tests.
 
 ## Audit Events
 
@@ -252,4 +265,4 @@ Latest local runtime smoke evidence:
 - Mock ycapi runtime budget-block smoke proved a disposable governed key with `max_budget=0.005` can spend `0.01` on a successful image request, then receive HTTP 429 `budget_exceeded` on the next business request. The response and LiteLLM container log both recorded `Budget has been exceeded! ... Current cost: 0.01, Max budget: 0.005`; AiManager also emitted a structured `aimanager_audit_event` with `event_type=budget_blocked`, `severity=high`, and `reason=budget_exceeded`.
 - Mock ycapi runtime key-lifecycle smoke proved admin `POST /key/block` freezes a governed key, subsequent business chat returns HTTP 401 with `Key is blocked`, admin `POST /key/delete` revokes a second governed key, subsequent business chat returns HTTP 401 invalid-token/not-found, and the admin container logs contain `key_frozen` and `key_revoked` `aimanager_audit_event` records with actor `aimanager-ci`, disposition reasons, request ids, key aliases, and governance dimensions.
 
-Remaining before business trial: metrics/alerting, UI automation for the key creation flow, finance export/ycapi bill ingestion, RBAC verification, broader failure-mode checks, and live ycapi smoke with the production token policy.
+Remaining before business trial: metrics/alerting, UI automation for the key creation flow, production ycapi bill evidence, RBAC verification, broader failure-mode checks, and live ycapi smoke with the production token policy.

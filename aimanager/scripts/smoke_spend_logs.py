@@ -116,11 +116,11 @@ def run_spend_log_smoke(
         )
         virtual_key = _extract_virtual_key(key_response)
 
-        request_metadata = _request_metadata(request_marker)
+        chat_metadata = _request_metadata(request_marker, image_count=0)
         request_headers = _auth_headers(
             virtual_key,
             request_id=f"chat-{request_marker}",
-            spend_logs_metadata=request_metadata,
+            spend_logs_metadata=chat_metadata,
         )
         _post_json(
             fetcher,
@@ -131,17 +131,18 @@ def run_spend_log_smoke(
                 "messages": [{"role": "user", "content": "AiManager spend smoke"}],
                 "max_tokens": 8,
                 "user": "employee-smoke-001",
-                "metadata": request_metadata,
+                "metadata": chat_metadata,
             },
         )
 
+        image_metadata = _request_metadata(request_marker, image_count=1)
         _post_json(
             fetcher,
             _join_url(business_base_url, "/v1/images/generations"),
             _auth_headers(
                 virtual_key,
                 request_id=f"image-{request_marker}",
-                spend_logs_metadata=request_metadata,
+                spend_logs_metadata=image_metadata,
             ),
             {
                 "model": image_model,
@@ -149,7 +150,7 @@ def run_spend_log_smoke(
                 "n": 1,
                 "size": "1024x1024",
                 "user": "employee-smoke-001",
-                "metadata": request_metadata,
+                "metadata": image_metadata,
             },
         )
 
@@ -327,12 +328,20 @@ def _delete_virtual_key(
         pass
 
 
-def _request_metadata(marker: str, *, scenario_l2: str = "runtime-spend-smoke") -> dict[str, str]:
+def _request_metadata(
+    marker: str, *, scenario_l2: str = "runtime-spend-smoke", image_count: int = 0
+) -> dict[str, str | int]:
     return {
+        "department_id": "dept_smoke",
+        "project_id": "proj_aimanager_runtime_smoke",
+        "cost_center_id": "cc_smoke",
+        "pricing_version": "m1-runtime-smoke",
+        "currency": "CNY",
         "scenario_l1": "engineering",
         "scenario_l2": scenario_l2,
         "end_user_principal": "employee-smoke-001",
         "aimanager_smoke_id": marker,
+        "image_count": image_count,
     }
 
 
@@ -356,7 +365,7 @@ def _auth_headers(
     token: str,
     *,
     request_id: str,
-    spend_logs_metadata: dict[str, str] | None = None,
+    spend_logs_metadata: dict[str, Any] | None = None,
 ) -> dict[str, str]:
     headers = {
         "Authorization": f"Bearer {token}",
