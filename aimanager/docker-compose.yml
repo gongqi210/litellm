@@ -1,0 +1,51 @@
+services:
+  aimanager:
+    build:
+      context: ..
+      args:
+        target: runtime
+    image: aimanager-litellm:local
+    ports:
+      - "4000:4000"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: "postgresql://${POSTGRES_USER:-aimanager}:${POSTGRES_PASSWORD:-aimanager}@db:5432/${POSTGRES_DB:-aimanager}"
+      STORE_MODEL_IN_DB: "False"
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+    command:
+      - "--config=/app/config.yaml"
+      - "--port=4000"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:4000/health/liveliness')"
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: "${POSTGRES_DB:-aimanager}"
+      POSTGRES_USER: "${POSTGRES_USER:-aimanager}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-aimanager}"
+    ports:
+      - "5432:5432"
+    volumes:
+      - aimanager_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d ${POSTGRES_DB:-aimanager} -U ${POSTGRES_USER:-aimanager}"]
+      interval: 2s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  aimanager_postgres_data:

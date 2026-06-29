@@ -1,0 +1,152 @@
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+
+ALLOWED_ENV_REFS = {
+    "os.environ/YCAPI_BASE_URL",
+    "os.environ/YCAPI_API_TOKEN",
+    "os.environ/LITELLM_MASTER_KEY",
+}
+
+FORBIDDEN_CONFIG_MARKERS = (
+    "api.openai.com",
+    "api.anthropic.com",
+    "generativelanguage.googleapis.com",
+    "ANTHROPIC_API_KEY",
+    "OPENAI_API_KEY",
+    "GEMINI_API_KEY",
+    "GOOGLE_API_KEY",
+    "AZURE_API_KEY",
+    "AZURE_API_BASE",
+    "BEDROCK",
+    "VERTEX",
+)
+
+
+class ConfigValidationError(ValueError):
+    """Raised when the AiManager LiteLLM config violates the ycapi boundary."""
+
+
+def _load_yaml(path: Path) -> dict[str, Any]:
+    try:
+        loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise ConfigValidationError(f"config file does not exist: {path}") from exc
+    if not isinstance(loaded, dict):
+        raise ConfigValidationError("config root must be a YAML mapping")
+    return loaded
+
+
+def _walk_strings(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        results: list[str] = []
+        for child in value.values():
+            results.extend(_walk_strings(child))
+        return results
+    if isinstance(value, list):
+        results = []
+        for child in value:
+            results.extend(_walk_strings(child))
+        return results
+    return []
+
+
+def _validate_env_refs(config: dict[str, Any]) -> None:
+    for value in _walk_strings(config):
+        if "os.environ/" not in value:
+            continue
+        _, env_ref = value.split("os.environ/", 1)
+        env_name = env_ref.split()[0].strip("}'\"]")
+        normalized = f"os.environ/{env_name}"
+        if normalized not in ALLOWED_ENV_REFS:
+            raise ConfigValidationError(f"unsupported environment reference: {normalized}")
+
+
+def _validate_model_list(config: dict[str, Any]) -> None:
+    model_list = config.get("model_list")
+    if not isinstance(model_list, list) or not model_list:
+        raise ConfigValidationError("model_list must be a non-empty list")
+
+    for idx, item in enumerate(model_list):
+        if not isinstance(item, dict):
+            raise ConfigValidationError(f"model_list[{idx}] must be a mapping")
+
+        model_name = item.get("model_name")
+        params = item.get("litellm_params")
+        if not isinstance(model_name, str) or not model_name:
+            raise ConfigValidationError(f"model_list[{idx}].model_name is required")
+        if not isinstance(params, dict):
+            raise ConfigValidationError(f"model_list[{idx}].litellm_params must be a mapping")
+
+        upstream_model = params.get("model")
+        if not isinstance(upstream_model, str) or not upstream_model.startswith("openai/"):
+            raise ConfigValidationError(f"{model_name}: upstream model must use openai/<ycapi-model>")
+        if upstream_model == "openai/*":
+            raise ConfigValidationError(f"{model_name}: openai/* wildcard is not allowed")
+        if "ycapi-video-1" in (model_name, upstream_model):
+            raise ConfigValidationError(
+                "ycapi-video-1 must not be exposed through LiteLLM's OpenAI model_list until "
+                "a ycapi video adapter or audited passthrough route is added"
+            )
+
+        if params.get("api_base") != "os.environ/YCAPI_BASE_URL":
+            raise ConfigValidationError(f"{model_name}: api_base must be os.environ/YCAPI_BASE_URL")
+        if params.get("api_key") != "os.environ/YCAPI_API_TOKEN":
+            raise ConfigValidationError(f"{model_name}: api_key must be os.environ/YCAPI_API_TOKEN")
+
+        if model_name != "ycapi-image-1":
+            if "input_cost_per_token" not in params or "output_cost_per_token" not in params:
+                raise ConfigValidationError(f"{model_name}: explicit token pricing is required")
+
+
+def _validate_general_settings(config: dict[str, Any]) -> None:
+    general_settings = config.get("general_settings")
+    if not isinstance(general_settings, dict):
+        raise ConfigValidationError("general_settings must be a mapping")
+    if general_settings.get("master_key") != "os.environ/LITELLM_MASTER_KEY":
+        raise ConfigValidationError("general_settings.master_key must use os.environ/LITELLM_MASTER_KEY")
+    if general_settings.get("store_model_in_db") is not False:
+        raise ConfigValidationError("general_settings.store_model_in_db must be false for ycapi-only mode")
+
+
+def _validate_forbidden_markers(config_path: Path) -> None:
+    raw = config_path.read_text(encoding="utf-8")
+    for marker in FORBIDDEN_CONFIG_MARKERS:
+        if marker in raw:
+            raise ConfigValidationError(f"forbidden direct-provider marker in config: {marker}")
+
+
+def validate_aimanager_config(config_path: Path | str) -> None:
+    path = Path(config_path)
+    config = _load_yaml(path)
+    _validate_forbidden_markers(path)
+    _validate_env_refs(config)
+    _validate_general_settings(config)
+    _validate_model_list(config)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Validate AiManager LiteLLM config invariants.")
+    parser.add_argument("config", type=Path, help="Path to aimanager/config.yaml")
+    args = parser.parse_args(argv)
+
+    try:
+        validate_aimanager_config(args.config)
+    except ConfigValidationError as exc:
+        print(f"FAIL: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"PASS: {args.config} is locked to ycapi")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

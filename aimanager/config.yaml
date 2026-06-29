@@ -1,0 +1,37 @@
+model_list:
+  - model_name: gemini-2.5-flash
+    litellm_params:
+      model: openai/gemini-2.5-flash
+      api_base: os.environ/YCAPI_BASE_URL
+      api_key: os.environ/YCAPI_API_TOKEN
+      input_cost_per_token: 0.0
+      output_cost_per_token: 0.0
+
+  - model_name: deepseek-chat
+    litellm_params:
+      model: openai/deepseek-chat
+      api_base: os.environ/YCAPI_BASE_URL
+      api_key: os.environ/YCAPI_API_TOKEN
+      input_cost_per_token: 0.0
+      output_cost_per_token: 0.0
+
+  - model_name: ycapi-image-1
+    litellm_params:
+      model: openai/ycapi-image-1
+      api_base: os.environ/YCAPI_BASE_URL
+      api_key: os.environ/YCAPI_API_TOKEN
+      input_cost_per_token: 0.0
+      output_cost_per_image: 0.0
+
+litellm_settings:
+  drop_params: true
+  request_timeout: 600
+
+router_settings:
+  routing_strategy: simple-shuffle
+  num_retries: 1
+  timeout: 600
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  store_model_in_db: false
