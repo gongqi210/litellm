@@ -50,3 +50,118 @@ general_settings:
 
     with pytest.raises(ConfigValidationError):
         validate_aimanager_config(bad_config)
+
+
+def test_validator_rejects_zero_chat_pricing(tmp_path: Path) -> None:
+    bad_config = tmp_path / "bad-chat-price.yaml"
+    bad_config.write_text(
+        """
+model_list:
+  - model_name: gemini-2.5-flash
+    litellm_params:
+      model: openai/gemini-2.5-flash
+      api_base: os.environ/YCAPI_BASE_URL
+      api_key: os.environ/YCAPI_API_TOKEN
+      input_cost_per_token: 0.0
+      output_cost_per_token: 0.000001
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  store_model_in_db: false
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigValidationError, match="input_cost_per_token"):
+        validate_aimanager_config(bad_config)
+
+
+def test_validator_rejects_missing_chat_output_pricing(tmp_path: Path) -> None:
+    bad_config = tmp_path / "bad-chat-missing-output-price.yaml"
+    bad_config.write_text(
+        """
+model_list:
+  - model_name: deepseek-chat
+    litellm_params:
+      model: openai/deepseek-chat
+      api_base: os.environ/YCAPI_BASE_URL
+      api_key: os.environ/YCAPI_API_TOKEN
+      input_cost_per_token: 0.000001
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  store_model_in_db: false
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigValidationError, match="output_cost_per_token"):
+        validate_aimanager_config(bad_config)
+
+
+def test_validator_rejects_image_output_cost_per_image(tmp_path: Path) -> None:
+    bad_config = tmp_path / "bad-image-price-key.yaml"
+    bad_config.write_text(
+        """
+model_list:
+  - model_name: ycapi-image-1
+    litellm_params:
+      model: openai/ycapi-image-1
+      api_base: os.environ/YCAPI_BASE_URL
+      api_key: os.environ/YCAPI_API_TOKEN
+      output_cost_per_image: 0.01
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  store_model_in_db: false
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigValidationError, match="input_cost_per_image"):
+        validate_aimanager_config(bad_config)
+
+
+def test_validator_rejects_zero_image_pricing(tmp_path: Path) -> None:
+    bad_config = tmp_path / "bad-image-zero-price.yaml"
+    bad_config.write_text(
+        """
+model_list:
+  - model_name: ycapi-image-1
+    litellm_params:
+      model: openai/ycapi-image-1
+      api_base: os.environ/YCAPI_BASE_URL
+      api_key: os.environ/YCAPI_API_TOKEN
+      input_cost_per_image: 0.0
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  store_model_in_db: false
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigValidationError, match="input_cost_per_image"):
+        validate_aimanager_config(bad_config)
+
+
+def test_validator_rejects_pass_through_endpoints(tmp_path: Path) -> None:
+    bad_config = tmp_path / "bad-passthrough.yaml"
+    bad_config.write_text(
+        """
+model_list:
+  - model_name: gemini-2.5-flash
+    litellm_params:
+      model: openai/gemini-2.5-flash
+      api_base: os.environ/YCAPI_BASE_URL
+      api_key: os.environ/YCAPI_API_TOKEN
+      input_cost_per_token: 0.000001
+      output_cost_per_token: 0.000001
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  store_model_in_db: false
+  pass_through_endpoints:
+    - path: /anything
+      target: https://example.com
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigValidationError, match="pass_through_endpoints"):
+        validate_aimanager_config(bad_config)

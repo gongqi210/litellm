@@ -28,6 +28,8 @@ FORBIDDEN_CONFIG_MARKERS = (
     "VERTEX",
 )
 
+IMAGE_MODEL_NAME = "ycapi-image-1"
+
 
 class ConfigValidationError(ValueError):
     """Raised when the AiManager LiteLLM config violates the ycapi boundary."""
@@ -102,9 +104,16 @@ def _validate_model_list(config: dict[str, Any]) -> None:
         if params.get("api_key") != "os.environ/YCAPI_API_TOKEN":
             raise ConfigValidationError(f"{model_name}: api_key must be os.environ/YCAPI_API_TOKEN")
 
-        if model_name != "ycapi-image-1":
-            if "input_cost_per_token" not in params or "output_cost_per_token" not in params:
-                raise ConfigValidationError(f"{model_name}: explicit token pricing is required")
+        if model_name == IMAGE_MODEL_NAME:
+            if "output_cost_per_image" in params:
+                raise ConfigValidationError(
+                    f"{model_name}: output_cost_per_image is not used by LiteLLM image pricing; "
+                    "set input_cost_per_image instead"
+                )
+            _validate_positive_number(params, model_name, "input_cost_per_image")
+        else:
+            _validate_positive_number(params, model_name, "input_cost_per_token")
+            _validate_positive_number(params, model_name, "output_cost_per_token")
 
 
 def _validate_general_settings(config: dict[str, Any]) -> None:
@@ -115,6 +124,14 @@ def _validate_general_settings(config: dict[str, Any]) -> None:
         raise ConfigValidationError("general_settings.master_key must use os.environ/LITELLM_MASTER_KEY")
     if general_settings.get("store_model_in_db") is not False:
         raise ConfigValidationError("general_settings.store_model_in_db must be false for ycapi-only mode")
+    if general_settings.get("pass_through_endpoints"):
+        raise ConfigValidationError("general_settings.pass_through_endpoints must be empty for ycapi-only mode")
+
+
+def _validate_positive_number(params: dict[str, Any], model_name: str, field_name: str) -> None:
+    value = params.get(field_name)
+    if not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0:
+        raise ConfigValidationError(f"{model_name}: {field_name} must be a positive number")
 
 
 def _validate_forbidden_markers(config_path: Path) -> None:
