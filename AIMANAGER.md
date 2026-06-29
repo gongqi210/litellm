@@ -6,5 +6,7 @@ AiManager is the ycapi-backed company management deployment for this LiteLLM for
 - Project knowledge graph: `项目知识图谱.md`
 - Runtime invariant: all configured upstream model calls use `YCAPI_BASE_URL` and `YCAPI_API_TOKEN`
 - Management plane: keep full LiteLLM proxy/admin UI for virtual keys, teams, budgets, limits, and usage logs
+- Current requirements: `docs/aimanager/1_PRD_v3.md`
+- Current review baseline: `docs/aimanager/1_multi_role_review_v2.md`
 
 Start with `aimanager/README.md` for local deployment and validation commands.
