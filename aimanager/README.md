@@ -178,6 +178,22 @@ PYTHONPATH="$PWD" uv run --no-project --with pyyaml python -m aimanager.scripts.
 
 Expected result: `PASS`, `chat_spend > 0`, and `image_spend > 0`. The smoke creates a governed disposable employee key, sends chat and image calls through the business surface, reads `LiteLLM_SpendLogs` from Postgres, and deletes the key. It never prints the virtual key.
 
+Mock ycapi runtime budget-block smoke:
+
+```bash
+LITELLM_MASTER_KEY=aimanager-local-master-key \
+PYTHONPATH="$PWD" uv run --no-project --with pyyaml python -m aimanager.scripts.smoke_budget_block \
+  --master-key aimanager-local-master-key \
+  --business-base-url http://localhost:4000 \
+  --admin-base-url http://localhost:4001 \
+  --project-directory "$PWD" \
+  --budget 0.005 \
+  --poll-attempts 60 \
+  --poll-interval 1
+```
+
+Expected result: `PASS`, `prime_status=200`, `blocked_status=429`, `budget_error_type=budget_exceeded`, and a `REASON` line containing `Budget has been exceeded`. The smoke creates a governed disposable employee key with `max_budget` below one image call, primes spend through the business image endpoint, verifies the next business request is blocked by LiteLLM key budget enforcement, and deletes the key. `LiteLLM_VerificationToken.spend` is batch-written and can still show `0.0` when the real-time spend counter has already blocked the request, so the 429 response is the primary proof.
+
 The rendered default compose config must show `build.target: runtime`, `entrypoint: ["python", "-m", "aimanager.litellm_entrypoint"]`, `--config=/app/config.yaml`, `--enforce_prisma_migration_check`, `AIMANAGER_ROUTE_SURFACE=business`, and `LITELLM_LOCAL_MODEL_COST_MAP=True`. The rendered `--profile admin` config must also show `aimanager-admin`, `AIMANAGER_ROUTE_SURFACE=management`, `LITELLM_LOCAL_MODEL_COST_MAP=True`, and `127.0.0.1:4001:4000`.
 
 Smoke test after `.env` is populated:
@@ -216,5 +232,6 @@ Latest local runtime smoke evidence:
 - Runtime admin-surface smoke with rebuilt `aimanager-litellm:local` proved `POST /key/generate` without governance metadata returns HTTP 400, `x-aimanager-policy-code: aimanager_key_governance_invalid`, preserves `x-litellm-call-id`, and emits a matching `policy_blocked` audit event without Authorization/Bearer leakage.
 - Runtime valid shared-key smoke proved `POST /key/generate` returns the required employee/team/model/budget/rate-limit/expiry fields plus department/project/cost-center/scenario/approver metadata and `metadata.enforced_params`; the local smoke key was deleted immediately after verification.
 - Mock ycapi runtime spend smoke proved `POST /v1/chat/completions` and `POST /v1/images/generations` through AiManager write nonzero `LiteLLM_SpendLogs.spend`: chat `3.3e-06`, image `0.01`. Rows were recorded as `openai/gemini-2.5-flash` and `openai/ycapi-image-1`.
+- Mock ycapi runtime budget-block smoke proved a disposable governed key with `max_budget=0.005` can spend `0.01` on a successful image request, then receive HTTP 429 `budget_exceeded` on the next business request. The response and LiteLLM container log both recorded `Budget has been exceeded! ... Current cost: 0.01, Max budget: 0.005`.
 
-Remaining before business trial: runtime budget blocking, key lifecycle audit emitters, UI automation for the key creation flow, and live ycapi smoke with the production token policy.
+Remaining before business trial: AiManager structured `budget_blocked` audit emitter, key lifecycle audit emitters, UI automation for the key creation flow, and live ycapi smoke with the production token policy.

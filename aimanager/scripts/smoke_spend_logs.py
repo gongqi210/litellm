@@ -46,6 +46,9 @@ def build_governed_key_payload(
     request_marker: str,
     models: Sequence[str],
     shared_key: bool = True,
+    max_budget: float = 1.0,
+    key_alias_prefix: str = "aimanager-smoke",
+    scenario_l2: str = "runtime-spend-smoke",
 ) -> dict[str, Any]:
     metadata: dict[str, Any] = {
         "owner": "aimanager-smoke",
@@ -53,7 +56,7 @@ def build_governed_key_payload(
         "project_id": "proj_aimanager_runtime_smoke",
         "cost_center_id": "cc_smoke",
         "scenario_l1": "engineering",
-        "scenario_l2": "runtime-spend-smoke",
+        "scenario_l2": scenario_l2,
         "approver": "aimanager-ci",
         "internal_or_external": "internal",
         "end_user_principal": "employee-smoke-001",
@@ -62,11 +65,11 @@ def build_governed_key_payload(
     if shared_key:
         metadata["shared_key"] = True
     return {
-        "key_alias": f"aimanager-smoke-{request_marker}",
+        "key_alias": f"{key_alias_prefix}-{request_marker}",
         "user_id": "aimanager-smoke-user",
         "team_id": "team_aimanager_smoke",
         "models": list(models),
-        "max_budget": 1.0,
+        "max_budget": max_budget,
         "rpm_limit": 60,
         "tpm_limit": 120000,
         "duration": "1h",
@@ -316,10 +319,10 @@ def _delete_virtual_key(
         pass
 
 
-def _request_metadata(marker: str) -> dict[str, str]:
+def _request_metadata(marker: str, *, scenario_l2: str = "runtime-spend-smoke") -> dict[str, str]:
     return {
         "scenario_l1": "engineering",
-        "scenario_l2": "runtime-spend-smoke",
+        "scenario_l2": scenario_l2,
         "end_user_principal": "employee-smoke-001",
         "aimanager_smoke_id": marker,
     }

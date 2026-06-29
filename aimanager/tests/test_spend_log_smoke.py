@@ -48,6 +48,21 @@ def test_build_governed_key_payload_can_create_employee_key_without_shared_key_e
     assert payload["metadata"]["end_user_principal"] == "employee-smoke-001"
 
 
+def test_build_governed_key_payload_accepts_budget_alias_and_scenario_overrides() -> None:
+    payload = build_governed_key_payload(
+        request_marker="budget-123",
+        models=["gemini-2.5-flash"],
+        shared_key=False,
+        max_budget=0.005,
+        key_alias_prefix="aimanager-budget-smoke",
+        scenario_l2="runtime-budget-block-smoke",
+    )
+
+    assert payload["key_alias"] == "aimanager-budget-smoke-budget-123"
+    assert payload["max_budget"] == 0.005
+    assert payload["metadata"]["scenario_l2"] == "runtime-budget-block-smoke"
+
+
 def test_spend_log_smoke_passes_when_chat_and_image_spend_rows_are_nonzero() -> None:
     requests: list[tuple[str, str, dict[str, str], dict[str, object] | None]] = []
     poll_count = 0
