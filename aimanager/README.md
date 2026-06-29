@@ -69,6 +69,28 @@ Shared keys must call `normalize_key_request(payload, shared_key=True)`, which a
 
 This pure helper is tested locally. It still needs to be wired into the actual LiteLLM key creation flow before AC-08 can be marked fully PASS.
 
+## Finance Reporting
+
+`aimanager.finance` provides pure helpers for the finance export layer:
+
+- `normalize_spend_record(row)` converts LiteLLM spend-log-like rows into AiManager finance dimensions.
+- `aggregate_daily_usage(rows)` groups usage by date, department, project, cost center, employee, key, model, endpoint, currency, and pricing version.
+- `aggregate_monthly_usage(rows)` produces the same governance dimensions at month grain for finance close.
+- `reconcile_monthly_usage(aimanager_rows, ycapi_rows)` compares AiManager monthly totals with ycapi bill rows and marks differences as `matched` or `needs_review`.
+
+Money values use `Decimal`. Missing ownership dimensions are kept visible as `unassigned` instead of being dropped. These helpers are tested locally but are not yet wired to LiteLLM `SpendLogs`, scheduled exports, or real ycapi bill ingestion.
+
+## Audit Events
+
+`aimanager.audit.build_audit_event` standardizes M1 risk events:
+
+- `passthrough_blocked`
+- `budget_blocked`
+- `key_frozen`
+- `key_revoked`
+
+Each event carries `event_id`, `event_type`, `severity`, `occurred_at`, `actor`, `subject_key_alias`, team/department/project/cost-center dimensions, `reason`, `request_id`, and `metadata`. This is the local event contract for logs, alerts, and executive/finance dashboards. Runtime emitters still need to be attached to policy blocking, budget enforcement, and key lifecycle operations.
+
 ## Run
 
 ```bash

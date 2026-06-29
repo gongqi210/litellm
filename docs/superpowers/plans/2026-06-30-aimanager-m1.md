@@ -163,7 +163,7 @@ docker compose -f aimanager/docker-compose.yml config
 
 Expected: PASS and rendered command starts `aimanager.asgi:app`.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add aimanager/policy.py aimanager/asgi.py aimanager/tests/test_policy.py aimanager/docker-compose.yml
@@ -207,21 +207,80 @@ Produce helpers that normalize required key metadata and attach:
 
 Run governance tests and update README with the key creation runbook.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add aimanager/governance.py aimanager/tests/test_governance.py aimanager/README.md
 git commit -m "feat: define AiManager key governance"
 ```
 
-## Task 4: M1-B Acceptance Evidence and Final Verification
+## Task 4: M1-C Finance and Audit Foundations
+
+**Files:**
+- Create: `aimanager/finance.py`
+- Create: `aimanager/audit.py`
+- Create: `aimanager/tests/test_finance.py`
+- Create: `aimanager/tests/test_audit.py`
+- Modify: `aimanager/README.md`
+
+- [x] **Step 1: Write failing finance tests**
+
+Test daily usage aggregation, missing ownership dimensions as `unassigned`, monthly finance aggregation, AiManager-vs-ycapi reconciliation thresholds, and failed request spend retention.
+
+- [x] **Step 2: Verify finance red**
+
+Run:
+
+```bash
+PYTHONPATH="$PWD" uv run --no-project --with pytest --with pyyaml pytest aimanager/tests/test_finance.py -q
+```
+
+Expected: FAIL because `aimanager.finance` does not exist.
+
+- [x] **Step 3: Implement finance helpers**
+
+Implement spend record normalization, day/month aggregation, `Decimal` money handling, and monthly reconciliation with the materiality threshold `max(10 CNY, 1%)`.
+
+- [x] **Step 4: Verify finance green**
+
+Run:
+
+```bash
+PYTHONPATH="$PWD" uv run --no-project --with pytest --with pyyaml pytest aimanager/tests/test_finance.py -q
+```
+
+Expected: PASS.
+
+- [x] **Step 5: Write failing audit tests**
+
+Test standardized events for `passthrough_blocked`, `budget_blocked`, `key_frozen`, and `key_revoked`, including severity, reason requirements, request id, ownership dimensions, and metadata.
+
+- [x] **Step 6: Verify audit red**
+
+Run:
+
+```bash
+PYTHONPATH="$PWD" uv run --no-project --with pytest --with pyyaml pytest aimanager/tests/test_audit.py -q
+```
+
+Expected: FAIL because `aimanager.audit` does not exist.
+
+- [x] **Step 7: Implement audit event contract**
+
+Implement `build_audit_event` with stable required fields, default severities, key lifecycle reason validation, and `unassigned` dimension preservation.
+
+- [x] **Step 8: Verify audit green and document runbook**
+
+Run audit tests and update README with finance reporting and audit event usage notes.
+
+## Task 5: M1-B Acceptance Evidence and Final Verification
 
 **Files:**
 - Modify: `docs/aimanager/1_acceptance_criteria.md`
 - Modify: `aimanager/README.md`
 - Modify: `项目知识图谱.md`
 
-- [ ] **Step 1: Run full local verification**
+- [x] **Step 1: Run full local verification**
 
 Run:
 
@@ -234,15 +293,15 @@ git diff --check
 
 Expected: all PASS.
 
-- [ ] **Step 2: Update acceptance evidence**
+- [x] **Step 2: Update acceptance evidence**
 
 Mark implemented local checks as PASS, live ycapi checks as BLOCKED if no real `YCAPI_API_TOKEN` is provided, and unimplemented M2 business workflows as SKIP or pending according to the acceptance file’s existing format.
 
-- [ ] **Step 3: Update knowledge graph**
+- [x] **Step 3: Update knowledge graph**
 
 Record the ASGI entrypoint, pricing validator, policy tests, and remaining M1-B/M2 work in `项目知识图谱.md`.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add docs/aimanager/1_acceptance_criteria.md aimanager/README.md 项目知识图谱.md
@@ -251,6 +310,6 @@ git commit -m "docs: record AiManager M1 evidence"
 
 ## Self-Review
 
-- Spec coverage: Tasks 1 and 2 cover the hard M1-A P0 items from the synthesis design. Tasks 3 and 4 cover key governance and acceptance evidence. Full spend-log and live ycapi verification remain separate follow-up work because they need a running proxy and real or mock upstream integration.
+- Spec coverage: Tasks 1 and 2 cover the hard M1-A P0 items from the synthesis design. Task 3 covers key governance. Task 4 adds finance aggregation, reconciliation, and audit event foundations. Task 5 records acceptance evidence. Full spend-log, runtime budget blocking, key lifecycle emitters, and live ycapi verification remain separate follow-up work because they need a running proxy and real or mock upstream integration.
 - Placeholder scan: no `TODO`, `TBD`, or unspecified “handle edge cases” instructions are used.
 - Type consistency: all planned Python modules live under `aimanager/`, tests use `pytest`, and commands match the existing project validation pattern.

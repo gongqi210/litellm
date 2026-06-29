@@ -33,7 +33,7 @@
 | AC-18 | `.env.example` 安全 | secret scan | 仅占位变量，无真实密钥 |
 | AC-19 | live smoke 口径 | 缺真实 `YCAPI_API_TOKEN` 时 | 必须标 `BLOCKED`，不得伪装 `PASS` |
 
-## 当前 M1-A 本地证据
+## 当前 M1 本地证据
 
 | 编号 | 当前状态 | 证据 | 说明 |
 | --- | --- | --- | --- |
@@ -44,11 +44,16 @@
 | AC-07 | BLOCKED | `pytest aimanager/tests/test_policy.py` | AiManager 自有 policy error 已返回 OpenAI-compatible body + `request_id`；LiteLLM 原生错误包装仍需集成验证 |
 | AC-08 | BLOCKED | `pytest aimanager/tests/test_governance.py` | 已实现 key request 元数据、预算、限流、有效期、审批人和 shared key `enforced_params` 纯校验；仍需接入 LiteLLM key 创建 API/UI |
 | AC-09 | BLOCKED | `validate_config.py` + `pytest aimanager/tests/test_config.py` | 配置层已禁止零计价和错误 image 键；财务审批价与真实 spend 非零仍需后续验证 |
+| AC-10 | BLOCKED | `pytest aimanager/tests/test_audit.py` | 已定义 `budget_blocked` 审计事件结构；仍需真实预算阈值触发和请求阻断验证 |
+| AC-11 | BLOCKED | `pytest aimanager/tests/test_audit.py` | 已定义 `key_frozen`、`key_revoked` 审计事件结构；仍需接入 LiteLLM key 冻结/撤销操作并调用验证 |
+| AC-12 | BLOCKED | `pytest aimanager/tests/test_finance.py` | 已实现 usage/spend 日/月聚合基础，可按日期、部门、项目、员工、成本中心、key、模型、endpoint、币种和价格版本聚合；仍需接入 LiteLLM `SpendLogs` 和导出任务 |
+| AC-13 | BLOCKED | `pytest aimanager/tests/test_finance.py` | 已实现月度金额字段和 AiManager-vs-ycapi 差异对账基础，采用 `max(10 CNY, 1%)` 物料差异阈值；仍需真实 ycapi 账单导入 |
 | AC-15 | BLOCKED | `docker compose -f aimanager/docker-compose.yml config` | compose 已改为 `python -m uvicorn aimanager.asgi:app` 并设置 `CONFIG_FILE_PATH=/app/config.yaml`；未做真实容器启动和网络暴露检查 |
+| AC-16 | BLOCKED | `pytest aimanager/tests/test_audit.py` | 已定义 passthrough 拦截、预算阻断、key 冻结/撤销事件合同；仍需运行时日志/metrics/告警接入 |
 | AC-17 | BLOCKED | `pytest aimanager/tests/test_policy.py` | policy 层证明不会切 provider passthrough；ycapi 429/5xx、DB down 还未跑 |
 | AC-18 | PASS | `pytest aimanager/tests/test_config.py::test_env_example_uses_non_secret_placeholders`；`rg` secret-like 扫描 | `.env.example` 只保留非密钥占位符，未命中 `sk-`、`AKIA`、`AIza`、private key 等模式 |
 
-上表中的 `BLOCKED` 项不是失败，而是完整 AC 还缺运行中 proxy、mock/live ycapi、spend log、预算阻断、RBAC 或审计证据。M1 试点前必须解除这些 `BLOCKED` 项。
+上表中的 `BLOCKED` 项不是失败，而是完整 AC 还缺运行中 proxy、mock/live ycapi、spend log 数据源、预算阻断、RBAC、审计 emitters 或真实 ycapi 账单证据。M1 试点前必须解除这些 `BLOCKED` 项。
 
 ## M2 业务试点验收项
 
