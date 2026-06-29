@@ -179,11 +179,11 @@ Current note: policy, ASGI wrapper, Dockerfile runtime source copy, compose entr
 - Create: `aimanager/tests/test_governance.py`
 - Modify: `aimanager/README.md`
 
-- [ ] **Step 1: Write failing tests for key metadata**
+- [x] **Step 1: Write failing tests for key metadata**
 
 Test that key creation metadata must include owner, department, project, cost center, scenario, budget, limits, expiry, and approver.
 
-- [ ] **Step 2: Verify red**
+- [x] **Step 2: Verify red**
 
 Run:
 
@@ -193,7 +193,7 @@ PYTHONPATH="$PWD" uv run --no-project --with pytest --with pyyaml pytest aimanag
 
 Expected: FAIL because governance helpers do not exist.
 
-- [ ] **Step 3: Implement metadata validation and shared key defaults**
+- [x] **Step 3: Implement metadata validation and shared key defaults**
 
 Produce helpers that normalize required key metadata and attach:
 
@@ -203,7 +203,7 @@ Produce helpers that normalize required key metadata and attach:
 }
 ```
 
-- [ ] **Step 4: Verify green and document runbook**
+- [x] **Step 4: Verify green and document runbook**
 
 Run governance tests and update README with the key creation runbook.
 

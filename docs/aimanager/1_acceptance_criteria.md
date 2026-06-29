@@ -42,6 +42,7 @@
 | AC-03 | BLOCKED | 需要运行中 proxy 或 mock proxy | 当前仅完成静态模型清单配置，未启动服务验证 `/v1/models` 响应 |
 | AC-05 | BLOCKED | `validate_config.py` + `pytest aimanager/tests/test_config.py` | `ycapi-image-1` 已改用 `input_cost_per_image > 0`；仍需 mock/live 调用证明 spend log 非零 |
 | AC-07 | BLOCKED | `pytest aimanager/tests/test_policy.py` | AiManager 自有 policy error 已返回 OpenAI-compatible body + `request_id`；LiteLLM 原生错误包装仍需集成验证 |
+| AC-08 | BLOCKED | `pytest aimanager/tests/test_governance.py` | 已实现 key request 元数据、预算、限流、有效期、审批人和 shared key `enforced_params` 纯校验；仍需接入 LiteLLM key 创建 API/UI |
 | AC-09 | BLOCKED | `validate_config.py` + `pytest aimanager/tests/test_config.py` | 配置层已禁止零计价和错误 image 键；财务审批价与真实 spend 非零仍需后续验证 |
 | AC-15 | BLOCKED | `docker compose -f aimanager/docker-compose.yml config` | compose 已改为 `python -m uvicorn aimanager.asgi:app` 并设置 `CONFIG_FILE_PATH=/app/config.yaml`；未做真实容器启动和网络暴露检查 |
 | AC-17 | BLOCKED | `pytest aimanager/tests/test_policy.py` | policy 层证明不会切 provider passthrough；ycapi 429/5xx、DB down 还未跑 |

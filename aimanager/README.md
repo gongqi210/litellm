@@ -32,6 +32,43 @@ M1 business API allowlist:
 
 M1 blocks provider passthrough, Google native `:generateContent` routes, `/pass-through-endpoints`, `/config/update`, model write routes, and uncommitted business APIs such as `/v1/embeddings` and `/v1/completions`.
 
+## Key Governance
+
+Before creating LiteLLM virtual keys through API or UI automation, normalize the request with `aimanager.governance.normalize_key_request`.
+
+Required top-level fields:
+
+- `user_id`
+- `team_id`
+- `models`
+- `max_budget`
+- `rpm_limit`
+- `tpm_limit`
+- `duration`
+
+Required metadata:
+
+- `owner`
+- `department_id`
+- `project_id`
+- `cost_center_id`
+- `scenario_l1`
+- `scenario_l2`
+- `approver`
+- `internal_or_external`
+
+Shared keys must call `normalize_key_request(payload, shared_key=True)`, which adds LiteLLM `enforced_params`:
+
+```json
+[
+  "user",
+  "metadata.scenario_l1",
+  "metadata.end_user_principal"
+]
+```
+
+This pure helper is tested locally. It still needs to be wired into the actual LiteLLM key creation flow before AC-08 can be marked fully PASS.
+
 ## Run
 
 ```bash
