@@ -268,6 +268,19 @@ PYTHONPATH="$PWD" uv run --no-project --with playwright python -m aimanager.scri
 
 Expected result: `PASS`, `reject_status=400`, `accept_status=200`, and `policy_code=aimanager_key_governance_invalid`. The smoke logs in to the management Admin UI, opens the create-key modal with a smoke team and model preselected, proves a UI-originated request without governance metadata fails closed before LiteLLM, fills the required governance metadata, verifies the captured UI `/key/generate` request carries user/team/model/budget/rate-limit/duration/metadata fields, creates the key successfully, and deletes the disposable key without printing it. This local smoke injects the trusted `x-aimanager-role=proxy_admin` header to exercise the management surface; it validates governance and normalization, not the production SSO/reverse-proxy RBAC path.
 
+Production admin boundary preflight:
+
+```bash
+PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.smoke_admin_boundary \
+  --business-base-url "$AIMANAGER_BUSINESS_BASE_URL" \
+  --public-admin-url "$AIMANAGER_PUBLIC_ADMIN_URL" \
+  --allowed-sso-redirect-host sso.company.example \
+  --require-business-base-url \
+  --require-public-admin-url
+```
+
+Expected production result: every line is `PASS`. The business URL checks call management-only routes such as `/ui`, `/key/generate`, `/v2/key/info`, `/metrics`, and `/config/field/update` while spoofing `x-aimanager-role=proxy_admin`; those routes must still be blocked by AiManager policy or by an upstream auth/edge layer. These requests do not send `Authorization`, even if `LITELLM_MASTER_KEY` is present in the environment. The public admin URL checks send unauthenticated requests with the same spoofed trusted header; the admin surface must be unreachable, return 401/403/404 from the edge, or redirect only to an explicitly allowed SSO host. A public `POST /key/generate` that reaches AiManager governance and returns `aimanager_key_governance_invalid` is a `FAIL`, because it proves client-supplied trusted headers were not stripped before the management surface. If either production URL is not supplied, the script returns `BLOCKED` when the matching `--require-*` flag is set. Relative or same-origin login redirects are not accepted as SSO evidence; pass the external SSO host explicitly with `--allowed-sso-redirect-host`.
+
 Postgres-down runtime smoke:
 
 ```bash
@@ -323,6 +336,7 @@ Latest local runtime smoke evidence:
 - Runtime admin-surface smoke with rebuilt `aimanager-litellm:local` proved `POST /key/generate` without governance metadata returns HTTP 400, `x-aimanager-policy-code: aimanager_key_governance_invalid`, preserves `x-litellm-call-id`, and emits a matching `policy_blocked` audit event without Authorization/Bearer leakage.
 - Runtime valid shared-key smoke proved `POST /key/generate` returns the required employee/team/model/budget/rate-limit/expiry fields plus department/project/cost-center/scenario/approver metadata and `metadata.enforced_params`; the local smoke key was deleted immediately after verification.
 - Admin UI governed key-creation smoke proved a UI-originated `/key/generate` request without metadata fails closed with HTTP 400 `aimanager_key_governance_invalid`, then succeeds after filling governance metadata, budget, rate limits, duration, team, model, and key alias. The smoke also verified Admin UI numeric string values are normalized by AiManager governance before reaching LiteLLM, and the disposable key was deleted after verification.
+- Admin boundary preflight is available as `aimanager.scripts.smoke_admin_boundary`; it verifies that the business URL does not expose management/UI/key/config routes even with spoofed trusted role headers, and that any public admin URL is unreachable, edge-blocked, or redirected to an allowlisted SSO host. This is an executable production preflight; AC-15 remains blocked until it is run against the real production URLs.
 - Mock ycapi runtime spend smoke proved `POST /v1/chat/completions` and `POST /v1/images/generations` through AiManager write nonzero `LiteLLM_SpendLogs.spend`: chat `3.3e-06`, image `0.01`. Rows were recorded as `openai/gemini-2.5-flash` and `openai/ycapi-image-1`.
 - Mock ycapi runtime budget-block smoke proved a disposable governed key with `max_budget=0.005` can spend `0.01` on a successful image request, then receive HTTP 429 `budget_exceeded` on the next business request. The response and LiteLLM container log both recorded `Budget has been exceeded! ... Current cost: 0.01, Max budget: 0.005`; AiManager also emitted a structured `aimanager_audit_event` with `event_type=budget_blocked`, `severity=high`, and `reason=budget_exceeded`.
 - Mock ycapi runtime key-lifecycle smoke proved admin `POST /key/block` freezes a governed key, subsequent business chat returns HTTP 401 with `Key is blocked`, admin `POST /key/delete` revokes a second governed key, subsequent business chat returns HTTP 401 invalid-token/not-found, and the admin container logs contain `key_frozen` and `key_revoked` `aimanager_audit_event` records with actor `aimanager-ci`, disposition reasons, request ids, key aliases, and governance dimensions.
