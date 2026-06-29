@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from typing import Any, Awaitable, Callable
 from uuid import uuid4
 
@@ -24,6 +25,16 @@ KEY_GOVERNANCE_POLICY_CODE = "aimanager_key_governance_invalid"
 KEY_LIFECYCLE_POLICY_CODE = "aimanager_key_lifecycle_invalid"
 MAX_KEY_GENERATE_BODY_BYTES = 64 * 1024
 MAX_DOWNSTREAM_AUDIT_BODY_BYTES = 16 * 1024
+MAX_DOWNSTREAM_ERROR_BODY_BYTES = 64 * 1024
+SENSITIVE_TEXT_PATTERNS = (
+    (re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]+", re.IGNORECASE), "Bearer [REDACTED]"),
+    (re.compile(r"\bsk-[A-Za-z0-9][A-Za-z0-9._-]*"), "sk-[REDACTED]"),
+    (re.compile(r"([A-Za-z][A-Za-z0-9+.-]*://)[^\s/@:]+:[^\s/@]+@"), r"\1[REDACTED]@"),
+    (
+        re.compile(r"\b(YCAPI_API_TOKEN|api[_-]?key|token)\s*[:=]\s*[^,\s\"']+", re.IGNORECASE),
+        r"\1=[REDACTED]",
+    ),
+)
 
 
 class YcapiOnlyAllowlistMiddleware:
@@ -54,8 +65,12 @@ class YcapiOnlyAllowlistMiddleware:
                 return
 
             request_id = _request_id_from_scope(scope)
-            audit_send = _downstream_budget_audit_send_wrapper(
+            contract_send = _downstream_error_contract_send_wrapper(
                 metrics_send,
+                request_id,
+            )
+            audit_send = _downstream_budget_audit_send_wrapper(
+                contract_send,
                 self.audit_sink,
                 scope,
                 request_id,
@@ -328,6 +343,166 @@ def _http_status_metrics_send_wrapper(
             recorded = True
 
     return wrapped_send
+
+
+def _downstream_error_contract_send_wrapper(
+    send: Send,
+    request_id: str,
+) -> Send:
+    status_code: int | None = None
+    response_headers: dict[str, str] = {}
+    raw_response_headers: list[tuple[Any, Any]] = []
+    body_chunks: list[bytes] = []
+    body_size = 0
+    passthrough = False
+
+    async def wrapped_send(message: Message) -> None:
+        nonlocal body_size, passthrough, raw_response_headers, response_headers, status_code
+
+        message_type = message.get("type")
+        if message_type == "http.response.start":
+            raw_status = message.get("status")
+            status_code = raw_status if isinstance(raw_status, int) else None
+            response_headers = _headers_from_message(message)
+            raw_response_headers = list(message.get("headers") or [])
+            passthrough = status_code is None or status_code < 400
+            if passthrough:
+                await send(message)
+            return
+
+        if message_type != "http.response.body" or passthrough:
+            await send(message)
+            return
+
+        chunk = message.get("body", b"")
+        if isinstance(chunk, str):
+            chunk = chunk.encode("utf-8")
+        if isinstance(chunk, bytes) and body_size < MAX_DOWNSTREAM_ERROR_BODY_BYTES:
+            remaining = MAX_DOWNSTREAM_ERROR_BODY_BYTES - body_size
+            body_chunks.append(chunk[:remaining])
+            body_size += min(len(chunk), remaining)
+
+        if bool(message.get("more_body", False)):
+            return
+
+        final_status = status_code or 500
+        response_request_id = _header(response_headers, "x-litellm-call-id", "x-request-id", default=request_id)
+        response_body = json.dumps(
+            _build_downstream_error_body(
+                status_code=final_status,
+                response_body=b"".join(body_chunks),
+                request_id=response_request_id,
+            ),
+            separators=(",", ":"),
+        ).encode("utf-8")
+        await send(
+            {
+                "type": "http.response.start",
+                "status": final_status,
+                "headers": _downstream_error_response_headers(
+                    raw_response_headers,
+                    request_id=response_request_id,
+                    body=response_body,
+                ),
+            }
+        )
+        await send({"type": "http.response.body", "body": response_body})
+
+    return wrapped_send
+
+
+def _build_downstream_error_body(
+    *,
+    status_code: int,
+    response_body: bytes,
+    request_id: str,
+) -> dict[str, object]:
+    fallback_message = f"Upstream request failed with HTTP {status_code}"
+    fallback_type = _downstream_error_type(status_code)
+    error: dict[str, object] = {
+        "message": fallback_message,
+        "type": fallback_type,
+        "param": None,
+        "code": "upstream_error",
+    }
+
+    parsed_error = _parsed_openai_error(response_body)
+    if parsed_error is not None:
+        message = _safe_error_text(parsed_error.get("message"), fallback=fallback_message)
+        error_type = _safe_error_text(parsed_error.get("type"), fallback=fallback_type)
+        code = _safe_error_text(parsed_error.get("code"), fallback="upstream_error")
+        param = parsed_error.get("param")
+        error = {
+            "message": message,
+            "type": error_type,
+            "param": _safe_error_text(param, fallback="") if isinstance(param, str) else None,
+            "code": code,
+        }
+
+    return {"error": error, "request_id": request_id}
+
+
+def _parsed_openai_error(response_body: bytes) -> dict[str, Any] | None:
+    try:
+        payload: Any = json.loads(response_body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    error = payload.get("error")
+    return error if isinstance(error, dict) else None
+
+
+def _downstream_error_type(status_code: int) -> str:
+    if status_code == 401:
+        return "authentication_error"
+    if status_code == 403:
+        return "permission_error"
+    if status_code == 404:
+        return "not_found_error"
+    if status_code == 429:
+        return "rate_limit_error"
+    if status_code >= 500:
+        return "server_error"
+    return "upstream_error"
+
+
+def _safe_error_text(value: Any, *, fallback: str) -> str:
+    text = _text_from_value(value)
+    if not text:
+        return fallback
+    return _redact_sensitive_text(text)
+
+
+def _redact_sensitive_text(text: str) -> str:
+    redacted = text
+    for pattern, replacement in SENSITIVE_TEXT_PATTERNS:
+        redacted = pattern.sub(replacement, redacted)
+    return redacted
+
+
+def _downstream_error_response_headers(
+    raw_headers: list[tuple[Any, Any]],
+    *,
+    request_id: str,
+    body: bytes,
+) -> list[tuple[bytes, bytes]]:
+    replaced_headers = {b"content-length", b"content-type", b"x-litellm-call-id"}
+    headers: list[tuple[bytes, bytes]] = []
+    for key, value in raw_headers:
+        key_bytes = key if isinstance(key, bytes) else str(key).encode("latin1", errors="replace")
+        if key_bytes.lower() in replaced_headers:
+            continue
+        value_bytes = value if isinstance(value, bytes) else str(value).encode("latin1", errors="replace")
+        headers.append((key_bytes, value_bytes))
+    headers.extend(
+        [
+            (b"content-type", b"application/json"),
+            (b"content-length", str(len(body)).encode("ascii")),
+            (b"x-litellm-call-id", request_id.encode("utf-8")),
+        ]
+    )
+    return headers
 
 
 def _emit_policy_audit_event(

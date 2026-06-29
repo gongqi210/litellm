@@ -246,6 +246,221 @@ def test_allowlist_middleware_forwards_allowed_requests() -> None:
     assert messages[0]["status"] == 204
 
 
+def test_allowlist_middleware_wraps_downstream_json_error_with_request_id() -> None:
+    async def downstream(scope, receive, send) -> None:  # type: ignore[no-untyped-def]
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 429,
+                "headers": [
+                    (b"content-type", b"application/json"),
+                    (b"x-litellm-call-id", b"litellm-downstream-429"),
+                ],
+            }
+        )
+        await send(
+            {
+                "type": "http.response.body",
+                "body": json.dumps(
+                    {
+                        "error": {
+                            "message": "ycapi rate limit exceeded",
+                            "type": "rate_limit_error",
+                            "param": "model",
+                            "code": "rate_limit_exceeded",
+                        }
+                    }
+                ).encode("utf-8"),
+            }
+        )
+
+    app = YcapiOnlyAllowlistMiddleware(downstream)
+
+    messages = asyncio.run(
+        _call_asgi(
+            app,
+            "POST",
+            "/v1/chat/completions",
+            headers=[(b"x-request-id", b"client-request-1")],
+        )
+    )
+
+    assert messages[0]["status"] == 429
+    response_headers = dict(messages[0]["headers"])
+    assert response_headers[b"content-type"] == b"application/json"
+    assert response_headers[b"x-litellm-call-id"] == b"litellm-downstream-429"
+    body = json.loads(messages[1]["body"])
+    assert body == {
+        "error": {
+            "message": "ycapi rate limit exceeded",
+            "type": "rate_limit_error",
+            "param": "model",
+            "code": "rate_limit_exceeded",
+        },
+        "request_id": "litellm-downstream-429",
+    }
+
+
+def test_allowlist_middleware_wraps_downstream_text_error_without_secret_leak() -> None:
+    async def downstream(scope, receive, send) -> None:  # type: ignore[no-untyped-def]
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 503,
+                "headers": [(b"content-type", b"text/plain")],
+            }
+        )
+        await send(
+            {
+                "type": "http.response.body",
+                "body": b"upstream failed with Bearer ycapi-token-secret and sk-test-secret",
+            }
+        )
+
+    app = YcapiOnlyAllowlistMiddleware(downstream)
+
+    messages = asyncio.run(
+        _call_asgi(
+            app,
+            "POST",
+            "/v1/chat/completions",
+            headers=[(b"x-request-id", b"client-request-503")],
+        )
+    )
+
+    assert messages[0]["status"] == 503
+    response_headers = dict(messages[0]["headers"])
+    assert response_headers[b"content-type"] == b"application/json"
+    assert response_headers[b"x-litellm-call-id"] == b"client-request-503"
+    body = json.loads(messages[1]["body"])
+    assert body == {
+        "error": {
+            "message": "Upstream request failed with HTTP 503",
+            "type": "server_error",
+            "param": None,
+            "code": "upstream_error",
+        },
+        "request_id": "client-request-503",
+    }
+    assert "ycapi-token-secret" not in messages[1]["body"].decode("utf-8")
+    assert "sk-test-secret" not in messages[1]["body"].decode("utf-8")
+
+
+def test_allowlist_middleware_falls_back_to_status_error_types() -> None:
+    status_to_type = {
+        401: "authentication_error",
+        403: "permission_error",
+        404: "not_found_error",
+    }
+
+    for status, expected_type in status_to_type.items():
+
+        async def downstream(scope, receive, send, status=status) -> None:  # type: ignore[no-untyped-def]
+            await send({"type": "http.response.start", "status": status, "headers": []})
+            await send(
+                {
+                    "type": "http.response.body",
+                    "body": json.dumps({"error": {"message": f"downstream {status}", "param": None}}).encode(
+                        "utf-8"
+                    ),
+                }
+            )
+
+        app = YcapiOnlyAllowlistMiddleware(downstream)
+
+        messages = asyncio.run(
+            _call_asgi(
+                app,
+                "POST",
+                "/v1/chat/completions",
+                headers=[(b"x-request-id", f"client-request-{status}".encode("ascii"))],
+            )
+        )
+
+        body = json.loads(messages[1]["body"])
+        assert messages[0]["status"] == status
+        assert body["request_id"] == f"client-request-{status}"
+        assert body["error"]["type"] == expected_type
+        assert body["error"]["code"] == "upstream_error"
+
+
+def test_allowlist_middleware_passes_success_streaming_chunks_through() -> None:
+    async def downstream(scope, receive, send) -> None:  # type: ignore[no-untyped-def]
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [(b"content-type", b"text/event-stream")],
+            }
+        )
+        await send({"type": "http.response.body", "body": b"data: first\n\n", "more_body": True})
+        await send({"type": "http.response.body", "body": b"data: second\n\n", "more_body": False})
+
+    app = YcapiOnlyAllowlistMiddleware(downstream)
+
+    messages = asyncio.run(_call_asgi(app, "POST", "/v1/chat/completions"))
+
+    assert messages == [
+        {
+            "type": "http.response.start",
+            "status": 200,
+            "headers": [(b"content-type", b"text/event-stream")],
+        },
+        {"type": "http.response.body", "body": b"data: first\n\n", "more_body": True},
+        {"type": "http.response.body", "body": b"data: second\n\n", "more_body": False},
+    ]
+
+
+def test_allowlist_middleware_redacts_json_error_message_secrets() -> None:
+    async def downstream(scope, receive, send) -> None:  # type: ignore[no-untyped-def]
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 500,
+                "headers": [(b"content-type", b"application/json")],
+            }
+        )
+        await send(
+            {
+                "type": "http.response.body",
+                "body": json.dumps(
+                    {
+                        "error": {
+                            "message": (
+                                "upstream failed with Bearer ycapi-token-secret, "
+                                "sk-test-secret, and postgresql://dbuser:dbpassword@postgres/aimanager"
+                            ),
+                            "type": "server_error",
+                            "param": None,
+                            "code": "upstream_failed",
+                        }
+                    }
+                ).encode("utf-8"),
+            }
+        )
+
+    app = YcapiOnlyAllowlistMiddleware(downstream)
+
+    messages = asyncio.run(
+        _call_asgi(
+            app,
+            "POST",
+            "/v1/chat/completions",
+            headers=[(b"x-request-id", b"client-request-redact")],
+        )
+    )
+
+    body = json.loads(messages[1]["body"])
+    message = body["error"]["message"]
+    assert body["request_id"] == "client-request-redact"
+    assert "ycapi-token-secret" not in message
+    assert "sk-test-secret" not in message
+    assert "dbpassword" not in message
+    assert "Bearer [REDACTED]" in message
+    assert "sk-[REDACTED]" in message
+    assert "postgresql://[REDACTED]@postgres/aimanager" in message
+
+
 def test_management_surface_middleware_forwards_management_requests() -> None:
     calls: list[dict[str, object]] = []
 
@@ -573,7 +788,9 @@ def test_allowlist_middleware_emits_budget_blocked_audit_for_downstream_budget_e
     )
 
     assert messages[0]["status"] == 429
-    assert json.loads(messages[1]["body"])["error"]["type"] == "budget_exceeded"
+    response_body = json.loads(messages[1]["body"])
+    assert response_body["request_id"] == "req-budget-1"
+    assert response_body["error"]["type"] == "budget_exceeded"
     assert len(audit_events) == 1
     event = audit_events[0]
     assert event["event_type"] == "budget_blocked"

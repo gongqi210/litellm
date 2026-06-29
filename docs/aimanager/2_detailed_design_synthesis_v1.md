@@ -320,7 +320,8 @@ M1 采用方案 B：AiManager 中间件或响应包装层给自有拦截错误�
 
 - 自有白名单拦截错误生成 request id 并写日志。
 - LiteLLM 已产生 `x-litellm-call-id` 时，body 中 `request_id` 与该 header 对齐。
-- 不泄露 token、数据库密码、供应商 key、完整 prompt。
+- 下游返回 JSON error 时保留 `message`、`type`、`param`、`code`；下游返回非 JSON 4xx/5xx 时规范化为 OpenAI-compatible JSON。
+- 不泄露 token、数据库密码、供应商 key、DSN 密码、完整 prompt；文本错误默认使用通用 upstream message，JSON 字段做敏感串脱敏。
 - streaming 中的预调用错误也必须符合该错误体；streaming 已开始后的上游中断按 SDK 可处理错误记录日志和 spend/failure。
 
 AC-07 断言 body `request_id` 与 header 关联一致，且 401/403/404/429/5xx 类型稳定。
@@ -461,7 +462,7 @@ M1 Admin UI 不是业务门户。总经理、市场、财务、部门管理员�
 - [ ] `aimanager/config.yaml` 不再含无效的 `output_cost_per_image` 作为图片计价字段。
 - [ ] `/config/update` 和模型写路径被显式拒绝。
 - [ ] shared key 创建时写入 `enforced_params`。
-- [ ] 错误响应体含 `request_id`，header 保留 `x-litellm-call-id`。
+- [x] 错误响应体含 `request_id`，header 保留 `x-litellm-call-id`。
 - [ ] AC-01 到 AC-19 的测试能因真实缺陷失败。
 - [ ] 没有真实 ycapi token 的 live 项标记 `BLOCKED`，不伪装通过。
 
