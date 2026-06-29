@@ -308,11 +308,19 @@ def _delete_virtual_key(
     virtual_key: str,
     request_marker: str,
 ) -> None:
+    headers = _auth_headers(master_key, request_id=f"delete-key-{request_marker}")
+    headers.update(
+        {
+            "litellm-changed-by": "aimanager-ci",
+            "x-aimanager-actor": "aimanager-ci",
+            "x-aimanager-reason": "AiManager smoke cleanup",
+        }
+    )
     try:
         _post_json(
             fetch,
             _join_url(admin_base_url, "/key/delete"),
-            _auth_headers(master_key, request_id=f"delete-key-{request_marker}"),
+            headers,
             {"keys": [virtual_key]},
         )
     except Exception:

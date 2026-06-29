@@ -558,6 +558,174 @@ def test_allowlist_middleware_emits_budget_blocked_audit_for_downstream_budget_e
     assert "must-not-be-logged" not in json.dumps(event)
 
 
+def test_management_surface_emits_key_frozen_audit_after_successful_block() -> None:
+    audit_events: list[dict[str, object]] = []
+    forwarded_bodies: list[dict[str, object]] = []
+
+    async def downstream(scope, receive, send) -> None:  # type: ignore[no-untyped-def]
+        message = await receive()
+        forwarded_bodies.append(json.loads(message["body"]))
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [(b"x-litellm-call-id", b"req-freeze-1")],
+            }
+        )
+        await send(
+            {
+                "type": "http.response.body",
+                "body": json.dumps({"key_alias": "market-key", "blocked": True}).encode("utf-8"),
+            }
+        )
+
+    app = YcapiOnlyAllowlistMiddleware(
+        downstream,
+        audit_sink=audit_events.append,
+        surface="management",
+    )
+
+    messages = asyncio.run(
+        _call_asgi(
+            app,
+            "POST",
+            "/key/block",
+            headers=[
+                (b"x-request-id", b"req-freeze-1"),
+                (b"x-aimanager-actor", b"security-admin"),
+                (b"x-aimanager-reason", b"suspected token exposure"),
+                (b"x-aimanager-key-alias", b"market-key"),
+                (b"x-aimanager-team-id", b"team_market"),
+                (b"x-aimanager-department-id", b"dept_market"),
+                (b"x-aimanager-project-id", b"proj_launch"),
+                (b"x-aimanager-cost-center-id", b"cc_growth"),
+            ],
+            body=json.dumps({"key": "sk-test-virtual"}).encode("utf-8"),
+        )
+    )
+
+    assert messages[0]["status"] == 200
+    assert forwarded_bodies == [{"key": "sk-test-virtual"}]
+    assert len(audit_events) == 1
+    event = audit_events[0]
+    assert event["event_type"] == "key_frozen"
+    assert event["severity"] == "high"
+    assert event["actor"] == "security-admin"
+    assert event["reason"] == "suspected token exposure"
+    assert event["subject_key_alias"] == "market-key"
+    assert event["team_id"] == "team_market"
+    assert event["department_id"] == "dept_market"
+    assert event["project_id"] == "proj_launch"
+    assert event["cost_center_id"] == "cc_growth"
+    assert event["request_id"] == "req-freeze-1"
+    assert event["metadata"]["method"] == "POST"
+    assert event["metadata"]["path"] == "/key/block"
+    assert event["metadata"]["status_code"] == 200
+    assert event["metadata"]["operation"] == "freeze"
+
+
+def test_management_surface_emits_key_revoked_audit_after_successful_delete() -> None:
+    audit_events: list[dict[str, object]] = []
+    forwarded_bodies: list[dict[str, object]] = []
+
+    async def downstream(scope, receive, send) -> None:  # type: ignore[no-untyped-def]
+        message = await receive()
+        forwarded_bodies.append(json.loads(message["body"]))
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [(b"x-litellm-call-id", b"req-revoke-1")],
+            }
+        )
+        await send(
+            {
+                "type": "http.response.body",
+                "body": json.dumps({"deleted_keys": ["sk-test-virtual"]}).encode("utf-8"),
+            }
+        )
+
+    app = YcapiOnlyAllowlistMiddleware(
+        downstream,
+        audit_sink=audit_events.append,
+        surface="management",
+    )
+
+    messages = asyncio.run(
+        _call_asgi(
+            app,
+            "POST",
+            "/key/delete",
+            headers=[
+                (b"x-request-id", b"req-revoke-1"),
+                (b"x-aimanager-actor", b"security-admin"),
+                (b"x-aimanager-reason", b"credential rotation completed"),
+                (b"x-aimanager-key-alias", b"market-key"),
+                (b"x-aimanager-team-id", b"team_market"),
+                (b"x-aimanager-department-id", b"dept_market"),
+                (b"x-aimanager-project-id", b"proj_launch"),
+                (b"x-aimanager-cost-center-id", b"cc_growth"),
+            ],
+            body=json.dumps({"keys": ["sk-test-virtual"]}).encode("utf-8"),
+        )
+    )
+
+    assert messages[0]["status"] == 200
+    assert forwarded_bodies == [{"keys": ["sk-test-virtual"]}]
+    assert len(audit_events) == 1
+    event = audit_events[0]
+    assert event["event_type"] == "key_revoked"
+    assert event["severity"] == "critical"
+    assert event["actor"] == "security-admin"
+    assert event["reason"] == "credential rotation completed"
+    assert event["subject_key_alias"] == "market-key"
+    assert event["team_id"] == "team_market"
+    assert event["department_id"] == "dept_market"
+    assert event["project_id"] == "proj_launch"
+    assert event["cost_center_id"] == "cc_growth"
+    assert event["request_id"] == "req-revoke-1"
+    assert event["metadata"]["method"] == "POST"
+    assert event["metadata"]["path"] == "/key/delete"
+    assert event["metadata"]["status_code"] == 200
+    assert event["metadata"]["operation"] == "revoke"
+
+
+def test_management_surface_rejects_key_lifecycle_without_disposition_headers() -> None:
+    audit_events: list[dict[str, object]] = []
+
+    async def downstream(scope, receive, send) -> None:  # type: ignore[no-untyped-def]
+        raise AssertionError("key lifecycle without disposition headers must not reach LiteLLM")
+
+    app = YcapiOnlyAllowlistMiddleware(
+        downstream,
+        audit_sink=audit_events.append,
+        surface="management",
+    )
+
+    messages = asyncio.run(
+        _call_asgi(
+            app,
+            "POST",
+            "/key/block",
+            headers=[(b"x-request-id", b"req-missing-disposition")],
+            body=json.dumps({"key": "sk-test-virtual"}).encode("utf-8"),
+        )
+    )
+
+    assert messages[0]["status"] == 400
+    body = json.loads(messages[1]["body"])
+    assert body["request_id"] == "req-missing-disposition"
+    assert body["error"]["code"] == "aimanager_key_lifecycle_invalid"
+    assert "x-aimanager-actor" in body["error"]["message"]
+    assert "x-aimanager-reason" in body["error"]["message"]
+    assert len(audit_events) == 1
+    event = audit_events[0]
+    assert event["event_type"] == "policy_blocked"
+    assert event["reason"] == "aimanager_key_lifecycle_invalid"
+    assert event["metadata"]["path"] == "/key/block"
+    assert event["metadata"]["status_code"] == 400
+
+
 def test_allowlist_middleware_ignores_non_http_scopes() -> None:
     calls: list[dict[str, object]] = []
 

@@ -5,6 +5,7 @@ import json
 from aimanager.scripts.smoke_blocked_routes import HttpResponse
 from aimanager.scripts.smoke_spend_logs import (
     SpendLogRow,
+    _delete_virtual_key,
     build_governed_key_payload,
     parse_spend_log_rows,
     run_spend_log_smoke,
@@ -86,6 +87,8 @@ def test_spend_log_smoke_passes_when_chat_and_image_spend_rows_are_nonzero() -> 
             assert payload["metadata"]["scenario_l1"] == "engineering"  # type: ignore[index]
             return _json_response({"created": 1, "data": [{"url": "https://example.invalid/smoke.png"}]})
         if url.endswith("/key/delete"):
+            assert headers["x-aimanager-actor"] == "aimanager-ci"
+            assert headers["x-aimanager-reason"] == "AiManager smoke cleanup"
             return _json_response({"deleted": True})
         raise AssertionError(f"unexpected URL {url}")
 
@@ -136,6 +139,8 @@ def test_spend_log_smoke_fails_when_image_spend_is_zero() -> None:
         if url.endswith("/v1/chat/completions") or url.endswith("/v1/images/generations"):
             return _json_response({"ok": True})
         if url.endswith("/key/delete"):
+            assert headers["x-aimanager-actor"] == "aimanager-ci"
+            assert headers["x-aimanager-reason"] == "AiManager smoke cleanup"
             return _json_response({"deleted": True})
         raise AssertionError(f"unexpected URL {url}")
 
@@ -171,6 +176,31 @@ def test_spend_log_smoke_fails_when_image_spend_is_zero() -> None:
     assert result.chat_spend == 0.000003
     assert result.image_spend == 0.0
     assert "image spend log missing or zero" in result.detail
+
+
+def test_delete_virtual_key_sends_disposition_headers_for_lifecycle_audit() -> None:
+    observed_headers: dict[str, str] = {}
+
+    def fetch(method: str, url: str, headers: dict[str, str], body: bytes | None) -> HttpResponse:
+        nonlocal observed_headers
+        assert method == "POST"
+        assert url == "http://localhost:4001/key/delete"
+        observed_headers = headers
+        assert body is not None
+        assert json.loads(body.decode("utf-8")) == {"keys": ["sk-cleanup"]}
+        return _json_response({"deleted_keys": ["sk-cleanup"]})
+
+    _delete_virtual_key(
+        fetch,
+        "http://localhost:4001",
+        "local-master-key",
+        "sk-cleanup",
+        "cleanup-123",
+    )
+
+    assert observed_headers["x-request-id"] == "delete-key-cleanup-123"
+    assert observed_headers["x-aimanager-actor"] == "aimanager-ci"
+    assert observed_headers["x-aimanager-reason"] == "AiManager smoke cleanup"
 
 
 def test_parse_spend_log_rows_accepts_psql_json_output() -> None:

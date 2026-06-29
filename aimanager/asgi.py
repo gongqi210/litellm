@@ -19,6 +19,7 @@ AuditSink = Callable[[dict[str, Any]], None]
 
 LOGGER = logging.getLogger("aimanager.audit")
 KEY_GOVERNANCE_POLICY_CODE = "aimanager_key_governance_invalid"
+KEY_LIFECYCLE_POLICY_CODE = "aimanager_key_lifecycle_invalid"
 MAX_KEY_GENERATE_BODY_BYTES = 64 * 1024
 MAX_DOWNSTREAM_AUDIT_BODY_BYTES = 16 * 1024
 
@@ -50,6 +51,23 @@ class YcapiOnlyAllowlistMiddleware:
                 scope,
                 request_id,
             )
+            if self.surface == "management" and _is_key_lifecycle_route(method, path):
+                disposition_error = _key_lifecycle_disposition_error(scope)
+                if disposition_error:
+                    _emit_key_lifecycle_policy_audit_event(
+                        self.audit_sink,
+                        scope,
+                        request_id,
+                        disposition_error,
+                    )
+                    await _send_key_lifecycle_error(send, disposition_error, request_id)
+                    return
+                audit_send = _downstream_key_lifecycle_audit_send_wrapper(
+                    audit_send,
+                    self.audit_sink,
+                    scope,
+                    request_id,
+                )
             if self.surface == "management" and _is_key_generate_route(method, path):
                 payload: dict[str, Any] | None = None
                 try:
@@ -119,12 +137,32 @@ def _request_id_from_scope(scope: Scope) -> str:
 
 
 def _is_key_generate_route(method: str, path: str) -> bool:
+    normalized_path = _normalized_request_path(path)
+    return method.upper() == "POST" and normalized_path == "/key/generate"
+
+
+def _is_key_lifecycle_route(method: str, path: str) -> bool:
+    if method.upper() != "POST":
+        return False
+    return _key_lifecycle_event(path) is not None
+
+
+def _key_lifecycle_event(path: str) -> tuple[str, str] | None:
+    normalized_path = _normalized_request_path(path)
+    if normalized_path == "/key/block":
+        return "key_frozen", "freeze"
+    if normalized_path == "/key/delete":
+        return "key_revoked", "revoke"
+    return None
+
+
+def _normalized_request_path(path: str) -> str:
     normalized_path = path.split("?", 1)[0].strip() or "/"
     if not normalized_path.startswith("/"):
         normalized_path = f"/{normalized_path}"
     if len(normalized_path) > 1:
         normalized_path = normalized_path.rstrip("/")
-    return method.upper() == "POST" and normalized_path == "/key/generate"
+    return normalized_path
 
 
 async def _read_request_body(receive: Receive) -> bytes:
@@ -227,6 +265,27 @@ async def _send_key_governance_error(send: Send, message: str, request_id: str) 
     await send({"type": "http.response.body", "body": body})
 
 
+async def _send_key_lifecycle_error(send: Send, message: str, request_id: str) -> None:
+    response = {
+        "error": {
+            "message": f"AiManager key lifecycle rejects key disposition: {message}",
+            "type": "invalid_request_error",
+            "param": None,
+            "code": KEY_LIFECYCLE_POLICY_CODE,
+        },
+        "request_id": request_id,
+    }
+    body = json.dumps(response).encode("utf-8")
+    headers = [
+        (b"content-type", b"application/json"),
+        (b"content-length", str(len(body)).encode("ascii")),
+        (b"x-litellm-call-id", request_id.encode("utf-8")),
+        (b"x-aimanager-policy-code", KEY_LIFECYCLE_POLICY_CODE.encode("utf-8")),
+    ]
+    await send({"type": "http.response.start", "status": 400, "headers": headers})
+    await send({"type": "http.response.body", "body": body})
+
+
 def _emit_policy_audit_event(
     audit_sink: AuditSink,
     scope: Scope,
@@ -313,6 +372,39 @@ def _emit_key_governance_audit_event(
         LOGGER.exception("failed_to_emit_aimanager_audit_event request_id=%s", request_id)
 
 
+def _emit_key_lifecycle_policy_audit_event(
+    audit_sink: AuditSink,
+    scope: Scope,
+    request_id: str,
+    disposition_error: str,
+) -> None:
+    headers = _headers_from_scope(scope)
+    method = str(scope.get("method", ""))
+    path = str(scope.get("path", ""))
+    event = build_audit_event(
+        "policy_blocked",
+        actor=_header(headers, "x-aimanager-actor", default="aimanager-policy"),
+        subject_key_alias=_header(headers, "x-aimanager-key-alias", "x-litellm-key-alias"),
+        team_id=_header(headers, "x-aimanager-team-id"),
+        department_id=_header(headers, "x-aimanager-department-id"),
+        project_id=_header(headers, "x-aimanager-project-id"),
+        cost_center_id=_header(headers, "x-aimanager-cost-center-id"),
+        reason=KEY_LIFECYCLE_POLICY_CODE,
+        request_id=request_id,
+        metadata={
+            "method": method,
+            "path": path,
+            "policy_code": KEY_LIFECYCLE_POLICY_CODE,
+            "status_code": 400,
+            "disposition_error": disposition_error,
+        },
+    )
+    try:
+        audit_sink(event)
+    except Exception:
+        LOGGER.exception("failed_to_emit_aimanager_audit_event request_id=%s", request_id)
+
+
 def _downstream_budget_audit_send_wrapper(
     send: Send,
     audit_sink: AuditSink,
@@ -361,6 +453,86 @@ def _downstream_budget_audit_send_wrapper(
         )
 
     return wrapped_send
+
+
+def _downstream_key_lifecycle_audit_send_wrapper(
+    send: Send,
+    audit_sink: AuditSink,
+    scope: Scope,
+    request_id: str,
+) -> Send:
+    status_code: int | None = None
+    response_headers: dict[str, str] = {}
+    emitted = False
+
+    async def wrapped_send(message: Message) -> None:
+        nonlocal emitted, response_headers, status_code
+
+        await send(message)
+
+        message_type = message.get("type")
+        if message_type == "http.response.start":
+            raw_status = message.get("status")
+            status_code = raw_status if isinstance(raw_status, int) else None
+            response_headers = _headers_from_message(message)
+            return
+
+        if message_type != "http.response.body" or emitted or status_code is None:
+            return
+        if status_code < 200 or status_code >= 300:
+            return
+        if bool(message.get("more_body", False)):
+            return
+
+        emitted = _emit_downstream_key_lifecycle_audit_event(
+            audit_sink,
+            scope,
+            response_headers,
+            status_code,
+            request_id,
+        )
+
+    return wrapped_send
+
+
+def _emit_downstream_key_lifecycle_audit_event(
+    audit_sink: AuditSink,
+    scope: Scope,
+    response_headers: dict[str, str],
+    status_code: int,
+    request_id: str,
+) -> bool:
+    method = str(scope.get("method", ""))
+    path = str(scope.get("path", ""))
+    lifecycle_event = _key_lifecycle_event(path)
+    if method.upper() != "POST" or lifecycle_event is None:
+        return False
+
+    event_type, operation = lifecycle_event
+    headers = _headers_from_scope(scope)
+    response_request_id = _header(response_headers, "x-litellm-call-id", "x-request-id")
+    event = build_audit_event(
+        event_type,
+        actor=_header(headers, "x-aimanager-actor", default="aimanager-policy"),
+        subject_key_alias=_header(headers, "x-aimanager-key-alias", "x-litellm-key-alias"),
+        team_id=_header(headers, "x-aimanager-team-id"),
+        department_id=_header(headers, "x-aimanager-department-id"),
+        project_id=_header(headers, "x-aimanager-project-id"),
+        cost_center_id=_header(headers, "x-aimanager-cost-center-id"),
+        reason=_header(headers, "x-aimanager-reason", "x-aimanager-disposition-reason"),
+        request_id=response_request_id or request_id,
+        metadata={
+            "method": method,
+            "path": path,
+            "status_code": status_code,
+            "operation": operation,
+        },
+    )
+    try:
+        audit_sink(event)
+    except Exception:
+        LOGGER.exception("failed_to_emit_aimanager_audit_event request_id=%s", request_id)
+    return True
 
 
 def _emit_downstream_budget_audit_event(
@@ -439,6 +611,18 @@ def _audit_event_type_for_policy_code(policy_code: str) -> str:
 
 def _headers_from_scope(scope: Scope) -> dict[str, str]:
     return _headers_from_pairs(scope.get("headers") or [])
+
+
+def _key_lifecycle_disposition_error(scope: Scope) -> str:
+    headers = _headers_from_scope(scope)
+    missing: list[str] = []
+    if not _header(headers, "x-aimanager-actor"):
+        missing.append("x-aimanager-actor")
+    if not _header(headers, "x-aimanager-reason", "x-aimanager-disposition-reason"):
+        missing.append("x-aimanager-reason")
+    if not missing:
+        return ""
+    return f"missing required disposition header(s): {', '.join(missing)}"
 
 
 def _headers_from_pairs(pairs: Any) -> dict[str, str]:

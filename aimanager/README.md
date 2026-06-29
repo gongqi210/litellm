@@ -116,6 +116,8 @@ Each event carries `event_id`, `event_type`, `severity`, `occurred_at`, `actor`,
 
 `aimanager.asgi` emits structured `aimanager_audit_event=...` logs before returning policy 403 responses. Provider/native bypass attempts emit `passthrough_blocked`; config/model writes and default-denied routes emit `policy_blocked`. Only allowlisted governance headers are copied into audit dimensions; Authorization and Cookie values are not logged.
 
+On the management surface, key lifecycle operations are also governed before they reach LiteLLM. `POST /key/block` and `POST /key/delete` require `x-aimanager-actor` plus either `x-aimanager-reason` or `x-aimanager-disposition-reason`; missing disposition headers return HTTP 400 with `error.code=aimanager_key_lifecycle_invalid`. Successful `/key/block` responses emit `key_frozen`; successful `/key/delete` responses emit `key_revoked`. The downstream LiteLLM response body is preserved.
+
 ## Run
 
 ```bash
@@ -194,6 +196,21 @@ PYTHONPATH="$PWD" uv run --no-project --with pyyaml python -m aimanager.scripts.
 
 Expected result: `PASS`, `prime_status=200`, `blocked_status=429`, `budget_error_type=budget_exceeded`, and a `REASON` line containing `Budget has been exceeded`. The smoke creates a governed disposable employee key with `max_budget` below one image call, primes spend through the business image endpoint, verifies the next business request is blocked by LiteLLM key budget enforcement, and deletes the key. `LiteLLM_VerificationToken.spend` is batch-written and can still show `0.0` when the real-time spend counter has already blocked the request, so the 429 response is the primary proof.
 
+Mock ycapi runtime key lifecycle smoke:
+
+```bash
+LITELLM_MASTER_KEY=aimanager-local-master-key \
+PYTHONPATH="$PWD" uv run --no-project --with pyyaml python -m aimanager.scripts.smoke_key_lifecycle \
+  --master-key aimanager-local-master-key \
+  --business-base-url http://localhost:4000 \
+  --admin-base-url http://localhost:4001 \
+  --project-directory "$PWD" \
+  --poll-attempts 60 \
+  --poll-interval 1
+```
+
+Expected result: `PASS`, `freeze_status=200`, `freeze_reject_status=401`, `revoke_status=200`, `revoke_reject_status=401`, and `audit_events=key_frozen,key_revoked`. The smoke creates two disposable governed employee keys, proves each key can call the business surface before disposition, freezes one key through the admin surface and verifies subsequent business inference is rejected with `Key is blocked`, revokes the other key and verifies subsequent business inference is rejected as an invalid token, then polls the admin container logs for structured `key_frozen` and `key_revoked` audit events with actor, reason, request id, key alias, and governance dimensions. It never prints the virtual key.
+
 The rendered default compose config must show `build.target: runtime`, `entrypoint: ["python", "-m", "aimanager.litellm_entrypoint"]`, `--config=/app/config.yaml`, `--enforce_prisma_migration_check`, `AIMANAGER_ROUTE_SURFACE=business`, and `LITELLM_LOCAL_MODEL_COST_MAP=True`. The rendered `--profile admin` config must also show `aimanager-admin`, `AIMANAGER_ROUTE_SURFACE=management`, `LITELLM_LOCAL_MODEL_COST_MAP=True`, and `127.0.0.1:4001:4000`.
 
 Smoke test after `.env` is populated:
@@ -233,5 +250,6 @@ Latest local runtime smoke evidence:
 - Runtime valid shared-key smoke proved `POST /key/generate` returns the required employee/team/model/budget/rate-limit/expiry fields plus department/project/cost-center/scenario/approver metadata and `metadata.enforced_params`; the local smoke key was deleted immediately after verification.
 - Mock ycapi runtime spend smoke proved `POST /v1/chat/completions` and `POST /v1/images/generations` through AiManager write nonzero `LiteLLM_SpendLogs.spend`: chat `3.3e-06`, image `0.01`. Rows were recorded as `openai/gemini-2.5-flash` and `openai/ycapi-image-1`.
 - Mock ycapi runtime budget-block smoke proved a disposable governed key with `max_budget=0.005` can spend `0.01` on a successful image request, then receive HTTP 429 `budget_exceeded` on the next business request. The response and LiteLLM container log both recorded `Budget has been exceeded! ... Current cost: 0.01, Max budget: 0.005`; AiManager also emitted a structured `aimanager_audit_event` with `event_type=budget_blocked`, `severity=high`, and `reason=budget_exceeded`.
+- Mock ycapi runtime key-lifecycle smoke proved admin `POST /key/block` freezes a governed key, subsequent business chat returns HTTP 401 with `Key is blocked`, admin `POST /key/delete` revokes a second governed key, subsequent business chat returns HTTP 401 invalid-token/not-found, and the admin container logs contain `key_frozen` and `key_revoked` `aimanager_audit_event` records with actor `aimanager-ci`, disposition reasons, request ids, key aliases, and governance dimensions.
 
-Remaining before business trial: key lifecycle audit emitters, metrics/alerting, UI automation for the key creation flow, and live ycapi smoke with the production token policy.
+Remaining before business trial: metrics/alerting, UI automation for the key creation flow, finance export/ycapi bill ingestion, RBAC verification, broader failure-mode checks, and live ycapi smoke with the production token policy.
