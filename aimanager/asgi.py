@@ -20,6 +20,7 @@ AuditSink = Callable[[dict[str, Any]], None]
 LOGGER = logging.getLogger("aimanager.audit")
 KEY_GOVERNANCE_POLICY_CODE = "aimanager_key_governance_invalid"
 MAX_KEY_GENERATE_BODY_BYTES = 64 * 1024
+MAX_DOWNSTREAM_AUDIT_BODY_BYTES = 16 * 1024
 
 
 class YcapiOnlyAllowlistMiddleware:
@@ -42,8 +43,14 @@ class YcapiOnlyAllowlistMiddleware:
         path = str(scope.get("path", ""))
         decision = evaluate_route(method, path, surface=self.surface)
         if decision.allowed:
+            request_id = _request_id_from_scope(scope)
+            audit_send = _downstream_budget_audit_send_wrapper(
+                send,
+                self.audit_sink,
+                scope,
+                request_id,
+            )
             if self.surface == "management" and _is_key_generate_route(method, path):
-                request_id = _request_id_from_scope(scope)
                 payload: dict[str, Any] | None = None
                 try:
                     raw_body = await _read_request_body(receive)
@@ -63,10 +70,10 @@ class YcapiOnlyAllowlistMiddleware:
                 await self.app(
                     _scope_with_json_body_headers(scope, normalized_body),
                     _receive_once(normalized_body),
-                    send,
+                    audit_send,
                 )
                 return
-            await self.app(scope, receive, send)
+            await self.app(scope, receive, audit_send)
             return
 
         request_id = _request_id_from_scope(scope)
@@ -306,6 +313,124 @@ def _emit_key_governance_audit_event(
         LOGGER.exception("failed_to_emit_aimanager_audit_event request_id=%s", request_id)
 
 
+def _downstream_budget_audit_send_wrapper(
+    send: Send,
+    audit_sink: AuditSink,
+    scope: Scope,
+    request_id: str,
+) -> Send:
+    status_code: int | None = None
+    response_headers: dict[str, str] = {}
+    body_chunks: list[bytes] = []
+    body_size = 0
+    emitted = False
+
+    async def wrapped_send(message: Message) -> None:
+        nonlocal body_size, emitted, response_headers, status_code
+
+        await send(message)
+
+        message_type = message.get("type")
+        if message_type == "http.response.start":
+            raw_status = message.get("status")
+            status_code = raw_status if isinstance(raw_status, int) else None
+            response_headers = _headers_from_message(message)
+            return
+
+        if message_type != "http.response.body" or status_code != 429 or emitted:
+            return
+
+        chunk = message.get("body", b"")
+        if isinstance(chunk, str):
+            chunk = chunk.encode("utf-8")
+        if isinstance(chunk, bytes) and body_size < MAX_DOWNSTREAM_AUDIT_BODY_BYTES:
+            remaining = MAX_DOWNSTREAM_AUDIT_BODY_BYTES - body_size
+            body_chunks.append(chunk[:remaining])
+            body_size += min(len(chunk), remaining)
+
+        if bool(message.get("more_body", False)):
+            return
+
+        emitted = _emit_downstream_budget_audit_event(
+            audit_sink,
+            scope,
+            response_headers,
+            status_code,
+            b"".join(body_chunks),
+            request_id,
+        )
+
+    return wrapped_send
+
+
+def _emit_downstream_budget_audit_event(
+    audit_sink: AuditSink,
+    scope: Scope,
+    response_headers: dict[str, str],
+    status_code: int,
+    response_body: bytes,
+    request_id: str,
+) -> bool:
+    budget_error = _budget_error_from_response_body(response_body)
+    if budget_error is None:
+        return False
+
+    downstream_error_type, downstream_error_message = budget_error
+    headers = _headers_from_scope(scope)
+    method = str(scope.get("method", ""))
+    path = str(scope.get("path", ""))
+    response_request_id = _header(response_headers, "x-litellm-call-id", "x-request-id")
+    event = build_audit_event(
+        "budget_blocked",
+        actor=_header(headers, "x-aimanager-actor", default="aimanager-policy"),
+        subject_key_alias=_header(headers, "x-aimanager-key-alias", "x-litellm-key-alias"),
+        team_id=_header(headers, "x-aimanager-team-id"),
+        department_id=_header(headers, "x-aimanager-department-id"),
+        project_id=_header(headers, "x-aimanager-project-id"),
+        cost_center_id=_header(headers, "x-aimanager-cost-center-id"),
+        reason="budget_exceeded",
+        request_id=response_request_id or request_id,
+        metadata={
+            "method": method,
+            "path": path,
+            "status_code": status_code,
+            "downstream_error_type": downstream_error_type,
+            "downstream_error_message": downstream_error_message,
+        },
+    )
+    try:
+        audit_sink(event)
+    except Exception:
+        LOGGER.exception("failed_to_emit_aimanager_audit_event request_id=%s", request_id)
+    return True
+
+
+def _budget_error_from_response_body(body: bytes) -> tuple[str, str] | None:
+    try:
+        payload: Any = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    error = payload.get("error")
+    if not isinstance(error, dict):
+        return None
+    error_type = _text_from_value(error.get("type") or error.get("code"))
+    message = _text_from_value(error.get("message"))
+    if error_type.lower() == "budget_exceeded":
+        return "budget_exceeded", message
+    normalized_message = message.lower()
+    if "budget has been exceeded" in normalized_message or (
+        "current cost" in normalized_message and "max budget" in normalized_message
+    ):
+        return error_type or "budget_exceeded", message
+    return None
+
+
+def _headers_from_message(message: Message) -> dict[str, str]:
+    return _headers_from_pairs(message.get("headers") or [])
+
+
 def _audit_event_type_for_policy_code(policy_code: str) -> str:
     if policy_code in {"aimanager_passthrough_blocked", "aimanager_google_native_blocked"}:
         return "passthrough_blocked"
@@ -313,8 +438,12 @@ def _audit_event_type_for_policy_code(policy_code: str) -> str:
 
 
 def _headers_from_scope(scope: Scope) -> dict[str, str]:
+    return _headers_from_pairs(scope.get("headers") or [])
+
+
+def _headers_from_pairs(pairs: Any) -> dict[str, str]:
     headers: dict[str, str] = {}
-    for key, value in scope.get("headers") or []:
+    for key, value in pairs:
         header_name = key.decode("latin1", errors="replace").lower()
         if header_name not in headers:
             headers[header_name] = value.decode("utf-8", errors="replace")
@@ -333,6 +462,14 @@ def _payload_text(payload: dict[str, Any] | None, field_name: str) -> str:
     if not isinstance(payload, dict):
         return ""
     value = payload.get(field_name)
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    return str(value)
+
+
+def _text_from_value(value: Any) -> str:
     if value is None:
         return ""
     if isinstance(value, str):

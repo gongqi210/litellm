@@ -489,6 +489,75 @@ def test_allowlist_middleware_emits_policy_blocked_audit_for_config_updates() ->
     assert event["subject_key_alias"] == "unassigned"
 
 
+def test_allowlist_middleware_emits_budget_blocked_audit_for_downstream_budget_errors() -> None:
+    audit_events: list[dict[str, object]] = []
+
+    async def downstream(scope, receive, send) -> None:  # type: ignore[no-untyped-def]
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 429,
+                "headers": [(b"x-litellm-call-id", b"req-budget-1")],
+            }
+        )
+        await send(
+            {
+                "type": "http.response.body",
+                "body": json.dumps(
+                    {
+                        "error": {
+                            "message": "Budget has been exceeded! Current cost: 0.01, Max budget: 0.005",
+                            "type": "budget_exceeded",
+                            "param": None,
+                            "code": "429",
+                        }
+                    }
+                ).encode("utf-8"),
+            }
+        )
+
+    app = YcapiOnlyAllowlistMiddleware(downstream, audit_sink=audit_events.append)
+
+    messages = asyncio.run(
+        _call_asgi(
+            app,
+            "POST",
+            "/v1/chat/completions",
+            headers=[
+                (b"x-request-id", b"req-budget-1"),
+                (b"authorization", b"Bearer must-not-be-logged"),
+                (b"x-aimanager-actor", b"employee-123"),
+                (b"x-aimanager-key-alias", b"market-key"),
+                (b"x-aimanager-team-id", b"team_market"),
+                (b"x-aimanager-department-id", b"dept_market"),
+                (b"x-aimanager-project-id", b"proj_launch"),
+                (b"x-aimanager-cost-center-id", b"cc_growth"),
+            ],
+        )
+    )
+
+    assert messages[0]["status"] == 429
+    assert json.loads(messages[1]["body"])["error"]["type"] == "budget_exceeded"
+    assert len(audit_events) == 1
+    event = audit_events[0]
+    assert event["event_type"] == "budget_blocked"
+    assert event["severity"] == "high"
+    assert event["actor"] == "employee-123"
+    assert event["subject_key_alias"] == "market-key"
+    assert event["team_id"] == "team_market"
+    assert event["department_id"] == "dept_market"
+    assert event["project_id"] == "proj_launch"
+    assert event["cost_center_id"] == "cc_growth"
+    assert event["request_id"] == "req-budget-1"
+    assert event["reason"] == "budget_exceeded"
+    assert event["metadata"]["method"] == "POST"
+    assert event["metadata"]["path"] == "/v1/chat/completions"
+    assert event["metadata"]["status_code"] == 429
+    assert event["metadata"]["downstream_error_type"] == "budget_exceeded"
+    assert "authorization" not in json.dumps(event).lower()
+    assert "must-not-be-logged" not in json.dumps(event)
+
+
 def test_allowlist_middleware_ignores_non_http_scopes() -> None:
     calls: list[dict[str, object]] = []
 
