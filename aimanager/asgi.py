@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from typing import Any, Awaitable, Callable
 from uuid import uuid4
 
@@ -19,9 +20,15 @@ LOGGER = logging.getLogger("aimanager.audit")
 
 
 class YcapiOnlyAllowlistMiddleware:
-    def __init__(self, app: ASGIApp, audit_sink: AuditSink | None = None) -> None:
+    def __init__(
+        self,
+        app: ASGIApp,
+        audit_sink: AuditSink | None = None,
+        surface: str = "business",
+    ) -> None:
         self.app = app
         self.audit_sink = audit_sink or _log_audit_event
+        self.surface = "management" if surface == "management" else "business"
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope.get("type") != "http":
@@ -30,7 +37,7 @@ class YcapiOnlyAllowlistMiddleware:
 
         method = str(scope.get("method", ""))
         path = str(scope.get("path", ""))
-        decision = evaluate_route(method, path)
+        decision = evaluate_route(method, path, surface=self.surface)
         if decision.allowed:
             await self.app(scope, receive, send)
             return
@@ -137,4 +144,7 @@ def _log_audit_event(event: dict[str, Any]) -> None:
     )
 
 
-app = YcapiOnlyAllowlistMiddleware(_LazyLiteLLMProxyApp())
+app = YcapiOnlyAllowlistMiddleware(
+    _LazyLiteLLMProxyApp(),
+    surface=os.environ.get("AIMANAGER_ROUTE_SURFACE", "business"),
+)

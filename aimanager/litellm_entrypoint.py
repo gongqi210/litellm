@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import os
 import sys
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping, MutableMapping, Sequence
 
 
 AIMANAGER_ASGI_APP = "aimanager.asgi:app"
+LOCAL_MODEL_COST_MAP_ENV = "LITELLM_LOCAL_MODEL_COST_MAP"
 REQUIRED_RUNTIME_ENV = (
     "LITELLM_MASTER_KEY",
     "YCAPI_BASE_URL",
@@ -37,8 +38,13 @@ def validate_required_runtime_env(env: Mapping[str, str | None]) -> None:
         )
 
 
+def configure_litellm_startup_environment(env: MutableMapping[str, str]) -> None:
+    env[LOCAL_MODEL_COST_MAP_ENV] = "True"
+
+
 def main(argv: Sequence[str] | None = None) -> Any:
     cli_args = list(sys.argv[1:] if argv is None else argv)
+    configure_litellm_startup_environment(os.environ)
     if not _is_metadata_command(cli_args):
         try:
             validate_required_runtime_env(os.environ)

@@ -61,6 +61,26 @@ def test_compose_uses_aimanager_litellm_entrypoint() -> None:
     )
     assert "YCAPI_API_TOKEN" in service["environment"]
     assert service["environment"]["YCAPI_API_TOKEN"] is None
+    assert service["environment"].get("AIMANAGER_ROUTE_SURFACE", "business") == "business"
+    assert service["environment"]["LITELLM_LOCAL_MODEL_COST_MAP"] == "True"
+
+
+def test_compose_exposes_management_surface_only_on_localhost_profile() -> None:
+    compose = yaml.safe_load(COMPOSE_PATH.read_text(encoding="utf-8"))
+    service = compose["services"]["aimanager-admin"]
+
+    assert service["profiles"] == ["admin"]
+    assert service["image"] == "aimanager-litellm:local"
+    assert service["environment"]["AIMANAGER_ROUTE_SURFACE"] == "management"
+    assert service["environment"]["LITELLM_LOCAL_MODEL_COST_MAP"] == "True"
+    assert service["ports"] == ["127.0.0.1:4001:4000"]
+    assert service["entrypoint"] == ["python", "-m", "aimanager.litellm_entrypoint"]
+    assert service["command"] == [
+        "--config=/app/config.yaml",
+        "--host=0.0.0.0",
+        "--port=4000",
+        "--enforce_prisma_migration_check",
+    ]
 
 
 def test_runtime_dockerfile_copies_aimanager_package() -> None:

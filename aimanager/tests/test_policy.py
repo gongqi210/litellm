@@ -35,6 +35,119 @@ def test_uncommitted_business_routes_are_default_denied() -> None:
         assert decision.code == "aimanager_route_not_allowed", f"{method} {path}"
 
 
+def test_business_surface_blocks_litellm_management_routes() -> None:
+    blocked_routes = [
+        ("GET", "/ui"),
+        ("GET", "/ui/"),
+        ("POST", "/login"),
+        ("POST", "/key/generate"),
+        ("GET", "/key/info"),
+        ("POST", "/team/new"),
+        ("POST", "/user/new"),
+        ("GET", "/spend/logs"),
+        ("GET", "/global/spend"),
+    ]
+
+    for method, path in blocked_routes:
+        decision = evaluate_route(method, path, surface="business")
+        assert decision.allowed is False, f"{method} {path}"
+        assert decision.code == "aimanager_route_not_allowed", f"{method} {path}"
+
+
+def test_management_surface_allows_litellm_management_routes() -> None:
+    allowed_routes = [
+        ("GET", "/ui"),
+        ("GET", "/ui/"),
+        ("GET", "/ui/assets/logo.png"),
+        ("POST", "/login"),
+        ("POST", "/v2/login"),
+        ("POST", "/key/generate"),
+        ("GET", "/key/info"),
+        ("POST", "/key/block"),
+        ("POST", "/team/new"),
+        ("GET", "/team/list"),
+        ("POST", "/user/new"),
+        ("GET", "/user/list"),
+        ("GET", "/spend/logs"),
+        ("GET", "/global/spend"),
+        ("GET", "/global/spend/report"),
+        ("GET", "/global/activity"),
+        ("POST", "/budget/new"),
+        ("GET", "/model/info"),
+        ("GET", "/config/yaml"),
+    ]
+
+    for method, path in allowed_routes:
+        decision = evaluate_route(method, path, surface="management")
+        assert decision.allowed is True, f"{method} {path}"
+
+
+def test_management_surface_still_blocks_provider_config_and_model_write_routes() -> None:
+    blocked_routes = [
+        ("POST", "/anthropic/messages", "aimanager_passthrough_blocked"),
+        ("POST", "/v1beta/models/gemini-2.5-flash:generateContent", "aimanager_google_native_blocked"),
+        ("POST", "/config/update", "aimanager_config_immutable"),
+        ("POST", "/pass-through-endpoints", "aimanager_config_immutable"),
+        ("POST", "/model/new", "aimanager_config_immutable"),
+        ("PATCH", "/model/update", "aimanager_config_immutable"),
+        ("DELETE", "/model/gemini-2.5-flash", "aimanager_config_immutable"),
+    ]
+
+    for method, path, code in blocked_routes:
+        decision = evaluate_route(method, path, surface="management")
+        assert decision.allowed is False, f"{method} {path}"
+        assert decision.code == code, f"{method} {path}"
+
+
+def test_high_risk_runtime_config_routes_are_immutable_on_all_surfaces() -> None:
+    blocked_routes = [
+        ("POST", "/config/field/update"),
+        ("DELETE", "/config/field/delete"),
+        ("DELETE", "/config/callback/delete"),
+        ("PATCH", "/config/cost_margin_config"),
+        ("PATCH", "/config/cost_discount_config"),
+        ("POST", "/config_overrides/hashicorp_vault"),
+        ("POST", "/config_overrides/hashicorp_vault/test_connection"),
+        ("POST", "/cache/settings"),
+        ("POST", "/reload/model_cost_map"),
+        ("POST", "/reload/anthropic_beta_headers"),
+    ]
+
+    for surface in ["business", "management"]:
+        for method, path in blocked_routes:
+            decision = evaluate_route(method, path, surface=surface)
+            assert decision.allowed is False, f"{surface} {method} {path}"
+            assert decision.code == "aimanager_config_immutable", f"{surface} {method} {path}"
+
+
+def test_management_surface_does_not_unlock_uncommitted_inference_routes() -> None:
+    blocked_routes = [
+        ("POST", "/v1/embeddings"),
+        ("POST", "/v1/completions"),
+        ("POST", "/v1/responses"),
+        ("POST", "/responses"),
+        ("POST", "/v1/messages"),
+    ]
+
+    for method, path in blocked_routes:
+        decision = evaluate_route(method, path, surface="management")
+        assert decision.allowed is False, f"{method} {path}"
+        assert decision.code == "aimanager_route_not_allowed", f"{method} {path}"
+
+
+def test_management_surface_does_not_unlock_unknown_sso_or_global_routes() -> None:
+    blocked_routes = [
+        ("POST", "/sso/provider/update"),
+        ("POST", "/global/config/update"),
+        ("DELETE", "/global/internal-state"),
+    ]
+
+    for method, path in blocked_routes:
+        decision = evaluate_route(method, path, surface="management")
+        assert decision.allowed is False, f"{method} {path}"
+        assert decision.code == "aimanager_route_not_allowed", f"{method} {path}"
+
+
 def test_google_native_routes_are_blocked() -> None:
     generate = evaluate_route("POST", "/v1beta/models/gemini-2.5-flash:generateContent")
     stream = evaluate_route("POST", "/models/gemini-2.5-flash:streamGenerateContent")
@@ -118,6 +231,22 @@ def test_allowlist_middleware_forwards_allowed_requests() -> None:
     app = YcapiOnlyAllowlistMiddleware(downstream)
 
     messages = asyncio.run(_call_asgi(app, "GET", "/v1/models"))
+
+    assert len(calls) == 1
+    assert messages[0]["status"] == 204
+
+
+def test_management_surface_middleware_forwards_management_requests() -> None:
+    calls: list[dict[str, object]] = []
+
+    async def downstream(scope, receive, send) -> None:  # type: ignore[no-untyped-def]
+        calls.append(scope)
+        await send({"type": "http.response.start", "status": 204, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+
+    app = YcapiOnlyAllowlistMiddleware(downstream, surface="management")
+
+    messages = asyncio.run(_call_asgi(app, "POST", "/key/generate"))
 
     assert len(calls) == 1
     assert messages[0]["status"] == 204

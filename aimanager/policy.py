@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
+
+
+RouteSurface = Literal["business", "management"]
 
 
 ALLOWED_BUSINESS_ROUTES = {
@@ -35,7 +39,46 @@ PROVIDER_PASSTHROUGH_PREFIXES = (
 CONFIG_IMMUTABLE_PREFIXES = (
     "/pass-through-endpoints",
     "/config/update",
+    "/config/field/update",
+    "/config/field/delete",
+    "/config/callback/delete",
+    "/config/cost_margin_config",
+    "/config/cost_discount_config",
+    "/config_overrides",
+    "/cache/settings",
+    "/reload",
 )
+
+MANAGEMENT_ROUTE_PREFIXES = (
+    "/ui",
+    "/login",
+    "/v2/login",
+    "/v3/login",
+    "/fallback/login",
+    "/onboarding",
+    "/get_logo_url",
+    "/get_image",
+    "/get_favicon",
+    "/key",
+    "/team",
+    "/user",
+    "/customer",
+    "/organization",
+    "/budget",
+    "/spend",
+    "/global/spend",
+    "/global/activity",
+)
+
+MANAGEMENT_READ_ROUTES = {
+    ("GET", "/config/yaml"),
+    ("GET", "/config/list"),
+    ("GET", "/config/field/info"),
+    ("GET", "/model/info"),
+    ("GET", "/model_group/info"),
+    ("GET", "/model_group/list"),
+    ("GET", "/models"),
+}
 
 MODEL_WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
@@ -48,9 +91,15 @@ class RouteDecision:
     status_code: int = 403
 
 
-def evaluate_route(method: str, path: str) -> RouteDecision:
+def evaluate_route(
+    method: str,
+    path: str,
+    *,
+    surface: str = "business",
+) -> RouteDecision:
     normalized_method = method.upper()
     normalized_path = _normalize_path(path)
+    normalized_surface = _normalize_surface(surface)
 
     if (normalized_method, normalized_path) in ALLOWED_BUSINESS_ROUTES:
         return _allowed()
@@ -76,6 +125,12 @@ def evaluate_route(method: str, path: str) -> RouteDecision:
 
     if _is_model_write(normalized_method, normalized_path):
         return _config_immutable()
+
+    if normalized_surface == "management" and _is_management_route(
+        normalized_method,
+        normalized_path,
+    ):
+        return _allowed()
 
     return RouteDecision(
         allowed=False,
@@ -117,6 +172,12 @@ def _normalize_path(path: str) -> str:
     return normalized
 
 
+def _normalize_surface(surface: str) -> RouteSurface:
+    if surface == "management":
+        return "management"
+    return "business"
+
+
 def _is_google_native_route(path: str) -> bool:
     if ":generateContent" not in path and ":streamGenerateContent" not in path:
         return False
@@ -131,3 +192,9 @@ def _is_model_write(method: str, path: str) -> bool:
     if method not in MODEL_WRITE_METHODS:
         return False
     return path == "/model" or path.startswith("/model/")
+
+
+def _is_management_route(method: str, path: str) -> bool:
+    if _starts_with_any(path, MANAGEMENT_ROUTE_PREFIXES):
+        return True
+    return (method, path) in MANAGEMENT_READ_ROUTES

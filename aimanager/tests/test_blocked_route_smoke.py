@@ -24,6 +24,11 @@ def test_blocked_route_inventory_covers_m1_provider_and_config_risks() -> None:
         "aimanager_google_native_blocked",
     ) in inventory
     assert ("POST", "/config/update", "aimanager_config_immutable") in inventory
+    assert ("POST", "/config/field/update", "aimanager_config_immutable") in inventory
+    assert ("PATCH", "/config/cost_margin_config", "aimanager_config_immutable") in inventory
+    assert ("POST", "/config_overrides/hashicorp_vault", "aimanager_config_immutable") in inventory
+    assert ("POST", "/cache/settings", "aimanager_config_immutable") in inventory
+    assert ("POST", "/reload/model_cost_map", "aimanager_config_immutable") in inventory
     assert ("POST", "/model/new", "aimanager_config_immutable") in inventory
     assert ("POST", "/v1/embeddings", "aimanager_route_not_allowed") in inventory
 

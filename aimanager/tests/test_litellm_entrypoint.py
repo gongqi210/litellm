@@ -6,7 +6,9 @@ import pytest
 
 from aimanager.litellm_entrypoint import (
     AIMANAGER_ASGI_APP,
+    LOCAL_MODEL_COST_MAP_ENV,
     RuntimeEnvironmentError,
+    configure_litellm_startup_environment,
     install_aimanager_app_override,
     validate_required_runtime_env,
 )
@@ -59,3 +61,11 @@ def test_runtime_env_preflight_accepts_required_values() -> None:
             "YCAPI_API_TOKEN": "test-ycapi-token",
         }
     )
+
+
+def test_entrypoint_forces_local_model_cost_map_before_litellm_import() -> None:
+    env = {LOCAL_MODEL_COST_MAP_ENV: "False"}
+
+    configure_litellm_startup_environment(env)
+
+    assert env[LOCAL_MODEL_COST_MAP_ENV] == "True"

@@ -32,6 +32,8 @@ The entrypoint fails fast unless these runtime environment variables are non-emp
 - `YCAPI_BASE_URL`
 - `YCAPI_API_TOKEN`
 
+The entrypoint also forces `LITELLM_LOCAL_MODEL_COST_MAP=True` before importing LiteLLM. This keeps startup offline and prevents LiteLLM's import-time remote model cost map fetch from blocking the gateway when external network/TLS handshakes are slow or unavailable.
+
 `docker-compose.yml` explicitly passes these variables into the container from either the shell or `aimanager/.env`; this keeps local `docker compose -f aimanager/docker-compose.yml up` checks aligned with production startup behavior.
 
 M1 business API allowlist:
@@ -41,6 +43,12 @@ M1 business API allowlist:
 - `POST /v1/images/generations`
 
 M1 blocks provider passthrough, Google native `:generateContent` routes, `/pass-through-endpoints`, `/config/update`, model write routes, and uncommitted business APIs such as `/v1/embeddings` and `/v1/completions`.
+
+Route surfaces:
+
+- `AIMANAGER_ROUTE_SURFACE=business` is the default data-plane surface. It allows only the M1 business API allowlist plus health checks. LiteLLM Admin UI, key, team, user, budget, and spend routes are blocked on this surface.
+- `AIMANAGER_ROUTE_SURFACE=management` is the controlled admin surface. It allows LiteLLM UI/key/team/user/budget/spend management routes, while still blocking provider passthrough, Google native routes, runtime config mutation, pass-through endpoint mutation, cache/reload mutation, and model writes.
+- The local compose admin surface is behind the `admin` profile and binds only `127.0.0.1:4001`.
 
 ## Key Governance
 
@@ -113,7 +121,17 @@ cp .env.example .env
 docker compose up --build
 ```
 
-Admin UI: <http://localhost:4000/ui>
+Business API: <http://localhost:4000/v1/models>
+
+To run the local management surface:
+
+```bash
+docker compose --profile admin up --build
+```
+
+Admin UI: <http://127.0.0.1:4001/ui>
+
+The default business port `4000` intentionally blocks `/ui`, `/key/*`, `/team/*`, `/user/*`, `/budget/*`, and `/spend/*`.
 
 ## Validate
 
@@ -122,6 +140,7 @@ cd /Volumes/AI-projects/01-yca-AiManager
 uv run --no-project --with pyyaml python -m aimanager.scripts.validate_config aimanager/config.yaml
 PYTHONPATH="$PWD" uv run --no-project --with pytest --with pyyaml pytest aimanager/tests -q
 docker compose -f aimanager/docker-compose.yml config
+docker compose -f aimanager/docker-compose.yml --profile admin config
 ```
 
 With a running local proxy:
@@ -132,7 +151,7 @@ PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.smoke_blocked_
   --base-url http://localhost:4000
 ```
 
-The rendered compose config must show `build.target: runtime`, `entrypoint: ["python", "-m", "aimanager.litellm_entrypoint"]`, `--config=/app/config.yaml`, and `--enforce_prisma_migration_check`.
+The rendered default compose config must show `build.target: runtime`, `entrypoint: ["python", "-m", "aimanager.litellm_entrypoint"]`, `--config=/app/config.yaml`, `--enforce_prisma_migration_check`, `AIMANAGER_ROUTE_SURFACE=business`, and `LITELLM_LOCAL_MODEL_COST_MAP=True`. The rendered `--profile admin` config must also show `aimanager-admin`, `AIMANAGER_ROUTE_SURFACE=management`, `LITELLM_LOCAL_MODEL_COST_MAP=True`, and `127.0.0.1:4001:4000`.
 
 Smoke test after `.env` is populated:
 
@@ -155,13 +174,16 @@ The last command must return an AiManager 403 policy error and must not reach yc
 
 Latest local runtime smoke evidence:
 
-- `docker compose -f aimanager/docker-compose.yml up -d --force-recreate --no-build` started Postgres and AiManager with local placeholder credentials.
+- `docker compose -f aimanager/docker-compose.yml up -d --build aimanager` rebuilt the runtime image, then started Postgres and AiManager with local placeholder credentials.
 - LiteLLM Prisma migrations and post-migration sanity check completed; application startup reached `Application startup complete`.
+- AiManager forces LiteLLM's local model cost map before import; `docker run ... -e LITELLM_LOCAL_MODEL_COST_MAP=True ... import litellm` completed in about 3.1s after reproducing the remote cost-map TLS startup hang without that setting.
 - `GET /health/liveliness` returned 200.
 - `GET /v1/models` returned only `gemini-2.5-flash`, `deepseek-chat`, and `ycapi-image-1`.
 - `POST /anthropic/messages` returned 403 with `x-aimanager-policy-code: aimanager_passthrough_blocked`.
 - `POST /config/update` returned 403 with `x-aimanager-policy-code: aimanager_config_immutable`.
-- `python -m aimanager.scripts.smoke_blocked_routes` verified 23 provider/native/config/model-write/uncommitted routes as AiManager 403 policy blocks.
-- Container logs emitted 23 structured `aimanager_audit_event` entries for those blocked requests, with no Authorization or Bearer token content in the audit log tail.
+- `python -m aimanager.scripts.smoke_blocked_routes` verified 33 provider/native/config/cache/reload/model-write/uncommitted routes as AiManager 403 policy blocks.
+- Container logs emitted 34 structured `aimanager_audit_event` entries for those blocked requests plus the business-surface `/ui` block, with no Authorization, Bearer token, or local placeholder token content in the audit log tail.
+- Runtime surface split was verified locally: business port `4000` blocks `/ui` with AiManager 403, admin port `127.0.0.1:4001` returns LiteLLM UI redirect for `/ui`, and admin port still blocks `/config/field/update` with `aimanager_config_immutable`.
+- Local tests split surfaces: business surface blocks LiteLLM management routes, while management surface allows UI/key/team/user/budget/spend routes and still blocks provider/config/cache/reload/model-write routes. Compose renders `aimanager-admin` only under the `admin` profile on `127.0.0.1:4001`.
 
 Remaining before business trial: mock/live ycapi chat and image calls, proof that LiteLLM spend logs record nonzero chargeable usage, runtime budget blocking, and key lifecycle audit emitters.

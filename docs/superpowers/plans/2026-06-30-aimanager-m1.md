@@ -392,14 +392,96 @@ Test that policy-blocked requests emit audit events with request id, actor/key/d
 
 - [x] **Step 3: Write and implement blocked-route smoke script**
 
-`aimanager.scripts.smoke_blocked_routes` checks 23 provider/native/config/model-write/uncommitted routes against a running proxy and requires 403 plus matching `x-aimanager-policy-code` and body `error.code`.
+`aimanager.scripts.smoke_blocked_routes` checks 33 provider/native/config/cache/reload/model-write/uncommitted routes against a running proxy and requires 403 plus matching `x-aimanager-policy-code` and body `error.code`.
 
 - [x] **Step 4: Verify runtime evidence**
 
-With the current rebuilt image, `python -m aimanager.scripts.smoke_blocked_routes --base-url http://localhost:4000` returned PASS for all 23 cases. Container logs contained 23 `aimanager_audit_event` entries and the audit log tail had no Authorization/Bearer token content.
+With the current rebuilt image, `python -m aimanager.scripts.smoke_blocked_routes --base-url http://localhost:4000` returned PASS for all 33 cases. Container logs contained 34 `aimanager_audit_event` entries after the smoke plus a business-surface `/ui` block, and the audit log tail had no Authorization/Bearer/local placeholder token content.
+
+## Task 8: M1-A Business and Management Surface Split
+
+**Files:**
+- Modify: `aimanager/policy.py`
+- Modify: `aimanager/asgi.py`
+- Modify: `aimanager/docker-compose.yml`
+- Modify: `aimanager/tests/test_policy.py`
+- Modify: `aimanager/tests/test_config.py`
+- Modify: `aimanager/README.md`
+- Modify: `docs/aimanager/1_acceptance_criteria.md`
+- Modify: `项目知识图谱.md`
+
+- [x] **Step 1: Write failing surface tests**
+
+Tests assert that the default/business surface blocks LiteLLM management routes such as `/ui`, `/key/generate`, `/team/new`, `/user/new`, `/spend/logs`, and `/global/spend`; the management surface allows UI/key/team/user/budget/spend routes; and management still blocks provider passthrough, Google native routes, `/config/update`, `/pass-through-endpoints`, high-risk config/cache/reload mutation, and model writes.
+
+- [x] **Step 2: Verify red**
+
+Run:
+
+```bash
+PYTHONPATH="$PWD" uv run --no-project --with pytest --with pyyaml pytest \
+  aimanager/tests/test_policy.py::test_business_surface_blocks_litellm_management_routes \
+  aimanager/tests/test_policy.py::test_management_surface_allows_litellm_management_routes \
+  aimanager/tests/test_policy.py::test_management_surface_still_blocks_provider_config_and_model_write_routes \
+  aimanager/tests/test_policy.py::test_management_surface_middleware_forwards_management_requests \
+  aimanager/tests/test_config.py::test_compose_exposes_management_surface_only_on_localhost_profile -q
+```
+
+Observed: FAIL because `evaluate_route(..., surface=...)`, `YcapiOnlyAllowlistMiddleware(..., surface=...)`, and `aimanager-admin` did not exist yet.
+
+- [x] **Step 3: Implement surface-aware policy and ASGI wrapper**
+
+`evaluate_route` now accepts `surface="business" | "management"` and normalizes unknown values to the fail-closed business surface. Provider/native/config/model-write blocks run before management allow rules.
+
+- [x] **Step 4: Add local admin compose profile**
+
+Default `aimanager` stays on `AIMANAGER_ROUTE_SURFACE=business` at `4000`. `aimanager-admin` is only rendered with `--profile admin`, uses `AIMANAGER_ROUTE_SURFACE=management`, and binds `127.0.0.1:4001:4000`.
+
+- [x] **Step 5: Verify green**
+
+Run:
+
+```bash
+PYTHONPATH="$PWD" uv run --no-project --with pytest --with pyyaml pytest aimanager/tests -q
+docker compose -f aimanager/docker-compose.yml config
+docker compose -f aimanager/docker-compose.yml --profile admin config
+```
+
+Observed: 76 tests passed; compose rendered business surface by default and localhost-only admin surface under the `admin` profile. Runtime checks showed business `4000` blocks `/ui`, admin `127.0.0.1:4001` reaches LiteLLM UI redirect, and admin `/config/field/update` is still `aimanager_config_immutable`.
+
+## Task 9: M1-A Offline LiteLLM Startup Cost Map
+
+**Files:**
+- Modify: `aimanager/litellm_entrypoint.py`
+- Modify: `aimanager/docker-compose.yml`
+- Modify: `aimanager/tests/test_litellm_entrypoint.py`
+- Modify: `aimanager/tests/test_config.py`
+- Modify: `aimanager/README.md`
+- Modify: `docs/aimanager/1_acceptance_criteria.md`
+- Modify: `项目知识图谱.md`
+
+- [x] **Step 1: Reproduce startup hang**
+
+After Docker Desktop recovered from a local runtime interruption, a rebuilt AiManager container stayed alive but unhealthy with no listener on port 4000. `faulthandler.dump_traceback_later()` showed LiteLLM import blocking in `fetch_remote_model_cost_map()` during an external TLS handshake. A second stack showed the later Pydantic schema-generation phase, confirming the root startup blocker began before the proxy listener.
+
+- [x] **Step 2: Force local model cost map before LiteLLM import**
+
+`aimanager.litellm_entrypoint` now sets `LITELLM_LOCAL_MODEL_COST_MAP=True` before importing `litellm.proxy.proxy_cli`. Compose also sets the same environment variable on both business and admin surfaces.
+
+- [x] **Step 3: Verify startup protection**
+
+Run:
+
+```bash
+PYTHONPATH="$PWD" uv run --no-project --with pytest --with pyyaml pytest aimanager/tests -q
+docker compose -f aimanager/docker-compose.yml config
+docker compose -f aimanager/docker-compose.yml --profile admin config
+```
+
+Observed: 76 tests passed. With `LITELLM_LOCAL_MODEL_COST_MAP=True`, `docker run ... import litellm` completed in about 3.1s. A rebuilt runtime image started healthy, `GET /health/liveliness` returned 200, the 33-case blocked-route smoke passed, business logs contained 34 structured audit events without token leakage, and admin `127.0.0.1:4001` returned `/ui` 307 while still blocking `/config/field/update` with `aimanager_config_immutable`.
 
 ## Self-Review
 
-- Spec coverage: Tasks 1 and 2 cover the hard M1-A P0 items from the synthesis design. Task 3 covers key governance. Task 4 adds finance aggregation, reconciliation, and audit event foundations. Task 5 records acceptance evidence. Task 6 hardens startup so the ASGI boundary does not bypass LiteLLM CLI initialization and proves a local container boot. Task 7 proves the full blocked-route matrix and policy audit logs. Full spend-log, runtime budget blocking, key lifecycle emitters, and live ycapi verification remain separate follow-up work.
+- Spec coverage: Tasks 1 and 2 cover the hard M1-A P0 items from the synthesis design. Task 3 covers key governance. Task 4 adds finance aggregation, reconciliation, and audit event foundations. Task 5 records acceptance evidence. Task 6 hardens startup so the ASGI boundary does not bypass LiteLLM CLI initialization and proves a local container boot. Task 7 proves the full blocked-route matrix and policy audit logs. Task 8 preserves LiteLLM management routes on a localhost-only management surface while keeping the business surface ycapi-only. Task 9 removes LiteLLM import-time remote cost-map dependency from AiManager startup. Full spend-log, runtime budget blocking, key lifecycle emitters, and live ycapi verification remain separate follow-up work.
 - Placeholder scan: no `TODO`, `TBD`, or unspecified “handle edge cases” instructions are used.
 - Type consistency: all planned Python modules live under `aimanager/`, tests use `pytest`, and commands match the existing project validation pattern.
