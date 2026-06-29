@@ -170,7 +170,7 @@ git add aimanager/policy.py aimanager/asgi.py aimanager/tests/test_policy.py aim
 git commit -m "feat: add AiManager route allowlist"
 ```
 
-Current note: policy, ASGI wrapper, Dockerfile runtime source copy, compose entrypoint, and local tests are complete. Compose now starts `aimanager.litellm_entrypoint`, which preserves LiteLLM CLI initialization while overriding the final uvicorn app to `aimanager.asgi:app`. A local runtime smoke proved LiteLLM migrations/lifespan, health, `/v1/models`, full blocked-route matrix, and structured policy audit logs. Before M1 trial, add spend-log proof for mock/live ycapi calls, runtime budget blocking, and key lifecycle emitters.
+Current note: policy, ASGI wrapper, Dockerfile runtime source copy, compose entrypoint, and local tests are complete. Compose now starts `aimanager.litellm_entrypoint`, which preserves LiteLLM CLI initialization while overriding the final uvicorn app to `aimanager.asgi:app`. Local runtime smoke has proved LiteLLM migrations/lifespan, health, `/v1/models`, the full blocked-route matrix, structured policy audit logs, key-governance API behavior, and nonzero chat/image `LiteLLM_SpendLogs.spend` through mock ycapi. Before M1 trial, add runtime budget blocking, key lifecycle emitters, UI key-flow automation, and live ycapi verification.
 
 ## Task 3: M1-B Key Governance and Enforced Params
 
@@ -518,8 +518,69 @@ PYTHONPATH="$PWD" uv run --no-project --with pytest --with pyyaml pytest aimanag
 
 Observed: `test_policy.py` passed 25 tests; full AiManager suite passed 81 tests. After rebuilding the shared `aimanager-litellm:local` image and recreating `aimanager-admin`, runtime `POST /key/generate` without governance metadata returned HTTP 400 with `x-aimanager-policy-code: aimanager_key_governance_invalid` and preserved `x-litellm-call-id=runtime-key-governance-smoke`; admin logs emitted one matching `policy_blocked` audit event with no Authorization/Bearer leakage. A valid shared-key runtime smoke returned the required employee/team/model/budget/rate-limit/expiry fields plus department/project/cost-center/scenario/approver metadata and `metadata.enforced_params`; the smoke key was deleted immediately after verification. AC-08 is now PASS for API coverage; UI automation remains a follow-up.
 
+## Task 11: M1-A Runtime Spend Log Proof
+
+**Files:**
+- Create: `aimanager/scripts/mock_ycapi.py`
+- Create: `aimanager/scripts/smoke_spend_logs.py`
+- Create: `aimanager/tests/test_mock_ycapi.py`
+- Create: `aimanager/tests/test_spend_log_smoke.py`
+- Create: `aimanager/tests/test_asgi_runtime.py`
+- Modify: `aimanager/litellm_entrypoint.py`
+- Modify: `aimanager/asgi.py`
+- Modify: `aimanager/config.yaml`
+- Modify: `aimanager/scripts/validate_config.py`
+- Modify: `aimanager/tests/test_config.py`
+- Modify: `aimanager/tests/test_litellm_entrypoint.py`
+- Modify: `aimanager/README.md`
+- Modify: `docs/aimanager/1_acceptance_criteria.md`
+- Modify: `项目知识图谱.md`
+
+- [x] **Step 1: Write failing spend smoke tests**
+
+Tests assert that the smoke script creates a governed disposable employee key, sends chat and image requests through the business surface, matches LiteLLM `SpendLogs.model` values with or without provider prefixes such as `openai/ycapi-image-1`, requires nonzero chat/image spend, and deletes the generated key without printing it.
+
+- [x] **Step 2: Add mock ycapi**
+
+`aimanager.scripts.mock_ycapi` provides stdlib OpenAI-compatible `/v1/chat/completions` and `/v1/images/generations` endpoints with deterministic chat usage and no Authorization logging.
+
+- [x] **Step 3: Fix runtime image pricing registration**
+
+Runtime investigation showed LiteLLM stores image spend rows as `openai/ycapi-image-1` and can drop image-only custom pricing from the provider alias during router setup. `aimanager.asgi` now calls `register_aimanager_image_model_costs()` after importing the LiteLLM proxy app, and the entrypoint captures `--config=/app/config.yaml` into `CONFIG_FILE_PATH` so the hook registers `model_info.mode=image_generation` plus `input_cost_per_image` for the provider-prefixed model.
+
+- [x] **Step 4: Verify tests and config**
+
+Run:
+
+```bash
+PYTHONPATH="$PWD" uv run --no-project --with pytest --with pyyaml pytest aimanager/tests -q
+PYTHONPATH="$PWD" uv run --no-project --with pyyaml python -m aimanager.scripts.validate_config aimanager/config.yaml
+docker compose -f aimanager/docker-compose.yml --profile admin config
+```
+
+Observed: full AiManager suite passed 94 tests, config validation passed, and compose rendered successfully.
+
+- [x] **Step 5: Verify runtime spend proof**
+
+Run mock ycapi on `:18080`, rebuild/recreate `aimanager`, `aimanager-admin`, and `db`, then run:
+
+```bash
+LITELLM_MASTER_KEY=aimanager-local-master-key \
+PYTHONPATH="$PWD" uv run --no-project --with pyyaml python -m aimanager.scripts.smoke_spend_logs \
+  --master-key aimanager-local-master-key \
+  --business-base-url http://localhost:4000 \
+  --admin-base-url http://localhost:4001 \
+  --project-directory "$PWD" \
+  --poll-attempts 60 \
+  --poll-interval 1
+```
+
+Observed: `PASS chat and image spend logs are nonzero`, with `openai/gemini-2.5-flash` chat spend `3.3e-06` and `openai/ycapi-image-1` image spend `0.01`.
+
+Runtime caveat: LiteLLM `metadata.enforced_params` inference-time enforcement is an Enterprise feature in this fork. The spend proof therefore defaults to a non-shared employee key; `--shared-key` remains conditional on Enterprise licensing or a project-owned OSS enforcement layer.
+
 ## Self-Review
 
-- Spec coverage: Tasks 1 and 2 cover the hard M1-A P0 items from the synthesis design. Task 3 covers key governance. Task 4 adds finance aggregation, reconciliation, and audit event foundations. Task 5 records acceptance evidence. Task 6 hardens startup so the ASGI boundary does not bypass LiteLLM CLI initialization and proves a local container boot. Task 7 proves the full blocked-route matrix and policy audit logs. Task 8 preserves LiteLLM management routes on a localhost-only management surface while keeping the business surface ycapi-only. Task 9 removes LiteLLM import-time remote cost-map dependency from AiManager startup. Task 10 wires key governance into management `/key/generate` before LiteLLM and proves API key creation metadata in runtime. Full spend-log, runtime budget blocking, key lifecycle emitters, UI key-flow automation, and live ycapi verification remain separate follow-up work.
+- Spec coverage: Tasks 1 and 2 cover the hard M1-A P0 items from the synthesis design. Task 3 covers key governance. Task 4 adds finance aggregation, reconciliation, and audit event foundations. Task 5 records acceptance evidence. Task 6 hardens startup so the ASGI boundary does not bypass LiteLLM CLI initialization and proves a local container boot. Task 7 proves the full blocked-route matrix and policy audit logs. Task 8 preserves LiteLLM management routes on a localhost-only management surface while keeping the business surface ycapi-only. Task 9 removes LiteLLM import-time remote cost-map dependency from AiManager startup. Task 10 wires key governance into management `/key/generate` before LiteLLM and proves API key creation metadata in runtime. Task 11 proves nonzero chat/image LiteLLM spend logs through mock ycapi. Runtime budget blocking, key lifecycle emitters, UI key-flow automation, and live ycapi verification remain separate follow-up work.
 - Placeholder scan: no `TODO`, `TBD`, or unspecified “handle edge cases” instructions are used.
 - Type consistency: all planned Python modules live under `aimanager/`, tests use `pytest`, and commands match the existing project validation pattern.

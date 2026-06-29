@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import os
 import sys
-from typing import Any, Mapping, MutableMapping, Sequence
+from os import PathLike
+from pathlib import Path
+from math import isfinite
+from typing import Any, Callable, Mapping, MutableMapping, Sequence
 
 
 AIMANAGER_ASGI_APP = "aimanager.asgi:app"
+CONFIG_FILE_PATH_ENV = "CONFIG_FILE_PATH"
 LOCAL_MODEL_COST_MAP_ENV = "LITELLM_LOCAL_MODEL_COST_MAP"
 REQUIRED_RUNTIME_ENV = (
     "LITELLM_MASTER_KEY",
@@ -38,13 +42,35 @@ def validate_required_runtime_env(env: Mapping[str, str | None]) -> None:
         )
 
 
-def configure_litellm_startup_environment(env: MutableMapping[str, str]) -> None:
+def configure_litellm_startup_environment(
+    env: MutableMapping[str, str],
+    argv: Sequence[str] | None = None,
+) -> None:
     env[LOCAL_MODEL_COST_MAP_ENV] = "True"
+    config_path = _config_path_from_argv(argv or ())
+    if config_path and not (env.get(CONFIG_FILE_PATH_ENV) or "").strip():
+        env[CONFIG_FILE_PATH_ENV] = config_path
+
+
+def register_aimanager_image_model_costs(
+    config_path: str | PathLike[str] | None = None,
+    *,
+    register_model: Callable[..., None] | None = None,
+) -> dict[str, dict[str, Any]]:
+    model_cost = _load_image_generation_model_costs(config_path)
+    if not model_cost:
+        return {}
+
+    if register_model is None:
+        from litellm import register_model as register_model
+
+    register_model(model_cost=model_cost)
+    return model_cost
 
 
 def main(argv: Sequence[str] | None = None) -> Any:
     cli_args = list(sys.argv[1:] if argv is None else argv)
-    configure_litellm_startup_environment(os.environ)
+    configure_litellm_startup_environment(os.environ, cli_args)
     if not _is_metadata_command(cli_args):
         try:
             validate_required_runtime_env(os.environ)
@@ -63,6 +89,59 @@ def main(argv: Sequence[str] | None = None) -> Any:
 
 def _is_metadata_command(argv: Sequence[str]) -> bool:
     return any(arg in {"--help", "-h", "--version", "-v"} for arg in argv)
+
+
+def _config_path_from_argv(argv: Sequence[str]) -> str:
+    for index, arg in enumerate(argv):
+        if arg.startswith("--config="):
+            return arg.split("=", 1)[1].strip()
+        if arg == "--config" and index + 1 < len(argv):
+            return argv[index + 1].strip()
+    return ""
+
+
+def _load_image_generation_model_costs(
+    config_path: str | PathLike[str] | None = None,
+) -> dict[str, dict[str, Any]]:
+    resolved_path = Path(config_path or os.environ.get(CONFIG_FILE_PATH_ENV, ""))
+    if not str(resolved_path):
+        return {}
+    if not resolved_path.exists():
+        raise RuntimeEnvironmentError(
+            f"AiManager image cost registration requires readable {CONFIG_FILE_PATH_ENV}: {resolved_path}"
+        )
+
+    import yaml
+
+    config = yaml.safe_load(resolved_path.read_text(encoding="utf-8"))
+    if not isinstance(config, dict):
+        return {}
+
+    model_cost: dict[str, dict[str, Any]] = {}
+    for item in config.get("model_list") or []:
+        if not isinstance(item, dict):
+            continue
+        params = item.get("litellm_params")
+        model_info = item.get("model_info")
+        if not isinstance(params, dict) or not isinstance(model_info, dict):
+            continue
+        if model_info.get("mode") != "image_generation":
+            continue
+        model = params.get("model")
+        cost = model_info.get("input_cost_per_image")
+        if (
+            isinstance(model, str)
+            and model.strip()
+            and isinstance(cost, int | float)
+            and not isinstance(cost, bool)
+            and isfinite(cost)
+            and cost > 0
+        ):
+            model_cost[model.strip()] = {
+                "mode": "image_generation",
+                "input_cost_per_image": float(cost),
+            }
+    return model_cost
 
 
 if __name__ == "__main__":

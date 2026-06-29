@@ -112,9 +112,23 @@ def _validate_model_list(config: dict[str, Any]) -> None:
                     "set input_cost_per_image instead"
                 )
             _validate_positive_number(params, model_name, "input_cost_per_image")
+            _validate_image_model_info(item, model_name, params["input_cost_per_image"])
         else:
             _validate_positive_number(params, model_name, "input_cost_per_token")
             _validate_positive_number(params, model_name, "output_cost_per_token")
+
+
+def _validate_image_model_info(item: dict[str, Any], model_name: str, expected_price: float) -> None:
+    model_info = item.get("model_info")
+    if not isinstance(model_info, dict):
+        raise ConfigValidationError(f"{model_name}: model_info.mode must be image_generation")
+    if model_info.get("mode") != "image_generation":
+        raise ConfigValidationError(f"{model_name}: model_info.mode must be image_generation")
+    _validate_positive_number({"model_info": model_info}, model_name, "model_info.input_cost_per_image")
+    if model_info["input_cost_per_image"] != expected_price:
+        raise ConfigValidationError(
+            f"{model_name}: model_info.input_cost_per_image must match litellm_params.input_cost_per_image"
+        )
 
 
 def _validate_general_settings(config: dict[str, Any]) -> None:
@@ -130,7 +144,12 @@ def _validate_general_settings(config: dict[str, Any]) -> None:
 
 
 def _validate_positive_number(params: dict[str, Any], model_name: str, field_name: str) -> None:
-    value = params.get(field_name)
+    value: Any = params
+    for part in field_name.split("."):
+        if not isinstance(value, dict):
+            value = None
+            break
+        value = value.get(part)
     if (
         not isinstance(value, (int, float))
         or isinstance(value, bool)

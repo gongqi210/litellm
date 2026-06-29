@@ -40,10 +40,11 @@
 | AC-01 | PASS | `uv run --no-project --with pyyaml python -m aimanager.scripts.validate_config aimanager/config.yaml`；`pytest aimanager/tests/test_config.py` | 已拒绝供应商直连、passthrough 配置、零价格、NaN/inf/非数字价格、错误 image 计价键 |
 | AC-02 | PASS | `pytest aimanager/tests/test_policy.py`；`python -m aimanager.scripts.smoke_blocked_routes --base-url http://localhost:4000` | policy 单测证明被封请求不会进入 downstream LiteLLM；运行中 proxy smoke 已覆盖 33 条 provider/native/config/cache/reload/model-write/uncommitted 路径，全部返回 AiManager 403 policy code，并产生审计事件；管理面 surface 也继续封堵 provider/native/config/cache/reload/model-write |
 | AC-03 | PASS | 运行中 proxy：`GET /v1/models` | 已启动容器验证响应只包含 `gemini-2.5-flash`、`deepseek-chat`、`ycapi-image-1` |
-| AC-05 | BLOCKED | `validate_config.py` + `pytest aimanager/tests/test_config.py` | `ycapi-image-1` 已改用 `input_cost_per_image > 0`；仍需 mock/live 调用证明 spend log 非零 |
+| AC-04 | PASS | `python -m aimanager.scripts.mock_ycapi` + rebuilt `aimanager`/`aimanager-admin` + `python -m aimanager.scripts.smoke_spend_logs` | mock ycapi chat 经 business surface 调用成功，`LiteLLM_SpendLogs` 写入 `openai/gemini-2.5-flash`，`spend=3.3e-06` |
+| AC-05 | PASS | `python -m aimanager.scripts.mock_ycapi` + rebuilt `aimanager`/`aimanager-admin` + `python -m aimanager.scripts.smoke_spend_logs` | `ycapi-image-1` 经 business surface 调用成功，`LiteLLM_SpendLogs` 写入 `openai/ycapi-image-1`，`spend=0.01`；entrypoint/ASGI 在 LiteLLM proxy 加载后注册 provider-prefixed image 单价，避免图片 spend 记 0 |
 | AC-07 | BLOCKED | `pytest aimanager/tests/test_policy.py` | AiManager 自有 policy error 已返回 OpenAI-compatible body + `request_id`；LiteLLM 原生错误包装仍需集成验证 |
-| AC-08 | PASS | `pytest aimanager/tests/test_governance.py`；`pytest aimanager/tests/test_policy.py`；运行中 admin proxy：无 metadata 的 `POST /key/generate` 返回 400 `aimanager_key_governance_invalid`；有效 shared key 创建返回员工、团队、模型、预算、限流、有效期、部门、项目、成本中心、场景、审批人和 `metadata.enforced_params`，测试 key 已删除 | 已实现 key request 元数据、预算、限流、有效期、审批人和 shared key `enforced_params` 校验，并已接入 management surface `POST /key/generate` ASGI 前置校验；缺治理元数据不会进入 LiteLLM，`metadata.shared_key=true` 会写入 LiteLLM 实际 enforcement 读取的 `metadata.enforced_params` |
-| AC-09 | BLOCKED | `validate_config.py` + `pytest aimanager/tests/test_config.py` | 配置层已禁止零计价和错误 image 键；财务审批价与真实 spend 非零仍需后续验证 |
+| AC-08 | PASS | `pytest aimanager/tests/test_governance.py`；`pytest aimanager/tests/test_policy.py`；运行中 admin proxy：无 metadata 的 `POST /key/generate` 返回 400 `aimanager_key_governance_invalid`；有效 shared key 创建返回员工、团队、模型、预算、限流、有效期、部门、项目、成本中心、场景、审批人和 `metadata.enforced_params`，测试 key 已删除 | 已实现 key request 元数据、预算、限流、有效期、审批人和 shared key `enforced_params` 校验，并已接入 management surface `POST /key/generate` ASGI 前置校验；缺治理元数据不会进入 LiteLLM，`metadata.shared_key=true` 会写入 LiteLLM 实际 enforcement 读取的 `metadata.enforced_params`；当前 LiteLLM fork 的 inference-time `enforced_params` 强制执行需要 Enterprise license，OSS 路径下 spend smoke 使用非 shared employee key |
+| AC-09 | PASS | `validate_config.py` + `pytest aimanager/tests/test_config.py` + `python -m aimanager.scripts.smoke_spend_logs` | 配置层禁止零计价和错误 image 键；运行态 chat/image `LiteLLM_SpendLogs.spend` 均为非零，当前 M1 技术转售价 chat `3.3e-06`、image `0.01` |
 | AC-10 | BLOCKED | `pytest aimanager/tests/test_audit.py` | 已定义 `budget_blocked` 审计事件结构；仍需真实预算阈值触发和请求阻断验证 |
 | AC-11 | BLOCKED | `pytest aimanager/tests/test_audit.py` | 已定义 `key_frozen`、`key_revoked` 审计事件结构；仍需接入 LiteLLM key 冻结/撤销操作并调用验证 |
 | AC-12 | BLOCKED | `pytest aimanager/tests/test_finance.py` | 已实现 usage/spend 日/月聚合基础，可按日期、部门、项目、员工、成本中心、key、模型、endpoint、币种和价格版本聚合；仍需接入 LiteLLM `SpendLogs` 和导出任务 |
@@ -53,7 +54,7 @@
 | AC-17 | BLOCKED | `pytest aimanager/tests/test_policy.py`；`aimanager.litellm_entrypoint` 强制本地 model cost map | policy 层证明不会切 provider passthrough；启动期外网/TLS 异常不会阻塞 LiteLLM cost map 远程拉取；ycapi 429/5xx、DB down 还未跑 |
 | AC-18 | PASS | `pytest aimanager/tests/test_config.py::test_env_example_uses_non_secret_placeholders`；`rg` secret-like 扫描 | `.env.example` 只保留非密钥占位符，未命中 `sk-`、`AKIA`、`AIza`、private key 等模式 |
 
-上表中的 `BLOCKED` 项不是失败，而是完整 AC 还缺运行中 proxy、mock/live ycapi、spend log 数据源、预算阻断、RBAC、审计 emitters 或真实 ycapi 账单证据。M1 试点前必须解除这些 `BLOCKED` 项。
+上表中的 `BLOCKED` 项不是失败，而是完整 AC 还缺预算阻断、RBAC、部分错误契约/故障场景、审计 emitters、导出任务或真实 ycapi 账单证据。M1 试点前必须解除这些 `BLOCKED` 项。
 
 ## M2 业务试点验收项
 

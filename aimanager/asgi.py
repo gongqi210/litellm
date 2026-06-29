@@ -96,6 +96,9 @@ class _LazyLiteLLMProxyApp:
         if self._app is None:
             from litellm.proxy.proxy_server import app as litellm_proxy_app
 
+            from aimanager.litellm_entrypoint import register_aimanager_image_model_costs
+
+            register_aimanager_image_model_costs()
             self._app = litellm_proxy_app
         await self._app(scope, receive, send)
 

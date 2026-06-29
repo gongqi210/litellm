@@ -34,6 +34,8 @@ The entrypoint fails fast unless these runtime environment variables are non-emp
 
 The entrypoint also forces `LITELLM_LOCAL_MODEL_COST_MAP=True` before importing LiteLLM. This keeps startup offline and prevents LiteLLM's import-time remote model cost map fetch from blocking the gateway when external network/TLS handshakes are slow or unavailable.
 
+After the LiteLLM proxy app is loaded, `aimanager.asgi` registers image-generation pricing from `CONFIG_FILE_PATH` back into LiteLLM's runtime model cost map. This preserves nonzero `ycapi-image-1` spend logging even when LiteLLM stores `SpendLogs.model` as the provider-prefixed `openai/ycapi-image-1` alias.
+
 `docker-compose.yml` explicitly passes these variables into the container from either the shell or `aimanager/.env`; this keeps local `docker compose -f aimanager/docker-compose.yml up` checks aligned with production startup behavior.
 
 M1 business API allowlist:
@@ -86,6 +88,8 @@ Shared keys must set `metadata.shared_key=true`; AiManager then calls `normalize
 ```
 
 The helper, management-surface ASGI wiring, and running API key-creation path are tested locally. UI automation for the same flow remains useful but is not required for AC-08.
+
+Runtime inference enforcement for LiteLLM `metadata.enforced_params` is an Enterprise feature in this fork. AiManager can create shared keys with the required metadata, but spend-log smoke defaults to a non-shared employee key; exercising `--shared-key` against inference requires a LiteLLM Enterprise license or an AiManager-owned OSS enforcement layer.
 
 ## Finance Reporting
 
@@ -151,6 +155,29 @@ PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.smoke_blocked_
   --base-url http://localhost:4000
 ```
 
+Mock ycapi runtime spend smoke:
+
+```bash
+PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.mock_ycapi \
+  --host 0.0.0.0 --port 18080
+
+LITELLM_MASTER_KEY=aimanager-local-master-key \
+YCAPI_API_TOKEN=mock-ycapi-token \
+YCAPI_BASE_URL=http://host.docker.internal:18080/v1 \
+docker compose -f aimanager/docker-compose.yml --profile admin up -d --build db aimanager aimanager-admin
+
+LITELLM_MASTER_KEY=aimanager-local-master-key \
+PYTHONPATH="$PWD" uv run --no-project --with pyyaml python -m aimanager.scripts.smoke_spend_logs \
+  --master-key aimanager-local-master-key \
+  --business-base-url http://localhost:4000 \
+  --admin-base-url http://localhost:4001 \
+  --project-directory "$PWD" \
+  --poll-attempts 60 \
+  --poll-interval 1
+```
+
+Expected result: `PASS`, `chat_spend > 0`, and `image_spend > 0`. The smoke creates a governed disposable employee key, sends chat and image calls through the business surface, reads `LiteLLM_SpendLogs` from Postgres, and deletes the key. It never prints the virtual key.
+
 The rendered default compose config must show `build.target: runtime`, `entrypoint: ["python", "-m", "aimanager.litellm_entrypoint"]`, `--config=/app/config.yaml`, `--enforce_prisma_migration_check`, `AIMANAGER_ROUTE_SURFACE=business`, and `LITELLM_LOCAL_MODEL_COST_MAP=True`. The rendered `--profile admin` config must also show `aimanager-admin`, `AIMANAGER_ROUTE_SURFACE=management`, `LITELLM_LOCAL_MODEL_COST_MAP=True`, and `127.0.0.1:4001:4000`.
 
 Smoke test after `.env` is populated:
@@ -188,5 +215,6 @@ Latest local runtime smoke evidence:
 - Local tests also prove management `POST /key/generate` rejects missing governance metadata with `aimanager_key_governance_invalid`, forwards normalized valid payloads, and injects `enforced_params` for `metadata.shared_key=true`.
 - Runtime admin-surface smoke with rebuilt `aimanager-litellm:local` proved `POST /key/generate` without governance metadata returns HTTP 400, `x-aimanager-policy-code: aimanager_key_governance_invalid`, preserves `x-litellm-call-id`, and emits a matching `policy_blocked` audit event without Authorization/Bearer leakage.
 - Runtime valid shared-key smoke proved `POST /key/generate` returns the required employee/team/model/budget/rate-limit/expiry fields plus department/project/cost-center/scenario/approver metadata and `metadata.enforced_params`; the local smoke key was deleted immediately after verification.
+- Mock ycapi runtime spend smoke proved `POST /v1/chat/completions` and `POST /v1/images/generations` through AiManager write nonzero `LiteLLM_SpendLogs.spend`: chat `3.3e-06`, image `0.01`. Rows were recorded as `openai/gemini-2.5-flash` and `openai/ycapi-image-1`.
 
-Remaining before business trial: mock/live ycapi chat and image calls, proof that LiteLLM spend logs record nonzero chargeable usage, runtime budget blocking, key lifecycle audit emitters, and UI automation for the key creation flow.
+Remaining before business trial: runtime budget blocking, key lifecycle audit emitters, UI automation for the key creation flow, and live ycapi smoke with the production token policy.

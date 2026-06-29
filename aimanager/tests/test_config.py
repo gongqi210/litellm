@@ -33,8 +33,11 @@ def test_aimanager_config_is_locked_to_ycapi() -> None:
         assert params["api_base"] == "os.environ/YCAPI_BASE_URL"
         assert params["api_key"] == "os.environ/YCAPI_API_TOKEN"
         if model["model_name"] == "ycapi-image-1":
+            model_info = model["model_info"]
+            assert model_info["mode"] == "image_generation"
             assert "output_cost_per_image" not in params
             assert params["input_cost_per_image"] > 0
+            assert model_info["input_cost_per_image"] == params["input_cost_per_image"]
         else:
             assert params["input_cost_per_token"] > 0
             assert params["output_cost_per_token"] > 0
@@ -241,6 +244,53 @@ general_settings:
     )
 
     with pytest.raises(ConfigValidationError, match="input_cost_per_image"):
+        validate_aimanager_config(bad_config)
+
+
+def test_validator_rejects_image_model_without_image_generation_model_info(tmp_path: Path) -> None:
+    bad_config = tmp_path / "bad-image-model-info.yaml"
+    bad_config.write_text(
+        """
+model_list:
+  - model_name: ycapi-image-1
+    litellm_params:
+      model: openai/ycapi-image-1
+      api_base: os.environ/YCAPI_BASE_URL
+      api_key: os.environ/YCAPI_API_TOKEN
+      input_cost_per_image: 0.01
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  store_model_in_db: false
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigValidationError, match="model_info.mode"):
+        validate_aimanager_config(bad_config)
+
+
+def test_validator_rejects_image_model_info_price_mismatch(tmp_path: Path) -> None:
+    bad_config = tmp_path / "bad-image-model-info-price.yaml"
+    bad_config.write_text(
+        """
+model_list:
+  - model_name: ycapi-image-1
+    litellm_params:
+      model: openai/ycapi-image-1
+      api_base: os.environ/YCAPI_BASE_URL
+      api_key: os.environ/YCAPI_API_TOKEN
+      input_cost_per_image: 0.01
+    model_info:
+      mode: image_generation
+      input_cost_per_image: 0.02
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  store_model_in_db: false
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigValidationError, match="model_info.input_cost_per_image"):
         validate_aimanager_config(bad_config)
 
 

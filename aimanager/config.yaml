@@ -21,6 +21,9 @@ model_list:
       api_base: os.environ/YCAPI_BASE_URL
       api_key: os.environ/YCAPI_API_TOKEN
       input_cost_per_image: 0.01
+    model_info:
+      mode: image_generation
+      input_cost_per_image: 0.01
 
 litellm_settings:
   drop_params: true
