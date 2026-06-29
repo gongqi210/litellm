@@ -323,6 +323,7 @@ M1 采用方案 B：AiManager 中间件或响应包装层给自有拦截错误�
 - 下游返回 JSON error 时保留 `message`、`type`、`param`、`code`；下游返回非 JSON 4xx/5xx 时规范化为 OpenAI-compatible JSON。
 - 不泄露 token、数据库密码、供应商 key、DSN 密码、完整 prompt；文本错误默认使用通用 upstream message，JSON 字段做敏感串脱敏。
 - streaming 中的预调用错误也必须符合该错误体；streaming 已开始后的上游中断按 SDK 可处理错误记录日志和 spend/failure。
+- `AIMANAGER_DATABASE_READY_CHECK_ENABLED=True` 时，AiManager 在 readiness、业务允许路由和管理允许路由进入 LiteLLM 前执行 Postgres 协议握手式 DB-ready 预检；DB 不可达返回 503 `aimanager_database_unavailable`，provider passthrough 等自有封堵仍先返回 403，避免故障时静默放行或卡死。
 
 AC-07 断言 body `request_id` 与 header 关联一致，且 401/403/404/429/5xx 类型稳定。
 
@@ -380,6 +381,7 @@ M1 落地采用双层授权口径：
 - pricing mutant：移除 chat price、把 image price 写成 `output_cost_per_image`、设成 0.0 均失败。
 - config drift：尝试 `/config/update`、模型写入、DB passthrough 后 health FAIL 或请求被拒。
 - RBAC：财务/总经理/审计无 key/team/user/budget 写权限，未知或缺角色 fail-closed，business surface 不因 role header 解锁管理路由；部门管理员跨部门明细范围在 M2 业务门户或 LiteLLM team-scoping 集成中继续补运行态验收。
+- Postgres down：readiness 快速 503，provider passthrough 仍为 AiManager 403，员工 virtual key 业务请求返回 sanitized 503，不进入 downstream LiteLLM/ycapi。
 - secret scan：`.env.example` 只有占位符，日志和错误不回显密钥。
 
 ### 9.3 live 口径
@@ -470,6 +472,7 @@ M1 落地采用双层授权口径：
 - [ ] `/config/update` 和模型写路径被显式拒绝。
 - [ ] shared key 创建时写入 `enforced_params`。
 - [x] 错误响应体含 `request_id`，header 保留 `x-litellm-call-id`。
+- [x] Postgres down 时 AiManager DB-ready guard fail-closed，readiness 与员工业务请求返回 503，provider passthrough 仍先 403。
 - [ ] AC-01 到 AC-19 的测试能因真实缺陷失败。
 - [ ] 没有真实 ycapi token 的 live 项标记 `BLOCKED`，不伪装通过。
 

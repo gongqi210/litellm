@@ -255,7 +255,23 @@ PYTHONPATH="$PWD" uv run --no-project --with pyyaml python -m aimanager.scripts.
 
 Expected result: `PASS`, `freeze_status=200`, `freeze_reject_status=401`, `revoke_status=200`, `revoke_reject_status=401`, and `audit_events=key_frozen,key_revoked`. The smoke creates two disposable governed employee keys, proves each key can call the business surface before disposition, freezes one key through the admin surface and verifies subsequent business inference is rejected with `Key is blocked`, revokes the other key and verifies subsequent business inference is rejected as an invalid token, then polls the admin container logs for structured `key_frozen` and `key_revoked` audit events with actor, reason, request id, key alias, and governance dimensions. It never prints the virtual key.
 
-The rendered default compose config must show `build.target: runtime`, `entrypoint: ["python", "-m", "aimanager.litellm_entrypoint"]`, `--config=/app/config.yaml`, `--enforce_prisma_migration_check`, `AIMANAGER_ROUTE_SURFACE=business`, and `LITELLM_LOCAL_MODEL_COST_MAP=True`. The rendered `--profile admin` config must also show `aimanager-admin`, `AIMANAGER_ROUTE_SURFACE=management`, `AIMANAGER_RBAC_ENABLED=True`, `LITELLM_LOCAL_MODEL_COST_MAP=True`, and `127.0.0.1:4001:4000`.
+Postgres-down runtime smoke:
+
+```bash
+# Create a governed employee virtual key through the admin surface while DB is up,
+# keep it out of logs, then stop db and run:
+LITELLM_MASTER_KEY=aimanager-local-master-key \
+AIMANAGER_POSTGRES_DOWN_BUSINESS_KEY="$EMPLOYEE_VIRTUAL_KEY" \
+PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.smoke_postgres_down \
+  --master-key aimanager-local-master-key \
+  --business-key "$EMPLOYEE_VIRTUAL_KEY" \
+  --base-url http://localhost:4000 \
+  --timeout 10
+```
+
+Expected result: `PASS readiness_fails 503`, `PASS provider_passthrough_still_blocked 403`, and `PASS business_call_fails_safely 503`. The smoke proves Postgres-down readiness fails fast, provider passthrough remains blocked before downstream LiteLLM, and employee business calls fail closed with sanitized 5xx instead of hanging or falling back.
+
+The rendered default compose config must show `build.target: runtime`, `entrypoint: ["python", "-m", "aimanager.litellm_entrypoint"]`, `--config=/app/config.yaml`, `--enforce_prisma_migration_check`, `AIMANAGER_ROUTE_SURFACE=business`, `AIMANAGER_DATABASE_READY_CHECK_ENABLED=True`, and `LITELLM_LOCAL_MODEL_COST_MAP=True`. The rendered `--profile admin` config must also show `aimanager-admin`, `AIMANAGER_ROUTE_SURFACE=management`, `AIMANAGER_RBAC_ENABLED=True`, `AIMANAGER_DATABASE_READY_CHECK_ENABLED=True`, `LITELLM_LOCAL_MODEL_COST_MAP=True`, and `127.0.0.1:4001:4000`. The local Postgres service binds to `127.0.0.1:${AIMANAGER_POSTGRES_PORT:-15440}:5432` to avoid colliding with a workstation Postgres on `5432`.
 
 Smoke test after `.env` is populated:
 
@@ -296,7 +312,8 @@ Latest local runtime smoke evidence:
 - Mock ycapi runtime spend smoke proved `POST /v1/chat/completions` and `POST /v1/images/generations` through AiManager write nonzero `LiteLLM_SpendLogs.spend`: chat `3.3e-06`, image `0.01`. Rows were recorded as `openai/gemini-2.5-flash` and `openai/ycapi-image-1`.
 - Mock ycapi runtime budget-block smoke proved a disposable governed key with `max_budget=0.005` can spend `0.01` on a successful image request, then receive HTTP 429 `budget_exceeded` on the next business request. The response and LiteLLM container log both recorded `Budget has been exceeded! ... Current cost: 0.01, Max budget: 0.005`; AiManager also emitted a structured `aimanager_audit_event` with `event_type=budget_blocked`, `severity=high`, and `reason=budget_exceeded`.
 - Mock ycapi runtime key-lifecycle smoke proved admin `POST /key/block` freezes a governed key, subsequent business chat returns HTTP 401 with `Key is blocked`, admin `POST /key/delete` revokes a second governed key, subsequent business chat returns HTTP 401 invalid-token/not-found, and the admin container logs contain `key_frozen` and `key_revoked` `aimanager_audit_event` records with actor `aimanager-ci`, disposition reasons, request ids, key aliases, and governance dimensions.
+- Postgres-down runtime smoke with isolated compose project `aimanager_postgres_down` proved that after stopping `db`, AiManager returns readiness 503, still blocks provider passthrough with 403 before downstream LiteLLM, and returns sanitized 503 `aimanager_database_unavailable` for an employee virtual-key business chat.
 - Local observability tests prove management `GET /metrics` is served by AiManager without reaching downstream LiteLLM, business `/metrics` remains blocked, audit events increment `aimanager_audit_events_total`, downstream 429/5xx increment `aimanager_http_responses_total`, and `export_observability` emits JSON metrics plus alert records from audit logs and request-status rows.
 - Local error-contract tests prove allowed downstream LiteLLM/ycapi 429 JSON errors preserve the upstream `error` object, inject top-level `request_id` aligned with `x-litellm-call-id`, keep 401/403/404 fallback types stable, pass successful streaming chunks through unchanged, and convert non-JSON downstream 5xx errors to OpenAI-compatible JSON without leaking Bearer, `sk-*`, ycapi token text, or DSN passwords.
 
-Remaining before business trial: UI automation for the key creation flow, production ycapi bill evidence, Postgres-down failure-mode checks, live ycapi smoke with the production token policy, production admin SSO/reverse-proxy header stripping, and production alert routing from the management metrics/report output.
+Remaining before business trial: UI automation for the key creation flow, production ycapi bill evidence, live ycapi smoke with the production token policy, production admin SSO/reverse-proxy header stripping, and production alert routing from the management metrics/report output.

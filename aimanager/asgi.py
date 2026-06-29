@@ -4,7 +4,10 @@ import json
 import logging
 import os
 import re
+import socket
+import struct
 from typing import Any, Awaitable, Callable
+from urllib.parse import urlparse
 from uuid import uuid4
 
 from aimanager.audit import build_audit_event
@@ -19,11 +22,13 @@ Send = Callable[[Message], Awaitable[None]]
 ASGIApp = Callable[[Scope, Receive, Send], Awaitable[None]]
 AuditSink = Callable[[dict[str, Any]], None]
 MetricsSink = AiManagerMetrics
+DatabaseReadyChecker = Callable[[], bool]
 
 LOGGER = logging.getLogger("aimanager.audit")
 KEY_GOVERNANCE_POLICY_CODE = "aimanager_key_governance_invalid"
 KEY_LIFECYCLE_POLICY_CODE = "aimanager_key_lifecycle_invalid"
 RBAC_POLICY_CODE = "aimanager_rbac_denied"
+DATABASE_UNAVAILABLE_POLICY_CODE = "aimanager_database_unavailable"
 MAX_KEY_GENERATE_BODY_BYTES = 64 * 1024
 MAX_DOWNSTREAM_AUDIT_BODY_BYTES = 16 * 1024
 MAX_DOWNSTREAM_ERROR_BODY_BYTES = 64 * 1024
@@ -78,6 +83,8 @@ class YcapiOnlyAllowlistMiddleware:
         metrics_sink: MetricsSink | None = None,
         surface: str = "business",
         rbac_enabled: bool | None = None,
+        database_ready_check_enabled: bool | None = None,
+        database_ready_checker: DatabaseReadyChecker | None = None,
     ) -> None:
         self.app = app
         self.metrics_sink = metrics_sink or DEFAULT_AIMANAGER_METRICS
@@ -86,6 +93,12 @@ class YcapiOnlyAllowlistMiddleware:
         self.rbac_enabled = (
             _env_flag("AIMANAGER_RBAC_ENABLED", default=False) if rbac_enabled is None else rbac_enabled
         )
+        self.database_ready_check_enabled = (
+            _env_flag("AIMANAGER_DATABASE_READY_CHECK_ENABLED", default=False)
+            if database_ready_check_enabled is None
+            else database_ready_check_enabled
+        )
+        self.database_ready_checker = database_ready_checker or _database_ready_from_env
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope.get("type") != "http":
@@ -102,6 +115,12 @@ class YcapiOnlyAllowlistMiddleware:
                 return
 
             request_id = _request_id_from_scope(scope)
+            if self.database_ready_check_enabled and _requires_database_ready(method, path):
+                database_decision = _database_unavailable_decision(method, path)
+                if not self.database_ready_checker():
+                    _emit_policy_audit_event(self.audit_sink, scope, database_decision, request_id)
+                    await _send_policy_error(metrics_send, database_decision, request_id)
+                    return
             contract_send = _downstream_error_contract_send_wrapper(
                 metrics_send,
                 request_id,
@@ -207,6 +226,29 @@ def _is_key_lifecycle_route(method: str, path: str) -> bool:
 
 def _is_metrics_route(method: str, path: str) -> bool:
     return method.upper() == "GET" and _normalized_request_path(path) == "/metrics"
+
+
+def _requires_database_ready(method: str, path: str) -> bool:
+    normalized_path = _normalized_request_path(path)
+    if normalized_path in {"/health", "/health/liveliness"}:
+        return False
+    if _is_metrics_route(method, normalized_path):
+        return False
+    return True
+
+
+def _database_unavailable_decision(method: str, path: str) -> RouteDecision:
+    normalized_method = method.upper()
+    normalized_path = _normalized_request_path(path)
+    return RouteDecision(
+        allowed=False,
+        code=DATABASE_UNAVAILABLE_POLICY_CODE,
+        message=(
+            "AiManager database is unavailable; "
+            f"failing closed before downstream LiteLLM for {normalized_method} {normalized_path}"
+        ),
+        status_code=503,
+    )
 
 
 def _management_rbac_decision(scope: Scope, method: str, path: str) -> RouteDecision | None:
@@ -1031,6 +1073,38 @@ def _env_flag(name: str, *, default: bool) -> bool:
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _database_ready_from_env() -> bool:
+    database_url = os.environ.get("DATABASE_URL", "")
+    parsed = urlparse(database_url)
+    host = parsed.hostname
+    if not host:
+        return False
+    port = parsed.port or 5432
+    timeout = _env_float("AIMANAGER_DATABASE_READY_CHECK_TIMEOUT_SECONDS", default=0.25)
+    return _postgres_server_responds(host, port, timeout)
+
+
+def _postgres_server_responds(host: str, port: int, timeout: float) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=timeout) as sock:
+            sock.settimeout(timeout)
+            sock.sendall(struct.pack("!II", 8, 80877103))
+            return sock.recv(1) in {b"S", b"N"}
+    except OSError:
+        return False
+
+
+def _env_float(name: str, *, default: float) -> float:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    try:
+        parsed = float(value)
+    except ValueError:
+        return default
+    return parsed if parsed > 0 else default
 
 
 def _log_audit_event(event: dict[str, Any]) -> None:

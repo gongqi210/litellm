@@ -17,6 +17,7 @@ services:
       STORE_MODEL_IN_DB: "False"
       CONFIG_FILE_PATH: "/app/config.yaml"
       AIMANAGER_ROUTE_SURFACE: "business"
+      AIMANAGER_DATABASE_READY_CHECK_ENABLED: "True"
       LITELLM_LOCAL_MODEL_COST_MAP: "True"
     volumes:
       - ./config.yaml:/app/config.yaml:ro
@@ -58,6 +59,7 @@ services:
       CONFIG_FILE_PATH: "/app/config.yaml"
       AIMANAGER_ROUTE_SURFACE: "management"
       AIMANAGER_RBAC_ENABLED: "True"
+      AIMANAGER_DATABASE_READY_CHECK_ENABLED: "True"
       LITELLM_LOCAL_MODEL_COST_MAP: "True"
     volumes:
       - ./config.yaml:/app/config.yaml:ro
@@ -90,7 +92,7 @@ services:
       POSTGRES_USER: "${POSTGRES_USER:-aimanager}"
       POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-aimanager}"
     ports:
-      - "5432:5432"
+      - "127.0.0.1:${AIMANAGER_POSTGRES_PORT:-15440}:5432"
     volumes:
       - aimanager_postgres_data:/var/lib/postgresql/data
     healthcheck:

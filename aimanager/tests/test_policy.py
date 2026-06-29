@@ -661,6 +661,123 @@ def test_management_rbac_allows_readonly_roles_to_fetch_reports() -> None:
     ]
 
 
+def test_database_ready_guard_blocks_allowed_business_routes_before_downstream() -> None:
+    audit_events: list[dict[str, object]] = []
+    calls: list[dict[str, object]] = []
+
+    async def downstream(scope, receive, send) -> None:  # type: ignore[no-untyped-def]
+        calls.append(scope)
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"{}"})
+
+    app = YcapiOnlyAllowlistMiddleware(
+        downstream,
+        audit_sink=audit_events.append,
+        database_ready_check_enabled=True,
+        database_ready_checker=lambda: False,
+    )
+
+    messages = asyncio.run(
+        _call_asgi(
+            app,
+            "POST",
+            "/v1/chat/completions",
+            headers=[(b"x-request-id", b"req-db-down")],
+            body=json.dumps(
+                {"model": "gemini-2.5-flash", "messages": [{"role": "user", "content": "hello"}]}
+            ).encode("utf-8"),
+        )
+    )
+
+    assert calls == []
+    assert messages[0]["status"] == 503
+    response_headers = dict(messages[0]["headers"])
+    assert response_headers[b"x-aimanager-policy-code"] == b"aimanager_database_unavailable"
+    body = json.loads(messages[1]["body"])
+    assert body["request_id"] == "req-db-down"
+    assert body["error"]["code"] == "aimanager_database_unavailable"
+    assert len(audit_events) == 1
+    assert audit_events[0]["event_type"] == "policy_blocked"
+    assert audit_events[0]["reason"] == "aimanager_database_unavailable"
+
+
+def test_database_ready_guard_does_not_mask_provider_passthrough_policy() -> None:
+    def fail_if_called() -> bool:
+        raise AssertionError("database readiness must not run for blocked provider passthrough")
+
+    async def downstream(scope, receive, send) -> None:  # type: ignore[no-untyped-def]
+        raise AssertionError("blocked provider passthrough must not reach downstream LiteLLM")
+
+    app = YcapiOnlyAllowlistMiddleware(
+        downstream,
+        database_ready_check_enabled=True,
+        database_ready_checker=fail_if_called,
+    )
+
+    messages = asyncio.run(_call_asgi(app, "POST", "/anthropic/messages", body=b"{}"))
+
+    assert messages[0]["status"] == 403
+    body = json.loads(messages[1]["body"])
+    assert body["error"]["code"] == "aimanager_passthrough_blocked"
+
+
+def test_database_ready_guard_serves_readiness_503_before_downstream() -> None:
+    async def downstream(scope, receive, send) -> None:  # type: ignore[no-untyped-def]
+        raise AssertionError("readiness should fail fast before downstream LiteLLM when DB is down")
+
+    app = YcapiOnlyAllowlistMiddleware(
+        downstream,
+        database_ready_check_enabled=True,
+        database_ready_checker=lambda: False,
+    )
+
+    messages = asyncio.run(_call_asgi(app, "GET", "/health/readiness"))
+
+    assert messages[0]["status"] == 503
+    body = json.loads(messages[1]["body"])
+    assert body["error"]["code"] == "aimanager_database_unavailable"
+
+
+def test_database_ready_guard_leaves_liveliness_to_downstream() -> None:
+    calls: list[str] = []
+
+    async def downstream(scope, receive, send) -> None:  # type: ignore[no-untyped-def]
+        calls.append(scope["path"])
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"alive"})
+
+    app = YcapiOnlyAllowlistMiddleware(
+        downstream,
+        database_ready_check_enabled=True,
+        database_ready_checker=lambda: False,
+    )
+
+    messages = asyncio.run(_call_asgi(app, "GET", "/health/liveliness"))
+
+    assert calls == ["/health/liveliness"]
+    assert messages[0]["status"] == 200
+
+
+def test_database_ready_guard_allows_business_routes_when_database_is_ready() -> None:
+    calls: list[dict[str, object]] = []
+
+    async def downstream(scope, receive, send) -> None:  # type: ignore[no-untyped-def]
+        calls.append(scope)
+        await send({"type": "http.response.start", "status": 204, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+
+    app = YcapiOnlyAllowlistMiddleware(
+        downstream,
+        database_ready_check_enabled=True,
+        database_ready_checker=lambda: True,
+    )
+
+    messages = asyncio.run(_call_asgi(app, "GET", "/v1/models"))
+
+    assert len(calls) == 1
+    assert messages[0]["status"] == 204
+
+
 def test_management_surface_rejects_key_generate_without_governance_metadata() -> None:
     audit_events: list[dict[str, object]] = []
 
