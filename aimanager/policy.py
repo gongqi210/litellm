@@ -71,6 +71,7 @@ MANAGEMENT_ROUTE_PREFIXES = (
 )
 
 MANAGEMENT_READ_ROUTES = {
+    ("GET", "/metrics"),
     ("GET", "/config/yaml"),
     ("GET", "/config/list"),
     ("GET", "/config/field/info"),

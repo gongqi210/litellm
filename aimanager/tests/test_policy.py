@@ -4,6 +4,7 @@ import json
 from aimanager.asgi import YcapiOnlyAllowlistMiddleware
 from aimanager.governance import SHARED_KEY_ENFORCED_PARAMS
 from aimanager.policy import build_policy_error_body, evaluate_route
+from aimanager.runtime_metrics import AiManagerMetrics
 
 
 def test_business_routes_are_allowed() -> None:
@@ -81,6 +82,14 @@ def test_management_surface_allows_litellm_management_routes() -> None:
     for method, path in allowed_routes:
         decision = evaluate_route(method, path, surface="management")
         assert decision.allowed is True, f"{method} {path}"
+
+
+def test_management_surface_allows_metrics_but_business_surface_blocks_it() -> None:
+    assert evaluate_route("GET", "/metrics", surface="management").allowed is True
+    business_decision = evaluate_route("GET", "/metrics", surface="business")
+
+    assert business_decision.allowed is False
+    assert business_decision.code == "aimanager_route_not_allowed"
 
 
 def test_management_surface_still_blocks_provider_config_and_model_write_routes() -> None:
@@ -471,6 +480,33 @@ def test_allowlist_middleware_emits_audit_event_for_blocked_requests() -> None:
     assert "must-not-be-logged" not in json.dumps(event)
 
 
+def test_allowlist_middleware_records_bounded_audit_metrics_for_blocked_requests() -> None:
+    metrics = AiManagerMetrics()
+
+    async def downstream(scope, receive, send) -> None:  # type: ignore[no-untyped-def]
+        raise AssertionError("blocked requests must not reach downstream LiteLLM")
+
+    app = YcapiOnlyAllowlistMiddleware(downstream, metrics_sink=metrics)
+
+    asyncio.run(
+        _call_asgi(
+            app,
+            "POST",
+            "/anthropic/messages",
+            headers=[
+                (b"x-request-id", b"req-metrics-must-not-be-a-label"),
+                (b"x-aimanager-key-alias", b"market-key-must-not-be-a-label"),
+            ],
+        )
+    )
+
+    text = metrics.render_prometheus_text()
+    assert 'aimanager_audit_events_total{event_type="passthrough_blocked",severity="warning"} 1' in text
+    assert 'aimanager_http_responses_total{method="POST",status_class="4xx",status_code="403"} 1' in text
+    assert "req-metrics-must-not-be-a-label" not in text
+    assert "market-key-must-not-be-a-label" not in text
+
+
 def test_allowlist_middleware_emits_policy_blocked_audit_for_config_updates() -> None:
     audit_events: list[dict[str, object]] = []
 
@@ -556,6 +592,55 @@ def test_allowlist_middleware_emits_budget_blocked_audit_for_downstream_budget_e
     assert event["metadata"]["downstream_error_type"] == "budget_exceeded"
     assert "authorization" not in json.dumps(event).lower()
     assert "must-not-be-logged" not in json.dumps(event)
+
+
+def test_allowlist_middleware_records_downstream_429_and_5xx_status_metrics() -> None:
+    metrics = AiManagerMetrics()
+    statuses = [200, 429, 503]
+
+    async def downstream(scope, receive, send) -> None:  # type: ignore[no-untyped-def]
+        status = statuses.pop(0)
+        await send({"type": "http.response.start", "status": status, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+
+    app = YcapiOnlyAllowlistMiddleware(downstream, metrics_sink=metrics)
+
+    for request_id in ("req-ok", "req-429", "req-503"):
+        asyncio.run(
+            _call_asgi(
+                app,
+                "POST",
+                "/v1/chat/completions",
+                headers=[(b"x-request-id", request_id.encode("utf-8"))],
+            )
+        )
+
+    text = metrics.render_prometheus_text()
+    assert 'aimanager_http_responses_total{method="POST",status_class="2xx",status_code="200"} 1' in text
+    assert 'aimanager_http_responses_total{method="POST",status_class="4xx",status_code="429"} 1' in text
+    assert 'aimanager_http_responses_total{method="POST",status_class="5xx",status_code="503"} 1' in text
+    assert "req-503" not in text
+
+
+def test_management_surface_serves_aimanager_metrics_without_downstream_litellm() -> None:
+    calls: list[dict[str, object]] = []
+    metrics = AiManagerMetrics()
+    metrics.record_audit_event({"event_type": "budget_blocked", "severity": "high"})
+
+    async def downstream(scope, receive, send) -> None:  # type: ignore[no-untyped-def]
+        calls.append(scope)
+        raise AssertionError("AiManager should serve /metrics before downstream LiteLLM")
+
+    app = YcapiOnlyAllowlistMiddleware(downstream, surface="management", metrics_sink=metrics)
+
+    messages = asyncio.run(_call_asgi(app, "GET", "/metrics"))
+
+    assert calls == []
+    assert messages[0]["status"] == 200
+    headers = dict(messages[0]["headers"])
+    assert headers[b"content-type"].startswith(b"text/plain")
+    body = messages[1]["body"].decode("utf-8")
+    assert 'aimanager_audit_events_total{event_type="budget_blocked",severity="high"} 1' in body
 
 
 def test_management_surface_emits_key_frozen_audit_after_successful_block() -> None:

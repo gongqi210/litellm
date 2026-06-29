@@ -131,6 +131,26 @@ Each event carries `event_id`, `event_type`, `severity`, `occurred_at`, `actor`,
 
 On the management surface, key lifecycle operations are also governed before they reach LiteLLM. `POST /key/block` and `POST /key/delete` require `x-aimanager-actor` plus either `x-aimanager-reason` or `x-aimanager-disposition-reason`; missing disposition headers return HTTP 400 with `error.code=aimanager_key_lifecycle_invalid`. Successful `/key/block` responses emit `key_frozen`; successful `/key/delete` responses emit `key_revoked`. The downstream LiteLLM response body is preserved.
 
+## Observability
+
+`aimanager.runtime_metrics.AiManagerMetrics` records bounded runtime counters without using high-cardinality labels such as request id, key alias, path, or reason:
+
+- `aimanager_audit_events_total{event_type,severity}` for `passthrough_blocked`, `policy_blocked`, `budget_blocked`, `key_frozen`, and `key_revoked`.
+- `aimanager_http_responses_total{method,status_class,status_code}` for allowed traffic and AiManager policy responses, including 429 and 5xx.
+
+`GET /metrics` is served by AiManager on the management surface only. The business surface still blocks `/metrics` with the standard AiManager policy response, so operational counters are not exposed on the employee API port by default.
+
+Local log/report export:
+
+```bash
+PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.export_observability \
+  --audit-log-file /path/to/aimanager.log \
+  --request-status-file /path/to/request-status.csv \
+  --output-file /tmp/aimanager-observability.json
+```
+
+The report contains request count, failed requests, failure rate, 429/5xx counts, latency/token/spend totals, observed request ids, audit event counts, bounded key/model buckets, and machine-readable alerts for high failure rate, 429, 5xx, missing request id, budget blocks, and passthrough blocks. Request ids stay in the JSON report for correlation, not in Prometheus labels.
+
 ## Run
 
 ```bash
@@ -264,5 +284,6 @@ Latest local runtime smoke evidence:
 - Mock ycapi runtime spend smoke proved `POST /v1/chat/completions` and `POST /v1/images/generations` through AiManager write nonzero `LiteLLM_SpendLogs.spend`: chat `3.3e-06`, image `0.01`. Rows were recorded as `openai/gemini-2.5-flash` and `openai/ycapi-image-1`.
 - Mock ycapi runtime budget-block smoke proved a disposable governed key with `max_budget=0.005` can spend `0.01` on a successful image request, then receive HTTP 429 `budget_exceeded` on the next business request. The response and LiteLLM container log both recorded `Budget has been exceeded! ... Current cost: 0.01, Max budget: 0.005`; AiManager also emitted a structured `aimanager_audit_event` with `event_type=budget_blocked`, `severity=high`, and `reason=budget_exceeded`.
 - Mock ycapi runtime key-lifecycle smoke proved admin `POST /key/block` freezes a governed key, subsequent business chat returns HTTP 401 with `Key is blocked`, admin `POST /key/delete` revokes a second governed key, subsequent business chat returns HTTP 401 invalid-token/not-found, and the admin container logs contain `key_frozen` and `key_revoked` `aimanager_audit_event` records with actor `aimanager-ci`, disposition reasons, request ids, key aliases, and governance dimensions.
+- Local observability tests prove management `GET /metrics` is served by AiManager without reaching downstream LiteLLM, business `/metrics` remains blocked, audit events increment `aimanager_audit_events_total`, downstream 429/5xx increment `aimanager_http_responses_total`, and `export_observability` emits JSON metrics plus alert records from audit logs and request-status rows.
 
-Remaining before business trial: metrics/alerting, UI automation for the key creation flow, production ycapi bill evidence, RBAC verification, broader failure-mode checks, and live ycapi smoke with the production token policy.
+Remaining before business trial: UI automation for the key creation flow, production ycapi bill evidence, RBAC verification, broader failure-mode checks, live ycapi smoke with the production token policy, and production alert routing from the management metrics/report output.

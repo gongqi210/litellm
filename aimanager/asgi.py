@@ -9,6 +9,7 @@ from uuid import uuid4
 from aimanager.audit import build_audit_event
 from aimanager.governance import KeyGovernanceError, normalize_key_request
 from aimanager.policy import build_policy_error_body, evaluate_route
+from aimanager.runtime_metrics import DEFAULT_AIMANAGER_METRICS, AiManagerMetrics
 
 Scope = dict[str, Any]
 Message = dict[str, Any]
@@ -16,6 +17,7 @@ Receive = Callable[[], Awaitable[Message]]
 Send = Callable[[Message], Awaitable[None]]
 ASGIApp = Callable[[Scope, Receive, Send], Awaitable[None]]
 AuditSink = Callable[[dict[str, Any]], None]
+MetricsSink = AiManagerMetrics
 
 LOGGER = logging.getLogger("aimanager.audit")
 KEY_GOVERNANCE_POLICY_CODE = "aimanager_key_governance_invalid"
@@ -29,10 +31,12 @@ class YcapiOnlyAllowlistMiddleware:
         self,
         app: ASGIApp,
         audit_sink: AuditSink | None = None,
+        metrics_sink: MetricsSink | None = None,
         surface: str = "business",
     ) -> None:
         self.app = app
-        self.audit_sink = audit_sink or _log_audit_event
+        self.metrics_sink = metrics_sink or DEFAULT_AIMANAGER_METRICS
+        self.audit_sink = _audit_sink_with_metrics(audit_sink or _log_audit_event, self.metrics_sink)
         self.surface = "management" if surface == "management" else "business"
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
@@ -43,10 +47,15 @@ class YcapiOnlyAllowlistMiddleware:
         method = str(scope.get("method", ""))
         path = str(scope.get("path", ""))
         decision = evaluate_route(method, path, surface=self.surface)
+        metrics_send = _http_status_metrics_send_wrapper(send, self.metrics_sink, scope)
         if decision.allowed:
+            if self.surface == "management" and _is_metrics_route(method, path):
+                await _send_metrics_response(metrics_send, self.metrics_sink)
+                return
+
             request_id = _request_id_from_scope(scope)
             audit_send = _downstream_budget_audit_send_wrapper(
-                send,
+                metrics_send,
                 self.audit_sink,
                 scope,
                 request_id,
@@ -60,7 +69,7 @@ class YcapiOnlyAllowlistMiddleware:
                         request_id,
                         disposition_error,
                     )
-                    await _send_key_lifecycle_error(send, disposition_error, request_id)
+                    await _send_key_lifecycle_error(metrics_send, disposition_error, request_id)
                     return
                 audit_send = _downstream_key_lifecycle_audit_send_wrapper(
                     audit_send,
@@ -82,7 +91,7 @@ class YcapiOnlyAllowlistMiddleware:
                         str(exc),
                         payload,
                     )
-                    await _send_key_governance_error(send, str(exc), request_id)
+                    await _send_key_governance_error(metrics_send, str(exc), request_id)
                     return
 
                 await self.app(
@@ -103,14 +112,14 @@ class YcapiOnlyAllowlistMiddleware:
             (b"x-litellm-call-id", request_id.encode("utf-8")),
             (b"x-aimanager-policy-code", decision.code.encode("utf-8")),
         ]
-        await send(
+        await metrics_send(
             {
                 "type": "http.response.start",
                 "status": decision.status_code,
                 "headers": headers,
             }
         )
-        await send({"type": "http.response.body", "body": body})
+        await metrics_send({"type": "http.response.body", "body": body})
 
 
 class _LazyLiteLLMProxyApp:
@@ -145,6 +154,10 @@ def _is_key_lifecycle_route(method: str, path: str) -> bool:
     if method.upper() != "POST":
         return False
     return _key_lifecycle_event(path) is not None
+
+
+def _is_metrics_route(method: str, path: str) -> bool:
+    return method.upper() == "GET" and _normalized_request_path(path) == "/metrics"
 
 
 def _key_lifecycle_event(path: str) -> tuple[str, str] | None:
@@ -284,6 +297,37 @@ async def _send_key_lifecycle_error(send: Send, message: str, request_id: str) -
     ]
     await send({"type": "http.response.start", "status": 400, "headers": headers})
     await send({"type": "http.response.body", "body": body})
+
+
+async def _send_metrics_response(send: Send, metrics_sink: MetricsSink) -> None:
+    body = metrics_sink.render_prometheus_text().encode("utf-8")
+    headers = [
+        (b"content-type", b"text/plain; version=0.0.4; charset=utf-8"),
+        (b"content-length", str(len(body)).encode("ascii")),
+    ]
+    await send({"type": "http.response.start", "status": 200, "headers": headers})
+    await send({"type": "http.response.body", "body": body})
+
+
+def _http_status_metrics_send_wrapper(
+    send: Send,
+    metrics_sink: MetricsSink,
+    scope: Scope,
+) -> Send:
+    method = str(scope.get("method", ""))
+    recorded = False
+
+    async def wrapped_send(message: Message) -> None:
+        nonlocal recorded
+        await send(message)
+        if recorded or message.get("type") != "http.response.start":
+            return
+        raw_status = message.get("status")
+        if isinstance(raw_status, int):
+            metrics_sink.record_http_response(method=method, status_code=raw_status)
+            recorded = True
+
+    return wrapped_send
 
 
 def _emit_policy_audit_event(
@@ -659,6 +703,17 @@ def _text_from_value(value: Any) -> str:
     if isinstance(value, str):
         return value.strip()
     return str(value)
+
+
+def _audit_sink_with_metrics(audit_sink: AuditSink, metrics_sink: MetricsSink) -> AuditSink:
+    def wrapped(event: dict[str, Any]) -> None:
+        try:
+            metrics_sink.record_audit_event(event)
+        except Exception:
+            LOGGER.exception("failed_to_record_aimanager_audit_metric")
+        audit_sink(event)
+
+    return wrapped
 
 
 def _log_audit_event(event: dict[str, Any]) -> None:
