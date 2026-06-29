@@ -95,11 +95,14 @@ Money values use `Decimal`. Missing ownership dimensions are kept visible as `un
 `aimanager.audit.build_audit_event` standardizes M1 risk events:
 
 - `passthrough_blocked`
+- `policy_blocked`
 - `budget_blocked`
 - `key_frozen`
 - `key_revoked`
 
-Each event carries `event_id`, `event_type`, `severity`, `occurred_at`, `actor`, `subject_key_alias`, team/department/project/cost-center dimensions, `reason`, `request_id`, and `metadata`. This is the local event contract for logs, alerts, and executive/finance dashboards. Runtime emitters still need to be attached to policy blocking, budget enforcement, and key lifecycle operations.
+Each event carries `event_id`, `event_type`, `severity`, `occurred_at`, `actor`, `subject_key_alias`, team/department/project/cost-center dimensions, `reason`, `request_id`, and `metadata`. This is the local event contract for logs, alerts, and executive/finance dashboards.
+
+`aimanager.asgi` emits structured `aimanager_audit_event=...` logs before returning policy 403 responses. Provider/native bypass attempts emit `passthrough_blocked`; config/model writes and default-denied routes emit `policy_blocked`. Only allowlisted governance headers are copied into audit dimensions; Authorization and Cookie values are not logged.
 
 ## Run
 
@@ -119,6 +122,14 @@ cd /Volumes/AI-projects/01-yca-AiManager
 uv run --no-project --with pyyaml python -m aimanager.scripts.validate_config aimanager/config.yaml
 PYTHONPATH="$PWD" uv run --no-project --with pytest --with pyyaml pytest aimanager/tests -q
 docker compose -f aimanager/docker-compose.yml config
+```
+
+With a running local proxy:
+
+```bash
+LITELLM_MASTER_KEY=aimanager-local-master-key \
+PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.smoke_blocked_routes \
+  --base-url http://localhost:4000
 ```
 
 The rendered compose config must show `build.target: runtime`, `entrypoint: ["python", "-m", "aimanager.litellm_entrypoint"]`, `--config=/app/config.yaml`, and `--enforce_prisma_migration_check`.
@@ -150,5 +161,7 @@ Latest local runtime smoke evidence:
 - `GET /v1/models` returned only `gemini-2.5-flash`, `deepseek-chat`, and `ycapi-image-1`.
 - `POST /anthropic/messages` returned 403 with `x-aimanager-policy-code: aimanager_passthrough_blocked`.
 - `POST /config/update` returned 403 with `x-aimanager-policy-code: aimanager_config_immutable`.
+- `python -m aimanager.scripts.smoke_blocked_routes` verified 23 provider/native/config/model-write/uncommitted routes as AiManager 403 policy blocks.
+- Container logs emitted 23 structured `aimanager_audit_event` entries for those blocked requests, with no Authorization or Bearer token content in the audit log tail.
 
-Remaining before business trial: full blocked-provider curl matrix, mock/live ycapi chat and image calls, and proof that LiteLLM spend logs record nonzero chargeable usage.
+Remaining before business trial: mock/live ycapi chat and image calls, proof that LiteLLM spend logs record nonzero chargeable usage, runtime budget blocking, and key lifecycle audit emitters.

@@ -58,6 +58,27 @@ def test_budget_blocked_event_defaults_to_high_severity() -> None:
     assert event["metadata"]["budget"] == "100.00"
 
 
+def test_policy_blocked_event_defaults_to_warning_severity() -> None:
+    event = build_audit_event(
+        "policy_blocked",
+        event_id="evt_policy_1",
+        occurred_at="2026-06-30T12:30:00+08:00",
+        actor="aimanager-policy",
+        subject_key_alias="unassigned",
+        team_id="team_dev",
+        department_id="dept_rd",
+        project_id="proj_internal_tool",
+        cost_center_id="cc_rd",
+        reason="aimanager_config_immutable",
+        request_id="req_policy_1",
+        metadata={"method": "POST", "path": "/config/update"},
+    )
+
+    assert event["event_type"] == "policy_blocked"
+    assert event["severity"] == "warning"
+    assert event["reason"] == "aimanager_config_immutable"
+
+
 def test_key_lifecycle_event_requires_reason() -> None:
     with pytest.raises(AuditEventError, match="reason"):
         build_audit_event(

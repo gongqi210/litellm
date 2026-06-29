@@ -148,6 +148,67 @@ def test_allowlist_middleware_blocks_before_downstream() -> None:
     assert body["error"]["code"] == "aimanager_config_immutable"
 
 
+def test_allowlist_middleware_emits_audit_event_for_blocked_requests() -> None:
+    audit_events: list[dict[str, object]] = []
+
+    async def downstream(scope, receive, send) -> None:  # type: ignore[no-untyped-def]
+        raise AssertionError("blocked requests must not reach downstream LiteLLM")
+
+    app = YcapiOnlyAllowlistMiddleware(downstream, audit_sink=audit_events.append)
+
+    asyncio.run(
+        _call_asgi(
+            app,
+            "POST",
+            "/anthropic/messages",
+            headers=[
+                (b"x-request-id", b"req-audit-1"),
+                (b"authorization", b"Bearer must-not-be-logged"),
+                (b"x-aimanager-actor", b"employee-123"),
+                (b"x-aimanager-key-alias", b"market-shared-key"),
+                (b"x-aimanager-team-id", b"team_market"),
+                (b"x-aimanager-department-id", b"dept_market"),
+                (b"x-aimanager-project-id", b"proj_launch"),
+                (b"x-aimanager-cost-center-id", b"cc_growth"),
+            ],
+        )
+    )
+
+    assert len(audit_events) == 1
+    event = audit_events[0]
+    assert event["event_type"] == "passthrough_blocked"
+    assert event["actor"] == "employee-123"
+    assert event["subject_key_alias"] == "market-shared-key"
+    assert event["team_id"] == "team_market"
+    assert event["department_id"] == "dept_market"
+    assert event["project_id"] == "proj_launch"
+    assert event["cost_center_id"] == "cc_growth"
+    assert event["request_id"] == "req-audit-1"
+    assert event["reason"] == "aimanager_passthrough_blocked"
+    assert event["metadata"]["method"] == "POST"
+    assert event["metadata"]["path"] == "/anthropic/messages"
+    assert "authorization" not in json.dumps(event).lower()
+    assert "must-not-be-logged" not in json.dumps(event)
+
+
+def test_allowlist_middleware_emits_policy_blocked_audit_for_config_updates() -> None:
+    audit_events: list[dict[str, object]] = []
+
+    async def downstream(scope, receive, send) -> None:  # type: ignore[no-untyped-def]
+        raise AssertionError("blocked requests must not reach downstream LiteLLM")
+
+    app = YcapiOnlyAllowlistMiddleware(downstream, audit_sink=audit_events.append)
+
+    asyncio.run(_call_asgi(app, "POST", "/config/update"))
+
+    assert len(audit_events) == 1
+    event = audit_events[0]
+    assert event["event_type"] == "policy_blocked"
+    assert event["reason"] == "aimanager_config_immutable"
+    assert event["actor"] == "aimanager-policy"
+    assert event["subject_key_alias"] == "unassigned"
+
+
 def test_allowlist_middleware_ignores_non_http_scopes() -> None:
     calls: list[dict[str, object]] = []
 

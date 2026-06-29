@@ -170,7 +170,7 @@ git add aimanager/policy.py aimanager/asgi.py aimanager/tests/test_policy.py aim
 git commit -m "feat: add AiManager route allowlist"
 ```
 
-Current note: policy, ASGI wrapper, Dockerfile runtime source copy, compose entrypoint, and local tests are complete. Compose now starts `aimanager.litellm_entrypoint`, which preserves LiteLLM CLI initialization while overriding the final uvicorn app to `aimanager.asgi:app`. A local runtime smoke proved LiteLLM migrations/lifespan, health, `/v1/models`, and representative blocked routes. Before M1 trial, add the full provider blocked-route curl matrix, outbound instrumentation, and spend-log proof.
+Current note: policy, ASGI wrapper, Dockerfile runtime source copy, compose entrypoint, and local tests are complete. Compose now starts `aimanager.litellm_entrypoint`, which preserves LiteLLM CLI initialization while overriding the final uvicorn app to `aimanager.asgi:app`. A local runtime smoke proved LiteLLM migrations/lifespan, health, `/v1/models`, full blocked-route matrix, and structured policy audit logs. Before M1 trial, add spend-log proof for mock/live ycapi calls, runtime budget blocking, and key lifecycle emitters.
 
 ## Task 3: M1-B Key Governance and Enforced Params
 
@@ -369,8 +369,37 @@ docker compose -f aimanager/docker-compose.yml up -d --force-recreate --no-build
 
 Observed: Postgres and AiManager started healthy, LiteLLM Prisma migrations and post-migration sanity check completed, `GET /health/liveliness` returned 200, `GET /v1/models` returned only the three ycapi-backed models, and `POST /anthropic/messages` plus `POST /config/update` returned AiManager 403 policy errors.
 
+## Task 7: M1-A Runtime Policy Audit and Blocked Route Matrix
+
+**Files:**
+- Modify: `aimanager/audit.py`
+- Modify: `aimanager/asgi.py`
+- Create: `aimanager/scripts/smoke_blocked_routes.py`
+- Create: `aimanager/tests/test_blocked_route_smoke.py`
+- Modify: `aimanager/tests/test_audit.py`
+- Modify: `aimanager/tests/test_policy.py`
+- Modify: `aimanager/README.md`
+- Modify: `docs/aimanager/1_acceptance_criteria.md`
+- Modify: `项目知识图谱.md`
+
+- [x] **Step 1: Write failing audit emitter tests**
+
+Test that policy-blocked requests emit audit events with request id, actor/key/dimension headers when present, and no Authorization leakage.
+
+- [x] **Step 2: Implement runtime audit emitter**
+
+`aimanager.asgi` now emits structured `aimanager_audit_event` logs before policy 403 responses. Provider/native routes use `passthrough_blocked`; config/model/default-denied routes use `policy_blocked`.
+
+- [x] **Step 3: Write and implement blocked-route smoke script**
+
+`aimanager.scripts.smoke_blocked_routes` checks 23 provider/native/config/model-write/uncommitted routes against a running proxy and requires 403 plus matching `x-aimanager-policy-code` and body `error.code`.
+
+- [x] **Step 4: Verify runtime evidence**
+
+With the current rebuilt image, `python -m aimanager.scripts.smoke_blocked_routes --base-url http://localhost:4000` returned PASS for all 23 cases. Container logs contained 23 `aimanager_audit_event` entries and the audit log tail had no Authorization/Bearer token content.
+
 ## Self-Review
 
-- Spec coverage: Tasks 1 and 2 cover the hard M1-A P0 items from the synthesis design. Task 3 covers key governance. Task 4 adds finance aggregation, reconciliation, and audit event foundations. Task 5 records acceptance evidence. Task 6 hardens startup so the ASGI boundary does not bypass LiteLLM CLI initialization and proves a local container boot. Full spend-log, runtime budget blocking, key lifecycle emitters, full provider blocked-route matrix, and live ycapi verification remain separate follow-up work.
+- Spec coverage: Tasks 1 and 2 cover the hard M1-A P0 items from the synthesis design. Task 3 covers key governance. Task 4 adds finance aggregation, reconciliation, and audit event foundations. Task 5 records acceptance evidence. Task 6 hardens startup so the ASGI boundary does not bypass LiteLLM CLI initialization and proves a local container boot. Task 7 proves the full blocked-route matrix and policy audit logs. Full spend-log, runtime budget blocking, key lifecycle emitters, and live ycapi verification remain separate follow-up work.
 - Placeholder scan: no `TODO`, `TBD`, or unspecified “handle edge cases” instructions are used.
 - Type consistency: all planned Python modules live under `aimanager/`, tests use `pytest`, and commands match the existing project validation pattern.

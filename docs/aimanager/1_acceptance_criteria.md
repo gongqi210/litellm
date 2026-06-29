@@ -38,7 +38,7 @@
 | 编号 | 当前状态 | 证据 | 说明 |
 | --- | --- | --- | --- |
 | AC-01 | PASS | `uv run --no-project --with pyyaml python -m aimanager.scripts.validate_config aimanager/config.yaml`；`pytest aimanager/tests/test_config.py` | 已拒绝供应商直连、passthrough 配置、零价格、NaN/inf/非数字价格、错误 image 计价键 |
-| AC-02 | BLOCKED | `pytest aimanager/tests/test_policy.py`；运行中 proxy smoke：`POST /anthropic/messages`、`POST /config/update` 均返回 403 | policy 单测已覆盖 provider passthrough、Google native、`/config/update`、模型写路径、默认拒绝；运行态 smoke 已证明关键封堵路径不进入业务处理，完整 AC 仍需全 provider curl 矩阵和无 outbound 证据 |
+| AC-02 | PASS | `pytest aimanager/tests/test_policy.py`；`python -m aimanager.scripts.smoke_blocked_routes --base-url http://localhost:4000` | policy 单测证明被封请求不会进入 downstream LiteLLM；运行中 proxy smoke 已覆盖 23 条 provider/native/config/model-write/uncommitted 路径，全部返回 AiManager 403 policy code，并产生审计事件 |
 | AC-03 | PASS | 运行中 proxy：`GET /v1/models` | 已启动容器验证响应只包含 `gemini-2.5-flash`、`deepseek-chat`、`ycapi-image-1` |
 | AC-05 | BLOCKED | `validate_config.py` + `pytest aimanager/tests/test_config.py` | `ycapi-image-1` 已改用 `input_cost_per_image > 0`；仍需 mock/live 调用证明 spend log 非零 |
 | AC-07 | BLOCKED | `pytest aimanager/tests/test_policy.py` | AiManager 自有 policy error 已返回 OpenAI-compatible body + `request_id`；LiteLLM 原生错误包装仍需集成验证 |
@@ -49,7 +49,7 @@
 | AC-12 | BLOCKED | `pytest aimanager/tests/test_finance.py` | 已实现 usage/spend 日/月聚合基础，可按日期、部门、项目、员工、成本中心、key、模型、endpoint、币种和价格版本聚合；仍需接入 LiteLLM `SpendLogs` 和导出任务 |
 | AC-13 | BLOCKED | `pytest aimanager/tests/test_finance.py` | 已实现月度金额字段和 AiManager-vs-ycapi 差异对账基础，采用 `max(10 CNY, 1%)` 物料差异阈值；仍需真实 ycapi 账单导入 |
 | AC-15 | BLOCKED | `docker compose -f aimanager/docker-compose.yml config`；`pytest aimanager/tests/test_litellm_entrypoint.py`；运行中 proxy smoke | compose 已使用 `build.target: runtime` 和 `python -m aimanager.litellm_entrypoint --config=/app/config.yaml`，保留 LiteLLM CLI 初始化并将最终 uvicorn app 替换为 `aimanager.asgi:app`；入口已要求 `LITELLM_MASTER_KEY`、`YCAPI_BASE_URL`、`YCAPI_API_TOKEN` 非空且 compose 已显式透传；真实容器启动、Prisma migration/lifespan、health 和 `/v1/models` 已验证；生产 Admin UI 网络暴露边界仍未验收 |
-| AC-16 | BLOCKED | `pytest aimanager/tests/test_audit.py` | 已定义 passthrough 拦截、预算阻断、key 冻结/撤销事件合同；仍需运行时日志/metrics/告警接入 |
+| AC-16 | BLOCKED | `pytest aimanager/tests/test_audit.py`；运行中 proxy log：23 条 `aimanager_audit_event`，secret-like 检查无 Authorization/Bearer | passthrough/config/model-write/default-denied policy block 已有运行时结构化审计日志；预算阻断、key 冻结/撤销、metrics/告警仍需接入 |
 | AC-17 | BLOCKED | `pytest aimanager/tests/test_policy.py` | policy 层证明不会切 provider passthrough；ycapi 429/5xx、DB down 还未跑 |
 | AC-18 | PASS | `pytest aimanager/tests/test_config.py::test_env_example_uses_non_secret_placeholders`；`rg` secret-like 扫描 | `.env.example` 只保留非密钥占位符，未命中 `sk-`、`AKIA`、`AIza`、private key 等模式 |
 
