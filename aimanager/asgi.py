@@ -7,6 +7,7 @@ from typing import Any, Awaitable, Callable
 from uuid import uuid4
 
 from aimanager.audit import build_audit_event
+from aimanager.governance import KeyGovernanceError, normalize_key_request
 from aimanager.policy import build_policy_error_body, evaluate_route
 
 Scope = dict[str, Any]
@@ -17,6 +18,8 @@ ASGIApp = Callable[[Scope, Receive, Send], Awaitable[None]]
 AuditSink = Callable[[dict[str, Any]], None]
 
 LOGGER = logging.getLogger("aimanager.audit")
+KEY_GOVERNANCE_POLICY_CODE = "aimanager_key_governance_invalid"
+MAX_KEY_GENERATE_BODY_BYTES = 64 * 1024
 
 
 class YcapiOnlyAllowlistMiddleware:
@@ -39,6 +42,30 @@ class YcapiOnlyAllowlistMiddleware:
         path = str(scope.get("path", ""))
         decision = evaluate_route(method, path, surface=self.surface)
         if decision.allowed:
+            if self.surface == "management" and _is_key_generate_route(method, path):
+                request_id = _request_id_from_scope(scope)
+                payload: dict[str, Any] | None = None
+                try:
+                    raw_body = await _read_request_body(receive)
+                    payload = _parse_json_object_body(raw_body)
+                    normalized_body = _normalized_key_generate_body(payload)
+                except KeyGovernanceError as exc:
+                    _emit_key_governance_audit_event(
+                        self.audit_sink,
+                        scope,
+                        request_id,
+                        str(exc),
+                        payload,
+                    )
+                    await _send_key_governance_error(send, str(exc), request_id)
+                    return
+
+                await self.app(
+                    _scope_with_json_body_headers(scope, normalized_body),
+                    _receive_once(normalized_body),
+                    send,
+                )
+                return
             await self.app(scope, receive, send)
             return
 
@@ -81,6 +108,115 @@ def _request_id_from_scope(scope: Scope) -> str:
     return f"req_{uuid4().hex}"
 
 
+def _is_key_generate_route(method: str, path: str) -> bool:
+    normalized_path = path.split("?", 1)[0].strip() or "/"
+    if not normalized_path.startswith("/"):
+        normalized_path = f"/{normalized_path}"
+    if len(normalized_path) > 1:
+        normalized_path = normalized_path.rstrip("/")
+    return method.upper() == "POST" and normalized_path == "/key/generate"
+
+
+async def _read_request_body(receive: Receive) -> bytes:
+    chunks: list[bytes] = []
+    total_size = 0
+    while True:
+        message = await receive()
+        message_type = message.get("type")
+        if message_type == "http.disconnect":
+            break
+        if message_type != "http.request":
+            continue
+
+        chunk = message.get("body", b"")
+        if isinstance(chunk, str):
+            chunk = chunk.encode("utf-8")
+        if not isinstance(chunk, bytes):
+            raise KeyGovernanceError("request body must be bytes for AiManager key creation")
+
+        total_size += len(chunk)
+        if total_size > MAX_KEY_GENERATE_BODY_BYTES:
+            raise KeyGovernanceError("request body is too large for AiManager key creation")
+        chunks.append(chunk)
+
+        if not bool(message.get("more_body", False)):
+            break
+    return b"".join(chunks)
+
+
+def _parse_json_object_body(raw_body: bytes) -> dict[str, Any]:
+    try:
+        payload = json.loads(raw_body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise KeyGovernanceError("JSON object body is required for AiManager key creation") from exc
+    if not isinstance(payload, dict):
+        raise KeyGovernanceError("JSON object body is required for AiManager key creation")
+    return payload
+
+
+def _normalized_key_generate_body(payload: dict[str, Any]) -> bytes:
+    normalized = normalize_key_request(payload, shared_key=_is_shared_key_request(payload))
+    return json.dumps(normalized, separators=(",", ":")).encode("utf-8")
+
+
+def _is_shared_key_request(payload: dict[str, Any]) -> bool:
+    metadata = payload.get("metadata")
+    return isinstance(metadata, dict) and metadata.get("shared_key") is True
+
+
+def _scope_with_json_body_headers(scope: Scope, body: bytes) -> Scope:
+    headers: list[tuple[bytes, bytes]] = []
+    has_content_type = False
+    for key, value in scope.get("headers") or []:
+        lowered = key.lower()
+        if lowered in {b"content-length", b"transfer-encoding"}:
+            continue
+        if lowered == b"content-type":
+            has_content_type = True
+        headers.append((key, value))
+    if not has_content_type:
+        headers.append((b"content-type", b"application/json"))
+    headers.append((b"content-length", str(len(body)).encode("ascii")))
+
+    updated_scope = dict(scope)
+    updated_scope["headers"] = headers
+    return updated_scope
+
+
+def _receive_once(body: bytes) -> Receive:
+    sent = False
+
+    async def receive() -> Message:
+        nonlocal sent
+        if sent:
+            return {"type": "http.request", "body": b"", "more_body": False}
+        sent = True
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    return receive
+
+
+async def _send_key_governance_error(send: Send, message: str, request_id: str) -> None:
+    response = {
+        "error": {
+            "message": f"AiManager key governance rejects key creation: {message}",
+            "type": "invalid_request_error",
+            "param": None,
+            "code": KEY_GOVERNANCE_POLICY_CODE,
+        },
+        "request_id": request_id,
+    }
+    body = json.dumps(response).encode("utf-8")
+    headers = [
+        (b"content-type", b"application/json"),
+        (b"content-length", str(len(body)).encode("ascii")),
+        (b"x-litellm-call-id", request_id.encode("utf-8")),
+        (b"x-aimanager-policy-code", KEY_GOVERNANCE_POLICY_CODE.encode("utf-8")),
+    ]
+    await send({"type": "http.response.start", "status": 400, "headers": headers})
+    await send({"type": "http.response.body", "body": body})
+
+
 def _emit_policy_audit_event(
     audit_sink: AuditSink,
     scope: Scope,
@@ -114,6 +250,59 @@ def _emit_policy_audit_event(
         LOGGER.exception("failed_to_emit_aimanager_audit_event request_id=%s", request_id)
 
 
+def _emit_key_governance_audit_event(
+    audit_sink: AuditSink,
+    scope: Scope,
+    request_id: str,
+    governance_error: str,
+    payload: dict[str, Any] | None,
+) -> None:
+    headers = _headers_from_scope(scope)
+    method = str(scope.get("method", ""))
+    path = str(scope.get("path", ""))
+    metadata = payload.get("metadata") if isinstance(payload, dict) else None
+    metadata = metadata if isinstance(metadata, dict) else {}
+    event = build_audit_event(
+        "policy_blocked",
+        actor=_header(headers, "x-aimanager-actor", default="aimanager-policy"),
+        subject_key_alias=_header(
+            headers,
+            "x-aimanager-key-alias",
+            "x-litellm-key-alias",
+            default=_payload_text(payload, "key_alias"),
+        ),
+        team_id=_header(headers, "x-aimanager-team-id", default=_payload_text(payload, "team_id")),
+        department_id=_header(
+            headers,
+            "x-aimanager-department-id",
+            default=_payload_text(metadata, "department_id"),
+        ),
+        project_id=_header(
+            headers,
+            "x-aimanager-project-id",
+            default=_payload_text(metadata, "project_id"),
+        ),
+        cost_center_id=_header(
+            headers,
+            "x-aimanager-cost-center-id",
+            default=_payload_text(metadata, "cost_center_id"),
+        ),
+        reason=KEY_GOVERNANCE_POLICY_CODE,
+        request_id=request_id,
+        metadata={
+            "method": method,
+            "path": path,
+            "policy_code": KEY_GOVERNANCE_POLICY_CODE,
+            "status_code": 400,
+            "governance_error": governance_error,
+        },
+    )
+    try:
+        audit_sink(event)
+    except Exception:
+        LOGGER.exception("failed_to_emit_aimanager_audit_event request_id=%s", request_id)
+
+
 def _audit_event_type_for_policy_code(policy_code: str) -> str:
     if policy_code in {"aimanager_passthrough_blocked", "aimanager_google_native_blocked"}:
         return "passthrough_blocked"
@@ -135,6 +324,17 @@ def _header(headers: dict[str, str], *names: str, default: str = "") -> str:
         if value:
             return value
     return default
+
+
+def _payload_text(payload: dict[str, Any] | None, field_name: str) -> str:
+    if not isinstance(payload, dict):
+        return ""
+    value = payload.get(field_name)
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    return str(value)
 
 
 def _log_audit_event(event: dict[str, Any]) -> None:

@@ -52,7 +52,7 @@ Route surfaces:
 
 ## Key Governance
 
-Before creating LiteLLM virtual keys through API or UI automation, normalize the request with `aimanager.governance.normalize_key_request`.
+The management surface intercepts `POST /key/generate` before the request reaches LiteLLM and normalizes it with `aimanager.governance.normalize_key_request`. Invalid key-creation payloads return HTTP 400 with `error.code=aimanager_key_governance_invalid`, preserve `request_id`, emit a structured `policy_blocked` audit event, and never reach downstream LiteLLM.
 
 Required top-level fields:
 
@@ -75,7 +75,7 @@ Required metadata:
 - `approver`
 - `internal_or_external`
 
-Shared keys must call `normalize_key_request(payload, shared_key=True)`, which adds LiteLLM `enforced_params`:
+Shared keys must set `metadata.shared_key=true`; AiManager then calls `normalize_key_request(payload, shared_key=True)` and injects LiteLLM `enforced_params`:
 
 ```json
 [
@@ -85,7 +85,7 @@ Shared keys must call `normalize_key_request(payload, shared_key=True)`, which a
 ]
 ```
 
-This pure helper is tested locally. It still needs to be wired into the actual LiteLLM key creation flow before AC-08 can be marked fully PASS.
+The helper, management-surface ASGI wiring, and running API key-creation path are tested locally. UI automation for the same flow remains useful but is not required for AC-08.
 
 ## Finance Reporting
 
@@ -185,5 +185,8 @@ Latest local runtime smoke evidence:
 - Container logs emitted 34 structured `aimanager_audit_event` entries for those blocked requests plus the business-surface `/ui` block, with no Authorization, Bearer token, or local placeholder token content in the audit log tail.
 - Runtime surface split was verified locally: business port `4000` blocks `/ui` with AiManager 403, admin port `127.0.0.1:4001` returns LiteLLM UI redirect for `/ui`, and admin port still blocks `/config/field/update` with `aimanager_config_immutable`.
 - Local tests split surfaces: business surface blocks LiteLLM management routes, while management surface allows UI/key/team/user/budget/spend routes and still blocks provider/config/cache/reload/model-write routes. Compose renders `aimanager-admin` only under the `admin` profile on `127.0.0.1:4001`.
+- Local tests also prove management `POST /key/generate` rejects missing governance metadata with `aimanager_key_governance_invalid`, forwards normalized valid payloads, and injects `enforced_params` for `metadata.shared_key=true`.
+- Runtime admin-surface smoke with rebuilt `aimanager-litellm:local` proved `POST /key/generate` without governance metadata returns HTTP 400, `x-aimanager-policy-code: aimanager_key_governance_invalid`, preserves `x-litellm-call-id`, and emits a matching `policy_blocked` audit event without Authorization/Bearer leakage.
+- Runtime valid shared-key smoke proved `POST /key/generate` returns the required employee/team/model/budget/rate-limit/expiry fields plus department/project/cost-center/scenario/approver metadata and `metadata.enforced_params`; the local smoke key was deleted immediately after verification.
 
-Remaining before business trial: mock/live ycapi chat and image calls, proof that LiteLLM spend logs record nonzero chargeable usage, runtime budget blocking, and key lifecycle audit emitters.
+Remaining before business trial: mock/live ycapi chat and image calls, proof that LiteLLM spend logs record nonzero chargeable usage, runtime budget blocking, key lifecycle audit emitters, and UI automation for the key creation flow.
