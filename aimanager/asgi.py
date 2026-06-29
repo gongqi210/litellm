@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from aimanager.audit import build_audit_event
 from aimanager.governance import KeyGovernanceError, normalize_key_request
-from aimanager.policy import build_policy_error_body, evaluate_route
+from aimanager.policy import RouteDecision, build_policy_error_body, evaluate_route
 from aimanager.runtime_metrics import DEFAULT_AIMANAGER_METRICS, AiManagerMetrics
 
 Scope = dict[str, Any]
@@ -23,9 +23,42 @@ MetricsSink = AiManagerMetrics
 LOGGER = logging.getLogger("aimanager.audit")
 KEY_GOVERNANCE_POLICY_CODE = "aimanager_key_governance_invalid"
 KEY_LIFECYCLE_POLICY_CODE = "aimanager_key_lifecycle_invalid"
+RBAC_POLICY_CODE = "aimanager_rbac_denied"
 MAX_KEY_GENERATE_BODY_BYTES = 64 * 1024
 MAX_DOWNSTREAM_AUDIT_BODY_BYTES = 16 * 1024
 MAX_DOWNSTREAM_ERROR_BODY_BYTES = 64 * 1024
+MANAGEMENT_RBAC_ADMIN_ROLES = frozenset(
+    {
+        "admin",
+        "aimanager_admin",
+        "super_admin",
+        "system_admin",
+        "proxy_admin",
+    }
+)
+MANAGEMENT_HIGH_RISK_WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+MANAGEMENT_HIGH_RISK_WRITE_PREFIXES = (
+    "/key",
+    "/team",
+    "/user",
+    "/customer",
+    "/organization",
+    "/budget",
+    "/spend",
+    "/global/spend",
+)
+ROLE_ALIASES = {
+    "superadmin": "super_admin",
+    "systemadmin": "system_admin",
+    "proxyadmin": "proxy_admin",
+    "proxyadminviewer": "proxy_admin_viewer",
+    "admin_viewer": "proxy_admin_viewer",
+    "readonly": "read_only",
+    "read-only": "read_only",
+    "viewer": "read_only",
+    "gm": "ceo",
+    "cfo": "finance",
+}
 SENSITIVE_TEXT_PATTERNS = (
     (re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]+", re.IGNORECASE), "Bearer [REDACTED]"),
     (re.compile(r"\bsk-[A-Za-z0-9][A-Za-z0-9._-]*"), "sk-[REDACTED]"),
@@ -44,11 +77,15 @@ class YcapiOnlyAllowlistMiddleware:
         audit_sink: AuditSink | None = None,
         metrics_sink: MetricsSink | None = None,
         surface: str = "business",
+        rbac_enabled: bool | None = None,
     ) -> None:
         self.app = app
         self.metrics_sink = metrics_sink or DEFAULT_AIMANAGER_METRICS
         self.audit_sink = _audit_sink_with_metrics(audit_sink or _log_audit_event, self.metrics_sink)
         self.surface = "management" if surface == "management" else "business"
+        self.rbac_enabled = (
+            _env_flag("AIMANAGER_RBAC_ENABLED", default=False) if rbac_enabled is None else rbac_enabled
+        )
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope.get("type") != "http":
@@ -75,6 +112,17 @@ class YcapiOnlyAllowlistMiddleware:
                 scope,
                 request_id,
             )
+            if self.surface == "management" and self.rbac_enabled:
+                rbac_decision = _management_rbac_decision(scope, method, path)
+                if rbac_decision is not None:
+                    _emit_management_rbac_audit_event(
+                        self.audit_sink,
+                        scope,
+                        rbac_decision,
+                        request_id,
+                    )
+                    await _send_policy_error(metrics_send, rbac_decision, request_id)
+                    return
             if self.surface == "management" and _is_key_lifecycle_route(method, path):
                 disposition_error = _key_lifecycle_disposition_error(scope)
                 if disposition_error:
@@ -120,21 +168,7 @@ class YcapiOnlyAllowlistMiddleware:
 
         request_id = _request_id_from_scope(scope)
         _emit_policy_audit_event(self.audit_sink, scope, decision, request_id)
-        body = json.dumps(build_policy_error_body(decision, request_id)).encode("utf-8")
-        headers = [
-            (b"content-type", b"application/json"),
-            (b"content-length", str(len(body)).encode("ascii")),
-            (b"x-litellm-call-id", request_id.encode("utf-8")),
-            (b"x-aimanager-policy-code", decision.code.encode("utf-8")),
-        ]
-        await metrics_send(
-            {
-                "type": "http.response.start",
-                "status": decision.status_code,
-                "headers": headers,
-            }
-        )
-        await metrics_send({"type": "http.response.body", "body": body})
+        await _send_policy_error(metrics_send, decision, request_id)
 
 
 class _LazyLiteLLMProxyApp:
@@ -173,6 +207,55 @@ def _is_key_lifecycle_route(method: str, path: str) -> bool:
 
 def _is_metrics_route(method: str, path: str) -> bool:
     return method.upper() == "GET" and _normalized_request_path(path) == "/metrics"
+
+
+def _management_rbac_decision(scope: Scope, method: str, path: str) -> RouteDecision | None:
+    if not _is_management_high_risk_write(method, path):
+        return None
+    role = _management_role_from_scope(scope)
+    if role in MANAGEMENT_RBAC_ADMIN_ROLES:
+        return None
+
+    normalized_method = method.upper()
+    normalized_path = _normalized_request_path(path)
+    display_role = role or "missing"
+    return RouteDecision(
+        allowed=False,
+        code=RBAC_POLICY_CODE,
+        message=(
+            "AiManager RBAC blocks role "
+            f"{display_role} from high-risk management operation {normalized_method} {normalized_path}"
+        ),
+        status_code=403,
+    )
+
+
+def _is_management_high_risk_write(method: str, path: str) -> bool:
+    if method.upper() not in MANAGEMENT_HIGH_RISK_WRITE_METHODS:
+        return False
+    normalized_path = _normalized_request_path(path)
+    return any(
+        normalized_path == prefix or normalized_path.startswith(f"{prefix}/")
+        for prefix in MANAGEMENT_HIGH_RISK_WRITE_PREFIXES
+    )
+
+
+def _management_role_from_scope(scope: Scope) -> str:
+    headers = _headers_from_scope(scope)
+    return _normalize_management_role(
+        _header(
+            headers,
+            "x-aimanager-role",
+            "x-litellm-user-role",
+            "x-user-role",
+            "x-authenticated-role",
+        )
+    )
+
+
+def _normalize_management_role(role: str) -> str:
+    normalized = role.strip().lower().replace(" ", "_").replace("-", "_")
+    return ROLE_ALIASES.get(normalized, normalized)
 
 
 def _key_lifecycle_event(path: str) -> tuple[str, str] | None:
@@ -311,6 +394,24 @@ async def _send_key_lifecycle_error(send: Send, message: str, request_id: str) -
         (b"x-aimanager-policy-code", KEY_LIFECYCLE_POLICY_CODE.encode("utf-8")),
     ]
     await send({"type": "http.response.start", "status": 400, "headers": headers})
+    await send({"type": "http.response.body", "body": body})
+
+
+async def _send_policy_error(send: Send, decision: RouteDecision, request_id: str) -> None:
+    body = json.dumps(build_policy_error_body(decision, request_id)).encode("utf-8")
+    headers = [
+        (b"content-type", b"application/json"),
+        (b"content-length", str(len(body)).encode("ascii")),
+        (b"x-litellm-call-id", request_id.encode("utf-8")),
+        (b"x-aimanager-policy-code", decision.code.encode("utf-8")),
+    ]
+    await send(
+        {
+            "type": "http.response.start",
+            "status": decision.status_code,
+            "headers": headers,
+        }
+    )
     await send({"type": "http.response.body", "body": body})
 
 
@@ -624,6 +725,40 @@ def _emit_key_lifecycle_policy_audit_event(
         LOGGER.exception("failed_to_emit_aimanager_audit_event request_id=%s", request_id)
 
 
+def _emit_management_rbac_audit_event(
+    audit_sink: AuditSink,
+    scope: Scope,
+    decision: RouteDecision,
+    request_id: str,
+) -> None:
+    headers = _headers_from_scope(scope)
+    role = _management_role_from_scope(scope) or "missing"
+    method = str(scope.get("method", ""))
+    path = str(scope.get("path", ""))
+    event = build_audit_event(
+        "policy_blocked",
+        actor=_header(headers, "x-aimanager-actor", default="aimanager-policy"),
+        subject_key_alias=_header(headers, "x-aimanager-key-alias", "x-litellm-key-alias"),
+        team_id=_header(headers, "x-aimanager-team-id"),
+        department_id=_header(headers, "x-aimanager-department-id"),
+        project_id=_header(headers, "x-aimanager-project-id"),
+        cost_center_id=_header(headers, "x-aimanager-cost-center-id"),
+        reason=decision.code,
+        request_id=request_id,
+        metadata={
+            "method": method,
+            "path": path,
+            "role": role,
+            "policy_code": decision.code,
+            "status_code": decision.status_code,
+        },
+    )
+    try:
+        audit_sink(event)
+    except Exception:
+        LOGGER.exception("failed_to_emit_aimanager_audit_event request_id=%s", request_id)
+
+
 def _downstream_budget_audit_send_wrapper(
     send: Send,
     audit_sink: AuditSink,
@@ -889,6 +1024,13 @@ def _audit_sink_with_metrics(audit_sink: AuditSink, metrics_sink: MetricsSink) -
         audit_sink(event)
 
     return wrapped
+
+
+def _env_flag(name: str, *, default: bool) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _log_audit_event(event: dict[str, Any]) -> None:

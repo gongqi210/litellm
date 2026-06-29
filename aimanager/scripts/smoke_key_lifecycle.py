@@ -15,6 +15,7 @@ from aimanager.scripts.smoke_blocked_routes import HttpResponse
 from aimanager.scripts.smoke_spend_logs import (
     Fetch,
     Sleep,
+    _admin_auth_headers,
     _auth_headers,
     _body_excerpt,
     _delete_virtual_key,
@@ -348,7 +349,7 @@ def _create_lifecycle_key(
     key_response = _post_json(
         fetcher,
         _join_url(admin_base_url, "/key/generate"),
-        _auth_headers(master_key, request_id=request_id),
+        _admin_auth_headers(master_key, request_id=request_id),
         build_governed_key_payload(
             request_marker=request_marker,
             models=[chat_model],
@@ -471,7 +472,7 @@ def _lifecycle_admin_headers(
     reason: str,
     key_alias: str,
 ) -> dict[str, str]:
-    headers = _auth_headers(master_key, request_id=request_id)
+    headers = _admin_auth_headers(master_key, request_id=request_id)
     headers.update(
         {
             "litellm-changed-by": _ACTOR,

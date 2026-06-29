@@ -50,7 +50,18 @@ Route surfaces:
 
 - `AIMANAGER_ROUTE_SURFACE=business` is the default data-plane surface. It allows only the M1 business API allowlist plus health checks. LiteLLM Admin UI, key, team, user, budget, and spend routes are blocked on this surface.
 - `AIMANAGER_ROUTE_SURFACE=management` is the controlled admin surface. It allows LiteLLM UI/key/team/user/budget/spend management routes, while still blocking provider passthrough, Google native routes, runtime config mutation, pass-through endpoint mutation, cache/reload mutation, and model writes.
-- The local compose admin surface is behind the `admin` profile and binds only `127.0.0.1:4001`.
+- The local compose admin surface is behind the `admin` profile, binds only `127.0.0.1:4001`, and enables `AIMANAGER_RBAC_ENABLED=True`.
+
+## Management RBAC
+
+When `AIMANAGER_RBAC_ENABLED=True`, the management surface applies an AiManager pre-auth RBAC guard to high-risk management writes under `/key`, `/team`, `/user`, `/customer`, `/organization`, `/budget`, `/spend`, and `/global/spend`.
+
+- Admin aliases such as `proxy_admin`, `system_admin`, `super_admin`, `aimanager_admin`, and `admin` can continue to those write paths, where LiteLLM's own authenticated management authorization still applies.
+- Read-only and business roles such as `finance`, `ceo`, `audit`, `proxy_admin_viewer`, and unknown/missing roles receive HTTP 403 with `error.code=aimanager_rbac_denied`.
+- Read-only roles can still reach read routes such as `/spend/logs`, `/global/spend`, and `/global/activity`.
+- A role header never unlocks the business surface; business port `4000` keeps blocking all LiteLLM management routes.
+
+The M1 implementation treats `x-aimanager-role` as a trusted internal header for mock/edge-gateway enforcement. In production, the admin surface must remain behind LiteLLM authentication plus a trusted reverse proxy or SSO layer that strips any client-supplied `x-aimanager-role` and injects the authenticated role. Do not treat this header as a standalone public authorization credential.
 
 ## Key Governance
 
@@ -244,7 +255,7 @@ PYTHONPATH="$PWD" uv run --no-project --with pyyaml python -m aimanager.scripts.
 
 Expected result: `PASS`, `freeze_status=200`, `freeze_reject_status=401`, `revoke_status=200`, `revoke_reject_status=401`, and `audit_events=key_frozen,key_revoked`. The smoke creates two disposable governed employee keys, proves each key can call the business surface before disposition, freezes one key through the admin surface and verifies subsequent business inference is rejected with `Key is blocked`, revokes the other key and verifies subsequent business inference is rejected as an invalid token, then polls the admin container logs for structured `key_frozen` and `key_revoked` audit events with actor, reason, request id, key alias, and governance dimensions. It never prints the virtual key.
 
-The rendered default compose config must show `build.target: runtime`, `entrypoint: ["python", "-m", "aimanager.litellm_entrypoint"]`, `--config=/app/config.yaml`, `--enforce_prisma_migration_check`, `AIMANAGER_ROUTE_SURFACE=business`, and `LITELLM_LOCAL_MODEL_COST_MAP=True`. The rendered `--profile admin` config must also show `aimanager-admin`, `AIMANAGER_ROUTE_SURFACE=management`, `LITELLM_LOCAL_MODEL_COST_MAP=True`, and `127.0.0.1:4001:4000`.
+The rendered default compose config must show `build.target: runtime`, `entrypoint: ["python", "-m", "aimanager.litellm_entrypoint"]`, `--config=/app/config.yaml`, `--enforce_prisma_migration_check`, `AIMANAGER_ROUTE_SURFACE=business`, and `LITELLM_LOCAL_MODEL_COST_MAP=True`. The rendered `--profile admin` config must also show `aimanager-admin`, `AIMANAGER_ROUTE_SURFACE=management`, `AIMANAGER_RBAC_ENABLED=True`, `LITELLM_LOCAL_MODEL_COST_MAP=True`, and `127.0.0.1:4001:4000`.
 
 Smoke test after `.env` is populated:
 
@@ -278,6 +289,7 @@ Latest local runtime smoke evidence:
 - Container logs emitted 34 structured `aimanager_audit_event` entries for those blocked requests plus the business-surface `/ui` block, with no Authorization, Bearer token, or local placeholder token content in the audit log tail.
 - Runtime surface split was verified locally: business port `4000` blocks `/ui` with AiManager 403, admin port `127.0.0.1:4001` returns LiteLLM UI redirect for `/ui`, and admin port still blocks `/config/field/update` with `aimanager_config_immutable`.
 - Local tests split surfaces: business surface blocks LiteLLM management routes, while management surface allows UI/key/team/user/budget/spend routes and still blocks provider/config/cache/reload/model-write routes. Compose renders `aimanager-admin` only under the `admin` profile on `127.0.0.1:4001`.
+- Local RBAC tests prove management-surface high-risk writes are blocked for `finance`, `ceo`, `audit`, `proxy_admin_viewer`, unknown roles, and missing roles with `aimanager_rbac_denied`; `proxy_admin` can continue to LiteLLM admin routes; read-only roles can fetch spend/activity report routes; and `x-aimanager-role` cannot unlock management routes on the business surface.
 - Local tests also prove management `POST /key/generate` rejects missing governance metadata with `aimanager_key_governance_invalid`, forwards normalized valid payloads, and injects `enforced_params` for `metadata.shared_key=true`.
 - Runtime admin-surface smoke with rebuilt `aimanager-litellm:local` proved `POST /key/generate` without governance metadata returns HTTP 400, `x-aimanager-policy-code: aimanager_key_governance_invalid`, preserves `x-litellm-call-id`, and emits a matching `policy_blocked` audit event without Authorization/Bearer leakage.
 - Runtime valid shared-key smoke proved `POST /key/generate` returns the required employee/team/model/budget/rate-limit/expiry fields plus department/project/cost-center/scenario/approver metadata and `metadata.enforced_params`; the local smoke key was deleted immediately after verification.
@@ -287,4 +299,4 @@ Latest local runtime smoke evidence:
 - Local observability tests prove management `GET /metrics` is served by AiManager without reaching downstream LiteLLM, business `/metrics` remains blocked, audit events increment `aimanager_audit_events_total`, downstream 429/5xx increment `aimanager_http_responses_total`, and `export_observability` emits JSON metrics plus alert records from audit logs and request-status rows.
 - Local error-contract tests prove allowed downstream LiteLLM/ycapi 429 JSON errors preserve the upstream `error` object, inject top-level `request_id` aligned with `x-litellm-call-id`, keep 401/403/404 fallback types stable, pass successful streaming chunks through unchanged, and convert non-JSON downstream 5xx errors to OpenAI-compatible JSON without leaking Bearer, `sk-*`, ycapi token text, or DSN passwords.
 
-Remaining before business trial: UI automation for the key creation flow, production ycapi bill evidence, RBAC verification, Postgres-down failure-mode checks, live ycapi smoke with the production token policy, and production alert routing from the management metrics/report output.
+Remaining before business trial: UI automation for the key creation flow, production ycapi bill evidence, Postgres-down failure-mode checks, live ycapi smoke with the production token policy, production admin SSO/reverse-proxy header stripping, and production alert routing from the management metrics/report output.

@@ -17,6 +17,8 @@ def test_key_lifecycle_smoke_passes_when_freeze_and_revoke_reject_inference_and_
         payload = json.loads(body.decode("utf-8")) if body else None
         requests.append((method, url, headers, payload))
         if url.endswith("/key/generate"):
+            assert headers["x-aimanager-role"] == "proxy_admin"
+            assert headers["x-aimanager-actor"] == "aimanager-ci"
             assert payload is not None
             if payload["key_alias"] == "aimanager-lifecycle-freeze-lifecycle-123":
                 return _json_response({"key": "sk-freeze-smoke"})
@@ -37,12 +39,14 @@ def test_key_lifecycle_smoke_passes_when_freeze_and_revoke_reject_inference_and_
                 )
             return _json_response({"id": "chatcmpl-lifecycle-smoke"})
         if url.endswith("/key/block"):
+            assert headers["x-aimanager-role"] == "proxy_admin"
             assert headers["x-aimanager-actor"] == "aimanager-ci"
             assert headers["x-aimanager-reason"] == "AC-11 freeze lifecycle smoke"
             assert headers["x-aimanager-key-alias"] == "aimanager-lifecycle-freeze-lifecycle-123"
             assert payload == {"key": "sk-freeze-smoke"}
             return _json_response({"key_alias": "aimanager-lifecycle-freeze-lifecycle-123", "blocked": True})
         if url.endswith("/key/delete"):
+            assert headers["x-aimanager-role"] == "proxy_admin"
             assert headers["x-aimanager-actor"] == "aimanager-ci"
             assert headers["x-aimanager-reason"] in {
                 "AC-11 revoke lifecycle smoke",
@@ -95,8 +99,10 @@ def test_key_lifecycle_smoke_fails_when_frozen_key_still_allows_inference() -> N
     def fetch(method: str, url: str, headers: dict[str, str], body: bytes | None) -> HttpResponse:
         payload = json.loads(body.decode("utf-8")) if body else None
         if url.endswith("/key/generate"):
+            assert headers["x-aimanager-role"] == "proxy_admin"
             return _json_response({"key": "sk-freeze-smoke"})
         if url.endswith("/key/block") or url.endswith("/key/delete"):
+            assert headers["x-aimanager-role"] == "proxy_admin"
             return _json_response({"ok": True})
         if url.endswith("/v1/chat/completions"):
             return _json_response({"id": "chatcmpl-allowed"})

@@ -17,6 +17,8 @@ def test_budget_block_smoke_passes_when_second_request_is_rejected() -> None:
         payload = json.loads(body.decode("utf-8")) if body else None
         requests.append((method, url, headers, payload))
         if url.endswith("/key/generate"):
+            assert headers["x-aimanager-role"] == "proxy_admin"
+            assert headers["x-aimanager-actor"] == "aimanager-ci"
             assert payload is not None
             assert payload["key_alias"] == "aimanager-budget-smoke-budget-123"
             assert payload["max_budget"] == 0.005
@@ -46,6 +48,7 @@ def test_budget_block_smoke_passes_when_second_request_is_rejected() -> None:
                 status_code=429,
             )
         if url.endswith("/key/delete"):
+            assert headers["x-aimanager-role"] == "proxy_admin"
             return _json_response({"deleted": True})
         raise AssertionError(f"unexpected URL {url}")
 
@@ -85,10 +88,12 @@ def test_budget_block_smoke_passes_when_second_request_is_rejected() -> None:
 def test_budget_block_smoke_fails_when_followup_request_is_allowed() -> None:
     def fetch(method: str, url: str, headers: dict[str, str], body: bytes | None) -> HttpResponse:
         if url.endswith("/key/generate"):
+            assert headers["x-aimanager-role"] == "proxy_admin"
             return _json_response({"key": "sk-budget-smoke"})
         if url.endswith("/v1/images/generations") or url.endswith("/v1/chat/completions"):
             return _json_response({"ok": True})
         if url.endswith("/key/delete"):
+            assert headers["x-aimanager-role"] == "proxy_admin"
             return _json_response({"deleted": True})
         raise AssertionError(f"unexpected URL {url}")
 

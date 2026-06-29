@@ -16,6 +16,7 @@ from aimanager.scripts.smoke_blocked_routes import HttpResponse
 from aimanager.scripts.smoke_spend_logs import (
     Fetch,
     Sleep,
+    _admin_auth_headers,
     _auth_headers,
     _body_excerpt,
     _delete_virtual_key,
@@ -102,7 +103,7 @@ def run_budget_block_smoke(
         key_response = _post_json(
             fetcher,
             _join_url(admin_base_url, "/key/generate"),
-            _auth_headers(master_key, request_id=f"budget-key-{request_marker}"),
+            _admin_auth_headers(master_key, request_id=f"budget-key-{request_marker}"),
             key_payload,
         )
         virtual_key = _extract_virtual_key(key_response)

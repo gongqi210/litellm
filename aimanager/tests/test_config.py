@@ -75,6 +75,7 @@ def test_compose_exposes_management_surface_only_on_localhost_profile() -> None:
     assert service["profiles"] == ["admin"]
     assert service["image"] == "aimanager-litellm:local"
     assert service["environment"]["AIMANAGER_ROUTE_SURFACE"] == "management"
+    assert service["environment"]["AIMANAGER_RBAC_ENABLED"] == "True"
     assert service["environment"]["LITELLM_LOCAL_MODEL_COST_MAP"] == "True"
     assert service["ports"] == ["127.0.0.1:4001:4000"]
     assert service["entrypoint"] == ["python", "-m", "aimanager.litellm_entrypoint"]

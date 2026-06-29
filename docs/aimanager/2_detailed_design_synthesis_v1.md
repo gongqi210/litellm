@@ -343,6 +343,13 @@ AC-07 断言 body `request_id` 与 header 关联一致，且 401/403/404/429/5xx
 
 M1 Admin UI 不是业务门户。总经理、市场、财务、部门管理员的业务可读性通过轻量经营总览和导出报表满足。M2 再做 WeCom Bot 或业务门户。
 
+M1 落地采用双层授权口径：
+
+- LiteLLM 原生认证和角色仍是最终管理授权层，`LITELLM_MASTER_KEY`/`proxy_admin`/viewer 等角色不能被 AiManager header 替代。
+- AiManager ASGI 在 management surface 增加 `AIMANAGER_RBAC_ENABLED=True` 的预检防线，对 `/key`、`/team`、`/user`、`/customer`、`/organization`、`/budget`、`/spend`、`/global/spend` 的写方法执行高危写拦截；财务、总经理、审计和 viewer 类角色只能读，缺角色或未知角色 fail-closed。
+- `x-aimanager-role` 只作为可信反代/SSO 注入后的内部 header 或本地 mock 权限测试输入。生产反代必须剥离客户端自带 role header 并注入认证后的角色；否则不能把 header 预检当作生产 RBAC 证据。
+- business surface 不读取 role header 来放宽策略，继续封堵所有 LiteLLM 管理路由。
+
 ## 9. 测试与验收基线
 
 ### 9.1 P0 阻断项
@@ -372,7 +379,7 @@ M1 Admin UI 不是业务门户。总经理、市场、财务、部门管理员�
 - method mismatch：`GET /v1/chat/completions`、`POST /v1/models` 被拒。
 - pricing mutant：移除 chat price、把 image price 写成 `output_cost_per_image`、设成 0.0 均失败。
 - config drift：尝试 `/config/update`、模型写入、DB passthrough 后 health FAIL 或请求被拒。
-- RBAC：财务无 key 修改、部门管理员不能看跨部门明细、审计只读不能写。
+- RBAC：财务/总经理/审计无 key/team/user/budget 写权限，未知或缺角色 fail-closed，business surface 不因 role header 解锁管理路由；部门管理员跨部门明细范围在 M2 业务门户或 LiteLLM team-scoping 集成中继续补运行态验收。
 - secret scan：`.env.example` 只有占位符，日志和错误不回显密钥。
 
 ### 9.3 live 口径

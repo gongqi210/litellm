@@ -73,6 +73,8 @@ def test_spend_log_smoke_passes_when_chat_and_image_spend_rows_are_nonzero() -> 
         payload = json.loads(body.decode("utf-8")) if body else None
         requests.append((method, url, headers, payload))
         if url.endswith("/key/generate"):
+            assert headers["x-aimanager-role"] == "proxy_admin"
+            assert headers["x-aimanager-actor"] == "aimanager-ci"
             return _json_response({"key": "sk-virtual-smoke"})
         if url.endswith("/v1/chat/completions"):
             assert headers["Authorization"] == "Bearer sk-virtual-smoke"
@@ -99,6 +101,7 @@ def test_spend_log_smoke_passes_when_chat_and_image_spend_rows_are_nonzero() -> 
             assert payload["metadata"]["image_count"] == 1  # type: ignore[index]
             return _json_response({"created": 1, "data": [{"url": "https://example.invalid/smoke.png"}]})
         if url.endswith("/key/delete"):
+            assert headers["x-aimanager-role"] == "proxy_admin"
             assert headers["x-aimanager-actor"] == "aimanager-ci"
             assert headers["x-aimanager-reason"] == "AiManager smoke cleanup"
             return _json_response({"deleted": True})
@@ -147,10 +150,12 @@ def test_spend_log_smoke_passes_when_chat_and_image_spend_rows_are_nonzero() -> 
 def test_spend_log_smoke_fails_when_image_spend_is_zero() -> None:
     def fetch(method: str, url: str, headers: dict[str, str], body: bytes | None) -> HttpResponse:
         if url.endswith("/key/generate"):
+            assert headers["x-aimanager-role"] == "proxy_admin"
             return _json_response({"key": "sk-virtual-smoke"})
         if url.endswith("/v1/chat/completions") or url.endswith("/v1/images/generations"):
             return _json_response({"ok": True})
         if url.endswith("/key/delete"):
+            assert headers["x-aimanager-role"] == "proxy_admin"
             assert headers["x-aimanager-actor"] == "aimanager-ci"
             assert headers["x-aimanager-reason"] == "AiManager smoke cleanup"
             return _json_response({"deleted": True})
@@ -211,6 +216,7 @@ def test_delete_virtual_key_sends_disposition_headers_for_lifecycle_audit() -> N
     )
 
     assert observed_headers["x-request-id"] == "delete-key-cleanup-123"
+    assert observed_headers["x-aimanager-role"] == "proxy_admin"
     assert observed_headers["x-aimanager-actor"] == "aimanager-ci"
     assert observed_headers["x-aimanager-reason"] == "AiManager smoke cleanup"
 

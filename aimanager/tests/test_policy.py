@@ -477,6 +477,190 @@ def test_management_surface_middleware_forwards_management_requests() -> None:
     assert messages[0]["status"] == 204
 
 
+def test_management_rbac_blocks_readonly_roles_from_high_risk_writes() -> None:
+    for role, path in [
+        ("finance", "/key/generate"),
+        ("ceo", "/key/block"),
+        ("audit", "/team/new"),
+        ("proxy_admin_viewer", "/budget/new"),
+    ]:
+        audit_events: list[dict[str, object]] = []
+        calls: list[dict[str, object]] = []
+
+        async def downstream(scope, receive, send) -> None:  # type: ignore[no-untyped-def]
+            calls.append(scope)
+            await send({"type": "http.response.start", "status": 204, "headers": []})
+            await send({"type": "http.response.body", "body": b""})
+
+        app = YcapiOnlyAllowlistMiddleware(
+            downstream,
+            audit_sink=audit_events.append,
+            surface="management",
+            rbac_enabled=True,
+        )
+
+        messages = asyncio.run(
+            _call_asgi(
+                app,
+                "POST",
+                path,
+                headers=[
+                    (b"x-request-id", f"req-rbac-{role}".encode("ascii")),
+                    (b"x-aimanager-actor", role.encode("ascii")),
+                    (b"x-aimanager-role", role.encode("ascii")),
+                ],
+                body=json.dumps(_valid_key_generate_payload()).encode("utf-8"),
+            )
+        )
+
+        assert calls == []
+        assert messages[0]["status"] == 403
+        response_headers = dict(messages[0]["headers"])
+        assert response_headers[b"x-aimanager-policy-code"] == b"aimanager_rbac_denied"
+        body = json.loads(messages[1]["body"])
+        assert body["request_id"] == f"req-rbac-{role}"
+        assert body["error"]["code"] == "aimanager_rbac_denied"
+        assert role in body["error"]["message"]
+        assert len(audit_events) == 1
+        event = audit_events[0]
+        assert event["event_type"] == "policy_blocked"
+        assert event["reason"] == "aimanager_rbac_denied"
+        assert event["actor"] == role
+        assert event["metadata"]["role"] == role
+        assert event["metadata"]["path"] == path
+        assert event["metadata"]["status_code"] == 403
+
+
+def test_management_rbac_fails_closed_for_missing_or_unknown_roles() -> None:
+    for role in ["", "contractor"]:
+        calls: list[dict[str, object]] = []
+
+        async def downstream(scope, receive, send) -> None:  # type: ignore[no-untyped-def]
+            calls.append(scope)
+            await send({"type": "http.response.start", "status": 204, "headers": []})
+            await send({"type": "http.response.body", "body": b""})
+
+        headers = [(b"x-request-id", b"req-rbac-unknown")]
+        if role:
+            headers.append((b"x-aimanager-role", role.encode("ascii")))
+        app = YcapiOnlyAllowlistMiddleware(
+            downstream,
+            surface="management",
+            rbac_enabled=True,
+        )
+
+        messages = asyncio.run(_call_asgi(app, "POST", "/user/update", headers=headers, body=b"{}"))
+
+        assert calls == []
+        assert messages[0]["status"] == 403
+        body = json.loads(messages[1]["body"])
+        assert body["error"]["code"] == "aimanager_rbac_denied"
+        assert (role or "missing") in body["error"]["message"]
+
+
+def test_management_rbac_header_does_not_unlock_business_surface() -> None:
+    async def downstream(scope, receive, send) -> None:  # type: ignore[no-untyped-def]
+        raise AssertionError("business surface must not forward management routes")
+
+    app = YcapiOnlyAllowlistMiddleware(
+        downstream,
+        surface="business",
+        rbac_enabled=True,
+    )
+
+    messages = asyncio.run(
+        _call_asgi(
+            app,
+            "POST",
+            "/key/generate",
+            headers=[
+                (b"x-request-id", b"req-rbac-business"),
+                (b"x-aimanager-role", b"proxy_admin"),
+            ],
+            body=json.dumps(_valid_key_generate_payload()).encode("utf-8"),
+        )
+    )
+
+    body = json.loads(messages[1]["body"])
+    assert messages[0]["status"] == 403
+    assert body["error"]["code"] == "aimanager_route_not_allowed"
+
+
+def test_management_rbac_allows_admin_roles_to_forward_high_risk_writes() -> None:
+    forwarded_bodies: list[dict[str, object]] = []
+
+    async def downstream(scope, receive, send) -> None:  # type: ignore[no-untyped-def]
+        message = await receive()
+        forwarded_bodies.append(json.loads(message["body"]))
+        await send({"type": "http.response.start", "status": 204, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+
+    app = YcapiOnlyAllowlistMiddleware(
+        downstream,
+        surface="management",
+        rbac_enabled=True,
+    )
+
+    messages = asyncio.run(
+        _call_asgi(
+            app,
+            "POST",
+            "/key/generate",
+            headers=[
+                (b"x-request-id", b"req-rbac-admin"),
+                (b"x-aimanager-role", b"proxy_admin"),
+            ],
+            body=json.dumps(_valid_key_generate_payload()).encode("utf-8"),
+        )
+    )
+
+    assert messages[0]["status"] == 204
+    assert forwarded_bodies[0]["metadata"]["cost_center_id"] == "cc-market"
+
+
+def test_management_rbac_allows_readonly_roles_to_fetch_reports() -> None:
+    calls: list[tuple[str, str, str]] = []
+
+    async def downstream(scope, receive, send) -> None:  # type: ignore[no-untyped-def]
+        headers = dict(scope["headers"])
+        calls.append(
+            (
+                scope["method"],
+                scope["path"],
+                headers[b"x-aimanager-role"].decode("ascii"),
+            )
+        )
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"{}"})
+
+    app = YcapiOnlyAllowlistMiddleware(
+        downstream,
+        surface="management",
+        rbac_enabled=True,
+    )
+
+    for role, path in [
+        ("finance", "/spend/logs"),
+        ("ceo", "/global/spend"),
+        ("audit", "/global/activity"),
+    ]:
+        messages = asyncio.run(
+            _call_asgi(
+                app,
+                "GET",
+                path,
+                headers=[(b"x-aimanager-role", role.encode("ascii"))],
+            )
+        )
+        assert messages[0]["status"] == 200
+
+    assert calls == [
+        ("GET", "/spend/logs", "finance"),
+        ("GET", "/global/spend", "ceo"),
+        ("GET", "/global/activity", "audit"),
+    ]
+
+
 def test_management_surface_rejects_key_generate_without_governance_metadata() -> None:
     audit_events: list[dict[str, object]] = []
 

@@ -39,6 +39,7 @@ PollSpendLogs = Callable[[str], list[SpendLogRow]]
 Sleep = Callable[[float], None]
 
 _MARKER_PATTERN = re.compile(r"^[A-Za-z0-9_.:-]+$")
+_ADMIN_RBAC_ROLE = "proxy_admin"
 
 
 def build_governed_key_payload(
@@ -111,7 +112,7 @@ def run_spend_log_smoke(
         key_response = _post_json(
             fetcher,
             _join_url(admin_base_url, "/key/generate"),
-            _auth_headers(master_key, request_id=f"key-{request_marker}"),
+            _admin_auth_headers(master_key, request_id=f"key-{request_marker}"),
             key_payload,
         )
         virtual_key = _extract_virtual_key(key_response)
@@ -309,7 +310,7 @@ def _delete_virtual_key(
     virtual_key: str,
     request_marker: str,
 ) -> None:
-    headers = _auth_headers(master_key, request_id=f"delete-key-{request_marker}")
+    headers = _admin_auth_headers(master_key, request_id=f"delete-key-{request_marker}")
     headers.update(
         {
             "litellm-changed-by": "aimanager-ci",
@@ -374,6 +375,13 @@ def _auth_headers(
     }
     if spend_logs_metadata is not None:
         headers["x-litellm-spend-logs-metadata"] = json.dumps(spend_logs_metadata, separators=(",", ":"))
+    return headers
+
+
+def _admin_auth_headers(token: str, *, request_id: str) -> dict[str, str]:
+    headers = _auth_headers(token, request_id=request_id)
+    headers["x-aimanager-role"] = _ADMIN_RBAC_ROLE
+    headers["x-aimanager-actor"] = "aimanager-ci"
     return headers
 
 
