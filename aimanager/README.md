@@ -296,6 +296,17 @@ PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.smoke_admin_bo
 
 Expected production result: every line is `PASS`. The business URL checks call management-only routes such as `/ui`, `/key/generate`, `/v2/key/info`, `/metrics`, and `/config/field/update` while spoofing `x-aimanager-role=proxy_admin`; those routes must still be blocked by AiManager policy or by an upstream auth/edge layer. These requests do not send `Authorization`, even if `LITELLM_MASTER_KEY` is present in the environment. The public admin URL checks send unauthenticated requests with the same spoofed trusted header; the admin surface must be unreachable, return 401/403/404 from the edge, or redirect only to an explicitly allowed SSO host. A public `POST /key/generate` that reaches AiManager governance and returns `aimanager_key_governance_invalid` is a `FAIL`, because it proves client-supplied trusted headers were not stripped before the management surface. If either production URL is not supplied, the script returns `BLOCKED` when the matching `--require-*` flag is set. Relative or same-origin login redirects are not accepted as SSO evidence; pass the external SSO host explicitly with `--allowed-sso-redirect-host`.
 
+Live ycapi token preflight:
+
+```bash
+PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.smoke_live_ycapi \
+  --expect-model gemini-2.5-flash \
+  --expect-model deepseek-chat \
+  --expect-model ycapi-image-1
+```
+
+Expected result without a real `YCAPI_API_TOKEN`: `BLOCKED`. Expected result with a real production token: `PASS`, `status_code=200`, and `model_count > 0`, with the configured model ids present in ycapi `/models`. This preflight is intentionally read-only and never prints the ycapi token or request URL. It proves the live credential can reach ycapi and prevents missing-token runs from being misreported as `PASS`; billable chat/image evidence still comes from the governed AiManager runtime smokes.
+
 Postgres-down runtime smoke:
 
 ```bash
@@ -358,6 +369,7 @@ Latest local runtime smoke evidence:
 - Postgres-down runtime smoke with isolated compose project `aimanager_postgres_down` proved that after stopping `db`, AiManager returns readiness 503, still blocks provider passthrough with 403 before downstream LiteLLM, and returns sanitized 503 `aimanager_database_unavailable` for an employee virtual-key business chat.
 - Local observability tests prove management `GET /metrics` is served by AiManager without reaching downstream LiteLLM, business `/metrics` remains blocked, audit events increment `aimanager_audit_events_total`, downstream 429/5xx increment `aimanager_http_responses_total`, and `export_observability` emits JSON metrics plus alert records from audit logs and request-status rows.
 - Local alert-routing tests prove `route_observability_alerts` can render WeCom markdown payloads from exported alert JSON, dry-run without a webhook, return `BLOCKED` when live alerts have no webhook, filter by severity, and validate WeCom `errcode=0` without printing the webhook URL.
+- Local live-ycapi preflight tests prove `smoke_live_ycapi` returns `BLOCKED` without `YCAPI_API_TOKEN`, validates ycapi `/models` with expected model ids when a token is present, and masks token/URL values on transport failures.
 - Local error-contract tests prove allowed downstream LiteLLM/ycapi 429 JSON errors preserve the upstream `error` object, inject top-level `request_id` aligned with `x-litellm-call-id`, keep 401/403/404 fallback types stable, pass successful streaming chunks through unchanged, and convert non-JSON downstream 5xx errors to OpenAI-compatible JSON without leaking Bearer, `sk-*`, ycapi token text, or DSN passwords.
 
 Remaining before business trial: production ycapi bill evidence, live ycapi smoke with the production token policy, production admin SSO/reverse-proxy header stripping, and a live WeCom webhook routing run from the management metrics/report output.
