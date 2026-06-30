@@ -589,6 +589,29 @@ Open `http://127.0.0.1:4002/` and submit an internal collaboration or management
 
 Keep `--business-base-url` pointed at the controlled AiManager business gateway. Any networked deployment of this page needs the same SSO/VPN boundary as other internal tools, plus CSRF protection before it is exposed beyond localhost.
 
+M2 lightweight trial evidence capture:
+
+```bash
+PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.capture_lightweight_trial_evidence \
+  --lightweight-entry-result-file /tmp/aimanager-lightweight-entry-submit.json \
+  --request-id <request-id-from-live-request-or-spend-log> \
+  --spend <nonzero-spend-from-litellm-spend-log> \
+  --operator-role marketing \
+  --identity-source sso \
+  --employee-virtual-key-alias <employee-key-alias-not-raw-key> \
+  --started-at <iso8601-started-at> \
+  --completed-at <iso8601-completed-at> \
+  --observer <observer-name> \
+  --captured-at <iso8601-captured-at> \
+  --live-ycapi-confirmed \
+  --brand-safety-confirmed \
+  --no-secret-echo-confirmed \
+  --html-escaped-confirmed \
+  --output-json-file /tmp/aimanager-ac23-trial-evidence.json
+```
+
+This command converts a successful `submit_lightweight_entry` result into the AC-23 evidence file consumed by `business_trial_acceptance_bundle`. It is intentionally a capture step, not an evidence generator: `request_id`, nonzero `spend`, and timestamps must come from the live request/spend log and the human observer for that trial. The output keeps only safe attestation fields and allow-listed request metadata, including either a project or customer identifier; it does not serialize prompt text, assistant text, headers, Authorization, cookies, employee keys, or ycapi tokens. A non-PASS submission, secret-bearing field, secret-like output value, secret-like assistant echo, or raw-key-looking key alias returns `BLOCKED` or `FAIL` and does not write an evidence file.
+
 M2 employee monitoring notice and boundary validation:
 
 ```bash
@@ -622,7 +645,7 @@ Business trial acceptance gate:
 
 ```bash
 PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.business_trial_acceptance_bundle \
-  --lightweight-trial-evidence-file /path/to/ac23-lightweight-trial.json \
+  --lightweight-trial-evidence-file /tmp/aimanager-ac23-trial-evidence.json \
   --employee-monitoring-result-file /tmp/aimanager-employee-monitoring.json \
   --output-json-file /tmp/aimanager-business-trial-acceptance.json
 ```
@@ -697,6 +720,7 @@ Latest local runtime smoke evidence:
 - Local live-ycapi preflight tests prove `smoke_live_ycapi` returns `BLOCKED` without `YCAPI_API_TOKEN`, validates ycapi `/models` with expected model ids when a token is present, and masks token/URL values on transport failures.
 - Local production-readiness bundle tests prove `production_readiness_bundle` aggregates AC-15 admin boundary, AC-19 live ycapi, AC-16 WeCom alert routing, and AC-12/AC-13 finance reconciliation into one JSON artifact; missing production inputs return exit code `2`/`BLOCKED`, failures take priority over blockers, WeCom 0-delivery runs stay `BLOCKED`, empty spend/bill files and non-billable placeholder finance rows stay `BLOCKED`, and ycapi token or WeCom webhook values are redacted from details and evidence.
 - Local business-trial acceptance bundle tests prove `business_trial_acceptance_bundle` composes production readiness with AC-23 and AC-26 into one JSON gate; AC-23 rejects SDK use, ycapi token exposure, missing employee virtual key use, unapproved models, zero spend, invalid work-context status, malformed JSON, token/raw-content fields, and trial durations over 5 minutes; AC-23 `PASS` is blocked unless same-run AC-19 is `PASS`; AC-26 status propagates; env/file-only secrets are redacted.
+- Local lightweight trial evidence capture tests prove `capture_lightweight_trial_evidence` can safely convert a successful lightweight-entry submission result into AC-23 evidence for the business-trial gate while omitting prompt text, assistant text, request headers, Authorization, employee key values, ycapi token values, and WeCom webhook values; it supports project/customer context, blocks non-PASS submissions, requires live-ycapi/brand-safety/no-secret-echo/html-escaped confirmations, rejects secret-like output values, secret-like assistant echo, and raw-key-looking aliases, and writes no output on `FAIL` or `BLOCKED`.
 - Project policy gate evidence proves `make policy-check` returns PASS for `PROJECT_TYPE=software-cli`, required scaffold files, CLI help/json contract, AiManager-owned file length limits, documented overlay imports, ycapi-only config text, and `.env.example` secret-placeholder safety.
 - Local work-context validation tests prove `validate_work_context` can gate an external marketing request before generation with non-empty string identifiers, scenario, channel, project/customer, sensitivity, required boolean approval, non-empty brief/reviewer/approval-policy references, and brand-safety checklist evidence; malformed JSON and invalid work contexts return `FAIL`, missing context files return `BLOCKED`, and closure mode requires draft, human-review, final, external-approval, archive, and retrospective references before the workflow can be treated as traceable. This is the machine-readable contract for a future non-SDK WeCom/lightweight entry, not the final business portal.
 - Local lightweight-entry and lightweight-web tests prove `submit_lightweight_entry` can turn a flat WeCom/page-style form into a governed `/v1/chat/completions` body with work-context metadata plus `cost_center_id`, `currency`, and `pricing_version`; it preserves identifier casing for finance attribution, rejects token-like fields or values without echoing them, blocks missing employee virtual keys, refuses employee keys that equal `YCAPI_API_TOKEN`, and can submit through an injected raw HTTP transport without using an SDK. `lightweight_web` adds a clickable stdlib ASGI page for internal collaboration/management trials, keeps keys server-side, refuses ycapi token misuse, and HTML-escapes model output. This is local non-SDK UI evidence for AC-23, not production live ycapi, SSO identity injection, or timed human-trial evidence.

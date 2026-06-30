@@ -129,16 +129,28 @@ class WorkContextEvidence(BaseModel):
 
     scenario_l1: str
     scenario_l2: str
-    project_id: str
+    project_id: str = ""
+    customer_id: str = ""
     cost_center_id: str
 
-    @field_validator("scenario_l1", "scenario_l2", "project_id", "cost_center_id")
+    @field_validator("scenario_l1", "scenario_l2", "cost_center_id")
     @classmethod
     def _non_empty_string(cls, value: str) -> str:
         value = value.strip()
         if not value:
             raise ValueError("must be non-empty")
         return value
+
+    @field_validator("project_id", "customer_id")
+    @classmethod
+    def _optional_string(cls, value: str) -> str:
+        return value.strip()
+
+    @model_validator(mode="after")
+    def _validate_project_or_customer(self) -> WorkContextEvidence:
+        if not self.project_id and not self.customer_id:
+            raise ValueError("work_context must include project_id or customer_id")
+        return self
 
 
 class RequestEvidence(BaseModel):
@@ -548,6 +560,7 @@ def _trial_safe_evidence(trial: TrialEvidence) -> dict[str, Any]:
         "scenario_l1": trial.work_context.scenario_l1,
         "scenario_l2": trial.work_context.scenario_l2,
         "project_id": trial.work_context.project_id,
+        "customer_id": trial.work_context.customer_id,
         "cost_center_id": trial.work_context.cost_center_id,
         "duration_seconds": trial.timing.duration_seconds,
         "observer": trial.attestation.observer,
