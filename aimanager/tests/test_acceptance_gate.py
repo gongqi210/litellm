@@ -43,17 +43,20 @@ def test_acceptance_gate_writes_run_scoped_artifacts_and_reuses_production_readi
         json.loads((tmp_path / "production-readiness.json").read_text(encoding="utf-8"))
     ]
     assert result["status"] == "BLOCKED"
-    assert result["summary"]["steps"] == 5
+    assert result["summary"]["steps"] == 6
+    assert result["summary"]["PASS"] == 1
     assert result["summary"]["FAIL"] == 0
     assert result["summary"]["BLOCKED"] == 5
     assert result["evidence_handoff"]["json_file"] == str(tmp_path / "evidence-handoff/evidence-handoff.json")
     assert result["evidence_template_pack"]["json_file"] == str(
         tmp_path / "evidence-template-pack/evidence-template-pack.json"
     )
+    assert result["evidence_intake"]["json_file"] == str(tmp_path / "evidence-intake.json")
     assert [step["id"] for step in result["steps"]] == [
         "production_readiness",
         "business_trial_acceptance",
         "launch_gap_plan",
+        "evidence_intake",
         "acceptance_coverage_matrix",
         "final_acceptance_report",
     ]
@@ -72,6 +75,8 @@ def test_acceptance_gate_writes_run_scoped_artifacts_and_reuses_production_readi
         "evidence-template-pack/evidence-template-pack.md",
         "evidence-template-pack/evidence-env.template",
         "evidence-template-pack/README.md",
+        "evidence-intake.json",
+        "evidence-intake.md",
         "acceptance-gate.json",
         "acceptance-gate.md",
     ):
@@ -109,6 +114,84 @@ def test_acceptance_gate_overwrites_stale_artifacts_and_can_reach_green_path(tmp
     assert "POISON" not in json.dumps(business)
     assert final_report["status"] == "PASS"
     assert final_report["summary"]["blockers"] == 0
+
+
+def test_acceptance_gate_fails_when_env_pointed_evidence_fails_intake(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifacts"
+    owner_dir = tmp_path / "owner-evidence"
+    owner_dir.mkdir()
+    unsafe_policy = owner_dir / "unsafe-policy.json"
+    unsafe_policy.write_text(
+        json.dumps(
+            {
+                "status": "PASS",
+                "request": {"Authorization": "Bearer should-not-leak"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = collect_acceptance_gate(
+        output_dir=artifact_dir,
+        project_directory=PROJECT_ROOT,
+        acceptance_doc_file=PROJECT_ROOT / "docs/aimanager/1_acceptance_criteria.md",
+        generated_at=GENERATED_AT,
+        env={"AIMANAGER_PRODUCTION_POLICY_ATTESTATION_FILE": str(unsafe_policy)},
+        production_readiness_collector=lambda **_: _production_bundle("PASS"),
+        business_trial_collector=lambda **kwargs: _business_bundle(
+            "PASS",
+            production_checks=kwargs["production_readiness_collector"]()["checks"],
+        ),
+    )
+
+    intake_step = _step_by_id(result, "evidence_intake")
+    intake = json.loads((artifact_dir / "evidence-intake.json").read_text(encoding="utf-8"))
+    serialized = json.dumps(result, ensure_ascii=False)
+    for path in (path for path in artifact_dir.rglob("*") if path.is_file()):
+        serialized += path.read_text(encoding="utf-8")
+    assert result["status"] == "FAIL"
+    assert intake_step["status"] == "FAIL"
+    assert intake["status"] == "FAIL"
+    assert "should-not-leak" not in serialized
+    assert "Bearer [redacted:secret-like-value]" in serialized
+
+
+def test_acceptance_gate_passes_safe_env_pointed_evidence_without_validating_generated_templates(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifacts"
+    owner_dir = tmp_path / "owner-evidence"
+    owner_dir.mkdir()
+    safe_spend = owner_dir / "safe-spend.csv"
+    safe_spend.write_text(
+        "\n".join(
+            [
+                "startTime,status,model,call_type,user,key_alias,spend,currency,metadata",
+                "2026-07-01T09:00:00Z,success,openai/gemini-2.5-flash,completion,u1,key-alias,1.23,CNY,{}",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = collect_acceptance_gate(
+        output_dir=artifact_dir,
+        project_directory=PROJECT_ROOT,
+        acceptance_doc_file=PROJECT_ROOT / "docs/aimanager/1_acceptance_criteria.md",
+        generated_at=GENERATED_AT,
+        env={"AIMANAGER_SPEND_FILE": str(safe_spend)},
+        production_readiness_collector=lambda **_: _production_bundle("PASS"),
+        business_trial_collector=lambda **kwargs: _business_bundle(
+            "PASS",
+            production_checks=kwargs["production_readiness_collector"]()["checks"],
+        ),
+    )
+
+    intake_step = _step_by_id(result, "evidence_intake")
+    intake = json.loads((artifact_dir / "evidence-intake.json").read_text(encoding="utf-8"))
+    template_pack = json.loads((artifact_dir / "evidence-template-pack/evidence-template-pack.json").read_text(encoding="utf-8"))
+    assert result["status"] == "PASS"
+    assert intake_step["status"] == "PASS"
+    assert intake["summary"] == {"PASS": 1, "FAIL": 0, "BLOCKED": 0, "files": 1}
+    assert template_pack["status"] == "PASS"
 
 
 def test_acceptance_gate_redacts_secret_like_values_in_all_written_artifacts(tmp_path: Path) -> None:
@@ -284,3 +367,10 @@ def _check(check_id: str, name: str, status: str, detail: str) -> dict[str, Any]
         "detail": detail,
         "evidence": {},
     }
+
+
+def _step_by_id(result: dict[str, object], step_id: str) -> dict[str, Any]:
+    for step in result["steps"]:  # type: ignore[index]
+        if isinstance(step, dict) and step.get("id") == step_id:
+            return step
+    raise AssertionError(f"missing step {step_id}")

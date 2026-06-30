@@ -80,15 +80,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     return _EXIT_CODES.get(status, 1)
 
 
-def validate_evidence_intake(*, input_dir: Path, generated_at: str | None = None) -> dict[str, object]:
-    checks = _collect_checks(input_dir)
+def validate_evidence_intake(
+    *,
+    input_dir: Path | None = None,
+    input_files: Sequence[Path] | None = None,
+    generated_at: str | None = None,
+) -> dict[str, object]:
+    checks = _collect_file_checks(input_files) if input_files is not None else _collect_checks(input_dir or _DEFAULT_INPUT_DIR)
     result = {
         "status": _overall_status(check.status for check in checks),
         "generated_at": generated_at or _now_iso(),
-        "input_dir": str(input_dir),
         "summary": _summary(checks),
         "checks": [asdict(check) for check in checks],
     }
+    if input_files is not None:
+        result["input_files"] = [str(path) for path in input_files]
+    else:
+        result["input_dir"] = str(input_dir or _DEFAULT_INPUT_DIR)
     result["markdown"] = _markdown(result)
     return sanitize_value(result)
 
@@ -120,6 +128,32 @@ def _collect_checks(input_dir: Path) -> list[FileCheck]:
             )
         ]
     return [_validate_file(path, root=input_dir) for path in files]
+
+
+def _collect_file_checks(input_files: Sequence[Path]) -> list[FileCheck]:
+    files = tuple(dict.fromkeys(Path(path) for path in input_files))
+    checks: list[FileCheck] = []
+    for path in sorted(files, key=str):
+        if not path.exists():
+            checks.append(
+                FileCheck(
+                    path=str(path),
+                    status="BLOCKED",
+                    detail="evidence file does not exist",
+                )
+            )
+            continue
+        if not path.is_file():
+            checks.append(
+                FileCheck(
+                    path=str(path),
+                    status="FAIL",
+                    detail="evidence path is not a file",
+                )
+            )
+            continue
+        checks.append(_validate_file(path, root=path.parent))
+    return checks
 
 
 def _validate_file(path: Path, *, root: Path) -> FileCheck:
@@ -274,12 +308,16 @@ def _summary(checks: Sequence[FileCheck]) -> dict[str, int]:
 
 def _markdown(result: Mapping[str, object]) -> str:
     summary = _mapping(result.get("summary"))
+    if "input_files" in result:
+        input_line = f"- Input Files: {len(result.get('input_files') or [])}"
+    else:
+        input_line = f"- Input Directory: `{result.get('input_dir')}`"
     lines = [
         "# AiManager Evidence Intake Validation",
         "",
         f"- Status: {result.get('status')}",
         f"- Generated At: {result.get('generated_at')}",
-        f"- Input Directory: `{result.get('input_dir')}`",
+        input_line,
         f"- Files: {summary.get('files', 0)}",
         f"- PASS/FAIL/BLOCKED: {summary.get('PASS', 0)}/{summary.get('FAIL', 0)}/{summary.get('BLOCKED', 0)}",
         "",

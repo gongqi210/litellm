@@ -20,10 +20,21 @@ from aimanager.scripts.generate_evidence_template_pack import collect_evidence_t
 from aimanager.scripts.generate_final_acceptance_report import collect_final_acceptance_report
 from aimanager.scripts.generate_launch_gap_plan import collect_launch_gap_plan
 from aimanager.scripts.production_readiness_bundle import collect_production_readiness
+from aimanager.scripts.validate_evidence_intake import validate_evidence_intake
 
 
 _EXIT_CODES = {"PASS": 0, "FAIL": 1, "BLOCKED": 2}
 _STATUS_ORDER = {"FAIL": 0, "BLOCKED": 1, "PASS": 2}
+_EVIDENCE_FILE_ENV_NAMES = (
+    "AIMANAGER_SPEND_FILE",
+    "AIMANAGER_YCAPI_BILL_FILE",
+    "AIMANAGER_OBSERVABILITY_REPORT_FILE",
+    "AIMANAGER_PRODUCTION_POLICY_ATTESTATION_FILE",
+    "AIMANAGER_LIGHTWEIGHT_TRIAL_EVIDENCE_FILE",
+    "AIMANAGER_EMPLOYEE_MONITORING_POLICY_FILE",
+    "AIMANAGER_EMPLOYEE_ROSTER_FILE",
+    "AIMANAGER_EMPLOYEE_ACKNOWLEDGMENT_FILE",
+)
 
 ProductionReadinessCollector = Callable[..., dict[str, Any]]
 BusinessTrialCollector = Callable[..., dict[str, Any]]
@@ -129,6 +140,13 @@ def collect_acceptance_gate(
     _write_json(paths["template_pack_json"], evidence_template_pack)
     _write_text(paths["template_pack_markdown"], str(_mapping(evidence_template_pack).get("markdown") or ""))
 
+    evidence_intake = _sanitize_value(
+        _collect_evidence_intake(current_env, generated_at=gate_generated_at),
+        redactions,
+    )
+    _write_json(paths["evidence_intake_json"], evidence_intake)
+    _write_text(paths["evidence_intake_markdown"], str(_mapping(evidence_intake).get("markdown") or ""))
+
     coverage = _sanitize_value(
         collect_acceptance_coverage_matrix(
             acceptance_doc_file=acceptance_doc_file,
@@ -162,6 +180,7 @@ def collect_acceptance_gate(
         launch=launch,
         evidence_handoff=evidence_handoff,
         evidence_template_pack=evidence_template_pack,
+        evidence_intake=evidence_intake,
         coverage=coverage,
         final_report=final_report,
         paths=paths,
@@ -181,6 +200,7 @@ def _manifest(
     launch: object,
     evidence_handoff: object,
     evidence_template_pack: object,
+    evidence_intake: object,
     coverage: object,
     final_report: object,
     paths: Mapping[str, Path],
@@ -196,6 +216,13 @@ def _manifest(
             launch,
             json_file=paths["launch_json"],
             markdown_file=paths["launch_markdown"],
+        ),
+        _step(
+            "evidence_intake",
+            "evidence intake validation",
+            evidence_intake,
+            json_file=paths["evidence_intake_json"],
+            markdown_file=paths["evidence_intake_markdown"],
         ),
         _step(
             "acceptance_coverage_matrix",
@@ -239,6 +266,12 @@ def _manifest(
             json_file=paths["template_pack_json"],
             markdown_file=paths["template_pack_markdown"],
         ),
+        "evidence_intake": {
+            "status": _coerce_status(_mapping(evidence_intake).get("status")),
+            "json_file": str(paths["evidence_intake_json"]),
+            "markdown_file": str(paths["evidence_intake_markdown"]),
+            "summary": _mapping(_mapping(evidence_intake).get("summary")),
+        },
         "final_report": {
             "status": _coerce_status(_mapping(final_report).get("status")),
             "conclusion": str(_mapping(final_report).get("conclusion") or ""),
@@ -319,7 +352,8 @@ def _markdown(result: Mapping[str, object]) -> str:
     final_report = _mapping(result.get("final_report"))
     evidence_handoff = _mapping(result.get("evidence_handoff"))
     evidence_template_pack = _mapping(result.get("evidence_template_pack"))
-    if evidence_handoff or evidence_template_pack:
+    evidence_intake = _mapping(result.get("evidence_intake"))
+    if evidence_handoff or evidence_template_pack or evidence_intake:
         lines.extend(["", "## Evidence Collection", ""])
         if evidence_handoff:
             lines.extend(
@@ -335,6 +369,8 @@ def _markdown(result: Mapping[str, object]) -> str:
                     f"- Template Pack Dir: `{evidence_template_pack.get('directory', '')}`",
                 ]
             )
+        if evidence_intake:
+            lines.append(f"- Intake: `{evidence_intake.get('markdown_file', '')}`")
     if final_report:
         lines.extend(
             [
@@ -362,6 +398,8 @@ def _artifact_paths(output_dir: Path) -> dict[str, Path]:
         "template_pack_dir": output_dir / "evidence-template-pack",
         "template_pack_json": output_dir / "evidence-template-pack" / "evidence-template-pack.json",
         "template_pack_markdown": output_dir / "evidence-template-pack" / "evidence-template-pack.md",
+        "evidence_intake_json": output_dir / "evidence-intake.json",
+        "evidence_intake_markdown": output_dir / "evidence-intake.md",
         "coverage_json": output_dir / "acceptance-coverage.json",
         "coverage_markdown": output_dir / "acceptance-coverage.md",
         "final_json": output_dir / "final-acceptance-report.json",
@@ -389,6 +427,16 @@ def _write_evidence_handoff(paths: Mapping[str, Path], payload: object) -> None:
         if not isinstance(markdown_file, str) or not markdown_file:
             continue
         _write_text(Path(markdown_file), str(owner.get("markdown") or ""))
+
+
+def _collect_evidence_intake(env: Mapping[str, str], *, generated_at: str) -> dict[str, object]:
+    files = [
+        Path(value)
+        for name in _EVIDENCE_FILE_ENV_NAMES
+        for value in [str(env.get(name) or "").strip()]
+        if value
+    ]
+    return validate_evidence_intake(input_files=files, generated_at=generated_at)
 
 
 def _sanitize_value(value: object, redactions: Mapping[str, str]) -> object:
