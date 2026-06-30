@@ -41,12 +41,17 @@ def build_mock_response(path: str, payload: dict[str, Any]) -> tuple[int, dict[s
 
     if normalized_path in {"/v1/images/generations", "/images/generations"}:
         n = _positive_int(payload.get("n"), default=1)
-        body = {
-            "created": int(time.time()),
-            "data": [
+        response_format = _string(payload.get("response_format"), default="url")
+        if response_format == "b64_json":
+            data = [{"b64_json": "aW1hbmFnZXItbW9jay1pbWFnZQ=="} for _index in range(n)]
+        else:
+            data = [
                 {"url": f"https://example.invalid/aimanager-smoke/{index + 1}.png"}
                 for index in range(n)
-            ],
+            ]
+        body = {
+            "created": int(time.time()),
+            "data": data,
         }
         return 200, headers, _json_bytes(body)
 

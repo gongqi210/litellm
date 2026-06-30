@@ -45,6 +45,22 @@ def test_mock_ycapi_returns_openai_compatible_image_generation() -> None:
     assert payload["data"][0]["url"].startswith("https://example.invalid/aimanager-smoke/")
 
 
+def test_mock_ycapi_returns_b64_json_when_requested_for_image_generation() -> None:
+    status, _headers, body = build_mock_response(
+        "/v1/images/generations",
+        {
+            "model": "ycapi-image-1",
+            "prompt": "runtime smoke",
+            "response_format": "b64_json",
+        },
+    )
+
+    payload = json.loads(body.decode("utf-8"))
+    assert status == 200
+    assert payload["data"][0]["b64_json"]
+    assert "url" not in payload["data"][0]
+
+
 def test_mock_ycapi_returns_openai_error_for_unknown_path() -> None:
     status, _headers, body = build_mock_response("/v1/embeddings", {"model": "text"})
 

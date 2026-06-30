@@ -198,6 +198,140 @@ Admin UI: <http://127.0.0.1:4001/ui>
 
 The default business port `4000` intentionally blocks `/ui`, `/key/*`, `/team/*`, `/user/*`, `/budget/*`, and `/spend/*`.
 
+## Employee SDK Contract
+
+Employees and internal systems use AiManager as an OpenAI-compatible base URL. They receive LiteLLM virtual keys only; they never receive `YCAPI_API_TOKEN`.
+
+Set these client-side variables:
+
+```bash
+export AIMANAGER_BASE_URL=http://localhost:4000
+export AIMANAGER_EMPLOYEE_VIRTUAL_KEY=<employee-virtual-key>
+```
+
+Every work request must include a `user` plus metadata for department, project, cost center, scenario, end-user principal, currency, and pricing version. The examples below use the M1 contract only: chat through `gemini-2.5-flash` and `deepseek-chat`, image generation through `ycapi-image-1`, and vision through a base64 `data:` URL on `gemini-2.5-flash`.
+
+curl chat:
+
+```bash
+curl -s "$AIMANAGER_BASE_URL/v1/chat/completions" \
+  -H "Authorization: Bearer $AIMANAGER_EMPLOYEE_VIRTUAL_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gemini-2.5-flash",
+    "messages": [{"role": "user", "content": "Reply with exactly: ok"}],
+    "user": "employee-001",
+    "metadata": {
+      "department_id": "dept_engineering",
+      "project_id": "proj_aimanager",
+      "cost_center_id": "cc_platform",
+      "scenario_l1": "engineering",
+      "scenario_l2": "sdk-example",
+      "end_user_principal": "employee-001",
+      "currency": "CNY",
+      "pricing_version": "m1"
+    }
+  }'
+```
+
+Python OpenAI SDK:
+
+```python
+import os
+
+from openai import OpenAI
+
+base_url = os.environ.get("AIMANAGER_BASE_URL", "http://localhost:4000").rstrip("/")
+client = OpenAI(
+    api_key=os.environ["AIMANAGER_EMPLOYEE_VIRTUAL_KEY"],
+    base_url=f"{base_url}/v1",
+)
+
+response = client.chat.completions.create(
+    model="deepseek-chat",
+    messages=[{"role": "user", "content": "Reply with exactly: ok"}],
+    user="employee-001",
+    extra_body={
+        "metadata": {
+            "department_id": "dept_engineering",
+            "project_id": "proj_aimanager",
+            "cost_center_id": "cc_platform",
+            "scenario_l1": "engineering",
+            "scenario_l2": "sdk-example",
+            "end_user_principal": "employee-001",
+            "currency": "CNY",
+            "pricing_version": "m1",
+        }
+    },
+)
+print(response.choices[0].message.content)
+```
+
+Node OpenAI SDK:
+
+```javascript
+import OpenAI from "openai";
+
+const baseUrl = (process.env.AIMANAGER_BASE_URL || "http://localhost:4000").replace(/\/$/, "");
+const client = new OpenAI({
+  apiKey: process.env.AIMANAGER_EMPLOYEE_VIRTUAL_KEY,
+  baseURL: `${baseUrl}/v1`,
+});
+
+const image = await client.post("/images/generations", {
+  body: {
+    model: "ycapi-image-1",
+    prompt: "AiManager SDK example image",
+    n: 1,
+    size: "1024x1024",
+    response_format: "b64_json",
+    user: "employee-001",
+    metadata: {
+      department_id: "dept_marketing",
+      project_id: "proj_aimanager",
+      cost_center_id: "cc_platform",
+      scenario_l1: "marketing",
+      scenario_l2: "sdk-example",
+      end_user_principal: "employee-001",
+      currency: "CNY",
+      pricing_version: "m1",
+      image_count: 1,
+    },
+  },
+});
+console.log(Boolean(image.data[0].b64_json));
+```
+
+Vision request shape:
+
+```bash
+curl -s "$AIMANAGER_BASE_URL/v1/chat/completions" \
+  -H "Authorization: Bearer $AIMANAGER_EMPLOYEE_VIRTUAL_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gemini-2.5-flash",
+    "messages": [{
+      "role": "user",
+      "content": [
+        {"type": "text", "text": "Describe this image briefly."},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="}}
+      ]
+    }],
+    "user": "employee-001",
+    "metadata": {
+      "department_id": "dept_engineering",
+      "project_id": "proj_aimanager",
+      "cost_center_id": "cc_platform",
+      "scenario_l1": "engineering",
+      "scenario_l2": "sdk-vision-example",
+      "end_user_principal": "employee-001",
+      "currency": "CNY",
+      "pricing_version": "m1",
+      "image_count": 1
+    }
+  }'
+```
+
 ## Validate
 
 ```bash
@@ -207,6 +341,15 @@ PYTHONPATH="$PWD" uv run --no-project --with pytest --with pyyaml pytest aimanag
 docker compose -f aimanager/docker-compose.yml config
 docker compose -f aimanager/docker-compose.yml --profile admin config
 ```
+
+Employee SDK compatibility smoke:
+
+```bash
+PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.smoke_sdk_compat \
+  --base-url http://localhost:4000
+```
+
+Expected result without `AIMANAGER_EMPLOYEE_VIRTUAL_KEY`: `BLOCKED`. Expected result with a governed employee virtual key and a running business proxy: `PASS`, with `/v1/models`, chat for `gemini-2.5-flash` and `deepseek-chat`, image `ycapi-image-1` using `response_format=b64_json`, and a vision request through the OpenAI-compatible chat route. The smoke reads only the configured employee virtual-key env var and never reads or prints `YCAPI_API_TOKEN`.
 
 With a running local proxy:
 
@@ -370,6 +513,7 @@ Latest local runtime smoke evidence:
 - Local observability tests prove management `GET /metrics` is served by AiManager without reaching downstream LiteLLM, business `/metrics` remains blocked, audit events increment `aimanager_audit_events_total`, downstream 429/5xx increment `aimanager_http_responses_total`, and `export_observability` emits JSON metrics plus alert records from audit logs and request-status rows.
 - Local alert-routing tests prove `route_observability_alerts` can render WeCom markdown payloads from exported alert JSON, dry-run without a webhook, return `BLOCKED` when live alerts have no webhook, filter by severity, and validate WeCom `errcode=0` without printing the webhook URL.
 - Local live-ycapi preflight tests prove `smoke_live_ycapi` returns `BLOCKED` without `YCAPI_API_TOKEN`, validates ycapi `/models` with expected model ids when a token is present, and masks token/URL values on transport failures.
+- Local SDK compatibility tests prove `smoke_sdk_compat` uses an employee LiteLLM virtual key instead of `YCAPI_API_TOKEN`, checks `/v1/models`, chat models `gemini-2.5-flash` and `deepseek-chat`, image `ycapi-image-1` with `response_format=b64_json`, a vision chat request with a base64 `data:` URL, required work metadata, OpenAI-compatible response shape, and sanitized failure details. Runtime AC-06 remains blocked until a real employee virtual key is supplied against a running business surface.
 - Local error-contract tests prove allowed downstream LiteLLM/ycapi 429 JSON errors preserve the upstream `error` object, inject top-level `request_id` aligned with `x-litellm-call-id`, keep 401/403/404 fallback types stable, pass successful streaming chunks through unchanged, and convert non-JSON downstream 5xx errors to OpenAI-compatible JSON without leaking Bearer, `sk-*`, ycapi token text, or DSN passwords.
 
-Remaining before business trial: production ycapi bill evidence, live ycapi smoke with the production token policy, production admin SSO/reverse-proxy header stripping, and a live WeCom webhook routing run from the management metrics/report output.
+Remaining before business trial: AC-06 runtime employee virtual-key evidence, production ycapi bill evidence, live ycapi smoke with the production token policy, production admin SSO/reverse-proxy header stripping, and a live WeCom webhook routing run from the management metrics/report output.
