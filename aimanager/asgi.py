@@ -6,7 +6,7 @@ import os
 import re
 import socket
 import struct
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Mapping
 from urllib.parse import urlparse
 from uuid import uuid4
 
@@ -75,6 +75,7 @@ SENSITIVE_TEXT_PATTERNS = (
         r"\1=[REDACTED]",
     ),
 )
+SSE_EVENT_DELIMITER_PATTERN = re.compile(br"\r\n\r\n|\n\n|\r\r")
 
 
 class YcapiOnlyAllowlistMiddleware:
@@ -561,9 +562,12 @@ def _downstream_error_contract_send_wrapper(
     body_chunks: list[bytes] = []
     body_size = 0
     passthrough = False
+    event_stream_passthrough = False
+    event_stream_buffer = b""
 
     async def wrapped_send(message: Message) -> None:
-        nonlocal body_size, passthrough, raw_response_headers, response_headers, status_code
+        nonlocal body_size, event_stream_buffer, event_stream_passthrough, passthrough
+        nonlocal raw_response_headers, response_headers, status_code
 
         message_type = message.get("type")
         if message_type == "http.response.start":
@@ -572,11 +576,38 @@ def _downstream_error_contract_send_wrapper(
             response_headers = _headers_from_message(message)
             raw_response_headers = list(message.get("headers") or [])
             passthrough = status_code is None or status_code < 400
+            event_stream_passthrough = passthrough and _is_event_stream_response(response_headers)
             if passthrough:
-                await send(message)
+                start_message = dict(message)
+                if event_stream_passthrough:
+                    start_message["headers"] = _headers_without_content_length(raw_response_headers)
+                await send(start_message)
             return
 
-        if message_type != "http.response.body" or passthrough:
+        if message_type != "http.response.body":
+            await send(message)
+            return
+
+        if passthrough:
+            if event_stream_passthrough:
+                chunk = message.get("body", b"")
+                if isinstance(chunk, str):
+                    chunk = chunk.encode("utf-8")
+                if isinstance(chunk, bytes):
+                    event_stream_buffer += chunk
+                events, event_stream_buffer = _split_complete_sse_events(event_stream_buffer)
+                body = b"".join(_normalize_sse_event(event, request_id=_stream_request_id(response_headers, request_id)) for event in events)
+                if not bool(message.get("more_body", False)) and event_stream_buffer:
+                    body += _normalize_sse_event(
+                        event_stream_buffer,
+                        request_id=_stream_request_id(response_headers, request_id),
+                    )
+                    event_stream_buffer = b""
+                if body or not bool(message.get("more_body", False)):
+                    output_message = dict(message)
+                    output_message["body"] = body
+                    await send(output_message)
+                return
             await send(message)
             return
 
@@ -657,6 +688,78 @@ def _parsed_openai_error(response_body: bytes) -> dict[str, Any] | None:
         return None
     error = payload.get("error")
     return error if isinstance(error, dict) else None
+
+
+def _is_event_stream_response(headers: Mapping[str, str]) -> bool:
+    return _header(headers, "content-type").lower().startswith("text/event-stream")
+
+
+def _stream_request_id(headers: Mapping[str, str], fallback: str) -> str:
+    return _header(headers, "x-litellm-call-id", "x-request-id", default=fallback)
+
+
+def _headers_without_content_length(raw_headers: list[tuple[Any, Any]]) -> list[tuple[bytes, bytes]]:
+    headers: list[tuple[bytes, bytes]] = []
+    for key, value in raw_headers:
+        key_bytes = key if isinstance(key, bytes) else str(key).encode("latin1", errors="replace")
+        if key_bytes.lower() == b"content-length":
+            continue
+        value_bytes = value if isinstance(value, bytes) else str(value).encode("latin1", errors="replace")
+        headers.append((key_bytes, value_bytes))
+    return headers
+
+
+def _split_complete_sse_events(buffer: bytes) -> tuple[list[bytes], bytes]:
+    events: list[bytes] = []
+    start = 0
+    for match in SSE_EVENT_DELIMITER_PATTERN.finditer(buffer):
+        events.append(buffer[start : match.end()])
+        start = match.end()
+    return events, buffer[start:]
+
+
+def _normalize_sse_event(event: bytes, *, request_id: str) -> bytes:
+    text = event.decode("utf-8", errors="replace")
+    lines = text.splitlines(keepends=True)
+    normalized = [
+        _normalize_sse_data_line(line, request_id=request_id)
+        if line.startswith("data:")
+        else _redact_sensitive_text(line)
+        for line in lines
+    ]
+    return "".join(normalized).encode("utf-8")
+
+
+def _normalize_sse_data_line(line: str, *, request_id: str) -> str:
+    line_ending = _line_ending(line)
+    body = line[: -len(line_ending)] if line_ending else line
+    prefix, raw_data = body.split(":", 1)
+    leading_space = " " if raw_data.startswith(" ") else ""
+    data = raw_data[1:] if leading_space else raw_data
+    if not data or data == "[DONE]":
+        return _redact_sensitive_text(line)
+    try:
+        payload = json.loads(data)
+    except json.JSONDecodeError:
+        return _redact_sensitive_text(line)
+    if not isinstance(payload, dict) or not isinstance(payload.get("error"), dict):
+        return _redact_sensitive_text(line)
+    normalized_payload = _build_downstream_error_body(
+        status_code=500,
+        response_body=json.dumps(payload).encode("utf-8"),
+        request_id=request_id,
+    )
+    return f"{prefix}:{leading_space}{json.dumps(normalized_payload, separators=(',', ':'))}{line_ending}"
+
+
+def _line_ending(line: str) -> str:
+    if line.endswith("\r\n"):
+        return "\r\n"
+    if line.endswith("\n"):
+        return "\n"
+    if line.endswith("\r"):
+        return "\r"
+    return ""
 
 
 def _downstream_error_type(status_code: int) -> str:
