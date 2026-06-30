@@ -162,6 +162,21 @@ PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.export_observa
 
 The report contains request count, failed requests, failure rate, 429/5xx counts, latency/token/spend totals, observed request ids, audit event counts, bounded key/model buckets, and machine-readable alerts for high failure rate, 429, 5xx, missing request id, budget blocks, and passthrough blocks. Request ids stay in the JSON report for correlation, not in Prometheus labels.
 
+WeCom alert routing from an exported report:
+
+```bash
+PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.route_observability_alerts \
+  --report-file /tmp/aimanager-observability.json \
+  --dry-run \
+  --output-payload-file /tmp/aimanager-wecom-alert-payload.json
+
+PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.route_observability_alerts \
+  --report-file /tmp/aimanager-observability.json \
+  --min-severity warning
+```
+
+The dry-run command renders the exact WeCom markdown payload without sending it. The live command reads `AIMANAGER_WECOM_WEBHOOK_URL` from the environment or accepts `--webhook-url`; it returns `BLOCKED` when alerts exist but no webhook is configured. The script never prints the webhook URL.
+
 ## Run
 
 ```bash
@@ -342,6 +357,7 @@ Latest local runtime smoke evidence:
 - Mock ycapi runtime key-lifecycle smoke proved admin `POST /key/block` freezes a governed key, subsequent business chat returns HTTP 401 with `Key is blocked`, admin `POST /key/delete` revokes a second governed key, subsequent business chat returns HTTP 401 invalid-token/not-found, and the admin container logs contain `key_frozen` and `key_revoked` `aimanager_audit_event` records with actor `aimanager-ci`, disposition reasons, request ids, key aliases, and governance dimensions.
 - Postgres-down runtime smoke with isolated compose project `aimanager_postgres_down` proved that after stopping `db`, AiManager returns readiness 503, still blocks provider passthrough with 403 before downstream LiteLLM, and returns sanitized 503 `aimanager_database_unavailable` for an employee virtual-key business chat.
 - Local observability tests prove management `GET /metrics` is served by AiManager without reaching downstream LiteLLM, business `/metrics` remains blocked, audit events increment `aimanager_audit_events_total`, downstream 429/5xx increment `aimanager_http_responses_total`, and `export_observability` emits JSON metrics plus alert records from audit logs and request-status rows.
+- Local alert-routing tests prove `route_observability_alerts` can render WeCom markdown payloads from exported alert JSON, dry-run without a webhook, return `BLOCKED` when live alerts have no webhook, filter by severity, and validate WeCom `errcode=0` without printing the webhook URL.
 - Local error-contract tests prove allowed downstream LiteLLM/ycapi 429 JSON errors preserve the upstream `error` object, inject top-level `request_id` aligned with `x-litellm-call-id`, keep 401/403/404 fallback types stable, pass successful streaming chunks through unchanged, and convert non-JSON downstream 5xx errors to OpenAI-compatible JSON without leaking Bearer, `sk-*`, ycapi token text, or DSN passwords.
 
-Remaining before business trial: production ycapi bill evidence, live ycapi smoke with the production token policy, production admin SSO/reverse-proxy header stripping, and production alert routing from the management metrics/report output.
+Remaining before business trial: production ycapi bill evidence, live ycapi smoke with the production token policy, production admin SSO/reverse-proxy header stripping, and a live WeCom webhook routing run from the management metrics/report output.
