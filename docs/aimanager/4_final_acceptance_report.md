@@ -45,6 +45,18 @@ PYTHONPATH="$PWD" uv run --no-project --with pyyaml python -m aimanager.scripts.
 
 That bundle wraps production readiness plus AC-23 and AC-26. It must return `PASS` for all checks before a business trial can be called complete. Missing production inputs, timed human trial evidence, or HR/legal acknowledgment evidence must stay `BLOCKED`, not be counted as success. AC-23 cannot pass from a hand-authored JSON alone; it also requires same-run AC-19 live ycapi `PASS`.
 
+Acceptance coverage matrix:
+
+```bash
+PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.acceptance_coverage_matrix \
+  --production-readiness-file /tmp/aimanager-production-readiness.json \
+  --business-trial-file /tmp/aimanager-business-trial-acceptance.json \
+  --output-json-file /tmp/aimanager-acceptance-coverage.json \
+  --output-markdown-file /tmp/aimanager-acceptance-coverage.md
+```
+
+This matrix parses the acceptance criteria document, verifies AC-01 through AC-26 plus AC-POLICY have executable local artifacts or bundle checks, overlays the M1/M2 bundle statuses, and fails on mapping drift such as a missing `AC-16-WECOM` or `AC-12-13-FINANCE` check. It is a final consistency gate, not a substitute for live production evidence.
+
 ## Stage Scores
 
 | Stage | Score | Status |
@@ -63,7 +75,7 @@ That bundle wraps production readiness plus AC-23 and AC-26. It must return `PAS
 - AC-12/13: provide real AiManager spend export and ycapi monthly bill evidence with nonzero billable amounts.
 - AC-23: run a timed 5-minute nontechnical trial with live ycapi, controlled identity injection, and a governed employee virtual key.
 - AC-26: provide HR/legal-approved policy publication, roster, and latest-version acknowledgment export.
-- Final gate: rerun `business_trial_acceptance_bundle` and require every leaf check to be `PASS`.
+- Final gate: rerun `business_trial_acceptance_bundle`, then run `acceptance_coverage_matrix`; require every leaf check and every mapped AC row to be `PASS`.
 
 ## Final Conclusion
 
