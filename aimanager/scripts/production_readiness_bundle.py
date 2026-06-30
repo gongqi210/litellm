@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import sys
@@ -38,6 +39,7 @@ AdminBoundaryRunner = Callable[..., Sequence[Any]]
 LiveYcapiRunner = Callable[..., Any]
 WeComRouter = Callable[..., Any]
 FinanceRunner = Callable[..., CheckResult]
+_SECRET_LIKE_REDACTION = "[redacted:secret-like-value]"
 
 
 def collect_production_readiness(
@@ -56,6 +58,7 @@ def collect_production_readiness(
         _live_ycapi_check(current_env, live_ycapi_runner=live_ycapi_runner),
         _wecom_routing_check(current_env, wecom_router=wecom_router),
         (finance_runner or _finance_evidence_check)(env=current_env),
+        _production_policy_attestation_check(current_env),
     ]
     sanitized_checks = [_sanitize_check(check, redactions) for check in checks]
     return {
@@ -330,6 +333,78 @@ def _finance_evidence_check(*, env: Mapping[str, str]) -> CheckResult:
     )
 
 
+def _production_policy_attestation_check(env: Mapping[str, str]) -> CheckResult:
+    path = _env_value(env, "AIMANAGER_PRODUCTION_POLICY_ATTESTATION_FILE")
+    if not path:
+        return CheckResult(
+            id="AC-POLICY",
+            name="production_policy_attestation",
+            status="BLOCKED",
+            detail=(
+                "missing AIMANAGER_PRODUCTION_POLICY_ATTESTATION_FILE; cannot verify showback/chargeback, "
+                "pricing approval, ycapi token limits, employee virtual-key-only distribution, and data boundaries"
+            ),
+            evidence={"required_env": ["AIMANAGER_PRODUCTION_POLICY_ATTESTATION_FILE"]},
+        )
+
+    try:
+        payload = _load_json_object(Path(path))
+    except FileNotFoundError:
+        return CheckResult(
+            id="AC-POLICY",
+            name="production_policy_attestation",
+            status="BLOCKED",
+            detail=f"production policy attestation file does not exist: {path}",
+        )
+    except Exception as exc:
+        return CheckResult(
+            id="AC-POLICY",
+            name="production_policy_attestation",
+            status="FAIL",
+            detail=f"production policy attestation could not be loaded: {type(exc).__name__}",
+        )
+
+    if _contains_secret_like_value(json.dumps(payload, ensure_ascii=False)):
+        return CheckResult(
+            id="AC-POLICY",
+            name="production_policy_attestation",
+            status="FAIL",
+            detail=f"production policy attestation contains {_SECRET_LIKE_REDACTION}",
+            evidence={"redaction_marker": _SECRET_LIKE_REDACTION},
+        )
+
+    violations = _production_policy_violations(payload)
+    if violations:
+        return CheckResult(
+            id="AC-POLICY",
+            name="production_policy_attestation",
+            status="FAIL",
+            detail="production policy attestation invalid: " + ", ".join(violations[:5]),
+        )
+
+    chargeback = _mapping(payload.get("chargeback"))
+    token_limit = _mapping(payload.get("ycapi_token_limit"))
+    employee_key = _mapping(payload.get("employee_virtual_key_only"))
+    data_boundaries = _mapping(payload.get("data_boundaries"))
+    approvals = _list_of_mappings(payload.get("approvals"))
+    return CheckResult(
+        id="AC-POLICY",
+        name="production_policy_attestation",
+        status="PASS",
+        detail="production policy attestation validated",
+        evidence={
+            "policy_id": _text(payload.get("policy_id")),
+            "policy_version": _text(payload.get("policy_version")),
+            "approver_count": len(approvals),
+            "chargeback_mode": _text(chargeback.get("mode")),
+            "data_boundary_count": len(_string_list(data_boundaries.get("categories"))),
+            "ycapi_token_limit_confirmed": token_limit.get("confirmed") is True,
+            "employee_virtual_key_only": employee_key.get("confirmed") is True
+            and employee_key.get("ycapi_token_visible_to_employee") is False,
+        },
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Collect AiManager production readiness evidence into one JSON bundle.")
     parser.add_argument("--output-json-file", help="Optional path to write the production readiness JSON bundle.")
@@ -379,8 +454,8 @@ def _sanitize_text(value: str, redactions: Mapping[str, str]) -> str:
         if secret:
             sanitized = sanitized.replace(secret, replacement)
     sanitized = _WECOM_WEBHOOK_PATTERN.sub("[redacted:AIMANAGER_WECOM_WEBHOOK_URL]", sanitized)
-    sanitized = _BEARER_PATTERN.sub("[redacted:bearer-token]", sanitized)
-    sanitized = _SECRET_KEY_PATTERN.sub("[redacted:secret-like]", sanitized)
+    sanitized = _BEARER_PATTERN.sub(_SECRET_LIKE_REDACTION, sanitized)
+    sanitized = _SECRET_KEY_PATTERN.sub(_SECRET_LIKE_REDACTION, sanitized)
     return sanitized
 
 
@@ -445,6 +520,128 @@ def _load_json_object(path: Path) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError(f"{path} must contain a JSON object")
     return payload
+
+
+def _production_policy_violations(payload: Mapping[str, Any]) -> list[str]:
+    violations: list[str] = []
+    for field_name in ("policy_id", "policy_version", "approved_at"):
+        if not _text(payload.get(field_name)):
+            violations.append(field_name)
+
+    chargeback = _required_mapping(payload, "chargeback", violations)
+    _require_true(chargeback, "chargeback.confirmed", violations)
+    if _text(chargeback.get("mode")) not in {"showback", "chargeback"}:
+        violations.append("chargeback.mode")
+    _require_text(chargeback, "policy_ref", "chargeback.policy_ref", violations)
+    _require_text(chargeback, "effective_month", "chargeback.effective_month", violations)
+
+    pricing = _required_mapping(payload, "pricing_approval", violations)
+    _require_true(pricing, "pricing_approval.confirmed", violations)
+    _require_text(pricing, "pricing_version", "pricing_approval.pricing_version", violations)
+    _require_text(pricing, "approval_ref", "pricing_approval.approval_ref", violations)
+    _require_text(pricing, "approver", "pricing_approval.approver", violations)
+
+    token_limit = _required_mapping(payload, "ycapi_token_limit", violations)
+    _require_true(token_limit, "ycapi_token_limit.confirmed", violations)
+    _require_text(token_limit, "limit_ref", "ycapi_token_limit.limit_ref", violations)
+    if _positive_number(token_limit.get("monthly_budget_cny")) <= 0:
+        violations.append("ycapi_token_limit.monthly_budget_cny")
+    if _positive_number(token_limit.get("rpm_limit")) <= 0:
+        violations.append("ycapi_token_limit.rpm_limit")
+
+    employee_key = _required_mapping(payload, "employee_virtual_key_only", violations)
+    _require_true(employee_key, "employee_virtual_key_only.confirmed", violations)
+    _require_text(employee_key, "distribution_channel", "employee_virtual_key_only.distribution_channel", violations)
+    if employee_key.get("ycapi_token_visible_to_employee") is not False:
+        violations.append("employee_virtual_key_only.ycapi_token_visible_to_employee")
+
+    data_boundaries = _required_mapping(payload, "data_boundaries", violations)
+    _require_true(data_boundaries, "data_boundaries.confirmed", violations)
+    _require_text(data_boundaries, "policy_ref", "data_boundaries.policy_ref", violations)
+    if not _string_list(data_boundaries.get("categories")):
+        violations.append("data_boundaries.categories")
+
+    approvals = _list_of_mappings(payload.get("approvals"))
+    if len(approvals) < 3:
+        violations.append("approvals")
+    approval_roles = {_text(approval.get("role")) for approval in approvals}
+    for required_role in ("finance", "security", "legal"):
+        if required_role not in approval_roles:
+            violations.append(f"approvals.{required_role}")
+    required_approver_identities = {
+        _text(approval.get("role")): _normalized_identity(approval.get("approver"))
+        for approval in approvals
+        if _text(approval.get("role")) in {"finance", "security", "legal"}
+    }
+    if len({approver for approver in required_approver_identities.values() if approver}) < 3:
+        violations.append("approvals.distinct_approvers")
+    for index, approval in enumerate(approvals):
+        for key in ("role", "approver", "approval_ref"):
+            if not _text(approval.get(key)):
+                violations.append(f"approvals[{index}].{key}")
+    return violations
+
+
+def _required_mapping(payload: Mapping[str, Any], field_name: str, violations: list[str]) -> dict[str, Any]:
+    value = payload.get(field_name)
+    if not isinstance(value, Mapping):
+        violations.append(field_name)
+        return {}
+    return dict(value)
+
+
+def _mapping(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, Mapping) else {}
+
+
+def _list_of_mappings(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [dict(item) for item in value if isinstance(item, Mapping)]
+
+
+def _require_true(payload: Mapping[str, Any], field_path: str, violations: list[str]) -> None:
+    field_name = field_path.rsplit(".", 1)[-1]
+    if payload.get(field_name) is not True:
+        violations.append(field_path)
+
+
+def _require_text(payload: Mapping[str, Any], key: str, field_path: str, violations: list[str]) -> None:
+    if not _text(payload.get(key)):
+        violations.append(field_path)
+
+
+def _text(value: Any) -> str:
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _normalized_identity(value: Any) -> str:
+    return " ".join(_text(value).casefold().split())
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [item.strip() for item in value if isinstance(item, str) and item.strip()]
+
+
+def _positive_number(value: Any) -> float:
+    if isinstance(value, bool):
+        return 0.0
+    if isinstance(value, (int, float)):
+        number = float(value)
+        return number if math.isfinite(number) else 0.0
+    if isinstance(value, str):
+        try:
+            number = float(value.strip())
+        except ValueError:
+            return 0.0
+        return number if math.isfinite(number) else 0.0
+    return 0.0
+
+
+def _contains_secret_like_value(value: str) -> bool:
+    return any(pattern.search(value) for pattern in (_WECOM_WEBHOOK_PATTERN, _BEARER_PATTERN, _SECRET_KEY_PATTERN))
 
 
 if __name__ == "__main__":

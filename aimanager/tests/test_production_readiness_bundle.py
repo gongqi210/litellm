@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from aimanager.scripts import production_readiness_bundle
 from aimanager.scripts.production_readiness_bundle import (
@@ -20,6 +21,7 @@ def test_production_readiness_blocks_without_required_inputs() -> None:
         "AC-19": "BLOCKED",
         "AC-16-WECOM": "BLOCKED",
         "AC-12-13-FINANCE": "BLOCKED",
+        "AC-POLICY": "BLOCKED",
     }
     assert "YCAPI_API_TOKEN" in bundle["checks"][1]["detail"]
     assert bundle["checks"][0]["evidence"]["result_count"] == 2
@@ -105,6 +107,7 @@ def test_production_readiness_cli_writes_json_and_returns_blocked(monkeypatch, t
     monkeypatch.delenv("AIMANAGER_OBSERVABILITY_REPORT_FILE", raising=False)
     monkeypatch.delenv("AIMANAGER_SPEND_FILE", raising=False)
     monkeypatch.delenv("AIMANAGER_YCAPI_BILL_FILE", raising=False)
+    monkeypatch.delenv("AIMANAGER_PRODUCTION_POLICY_ATTESTATION_FILE", raising=False)
 
     exit_code = main(["--output-json-file", str(output_file)])
 
@@ -118,6 +121,7 @@ def test_production_readiness_cli_writes_json_and_returns_blocked(monkeypatch, t
         "AC-19",
         "AC-16-WECOM",
         "AC-12-13-FINANCE",
+        "AC-POLICY",
     }
 
 
@@ -265,6 +269,230 @@ def test_finance_evidence_passes_with_real_export_files(tmp_path) -> None:
     ]
 
 
+def test_production_policy_attestation_passes_with_required_manual_checks(tmp_path) -> None:
+    policy_file = tmp_path / "production_policy_attestation.json"
+    report_file = tmp_path / "observability.json"
+    policy_file.write_text(json.dumps(_valid_policy_attestation()), encoding="utf-8")
+    report_file.write_text(json.dumps(_observability_report_with_alert()), encoding="utf-8")
+
+    bundle = collect_production_readiness(
+        env={
+            "AIMANAGER_PRODUCTION_POLICY_ATTESTATION_FILE": str(policy_file),
+            "AIMANAGER_OBSERVABILITY_REPORT_FILE": str(report_file),
+            "AIMANAGER_WECOM_WEBHOOK_URL": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=redaction",
+        },
+        admin_boundary_runner=lambda **kwargs: [
+            _script_result(status="PASS", detail="business/admin edge checks passed")
+        ],
+        live_ycapi_runner=lambda **kwargs: _script_result(status="PASS", detail="ycapi /models returned 3 models"),
+        wecom_router=lambda **kwargs: _script_result(status="PASS", detail="sent 1 alert to WeCom webhook"),
+        finance_runner=lambda **kwargs: CheckResult(
+            id="AC-12-13-FINANCE",
+            name="finance_export_reconciliation",
+            status="PASS",
+            detail="finance files exported",
+            evidence={"output_files": ["aimanager_usage_daily.csv"]},
+        ),
+    )
+
+    policy_check = next(check for check in bundle["checks"] if check["id"] == "AC-POLICY")
+    assert bundle["status"] == "PASS"
+    assert policy_check["status"] == "PASS"
+    assert policy_check["evidence"] == {
+        "policy_id": "aimanager-production-policy",
+        "policy_version": "2026-06",
+        "approver_count": 3,
+        "chargeback_mode": "showback",
+        "data_boundary_count": 3,
+        "ycapi_token_limit_confirmed": True,
+        "employee_virtual_key_only": True,
+    }
+
+
+def test_production_policy_attestation_rejects_missing_required_confirmation(tmp_path) -> None:
+    policy_file = tmp_path / "production_policy_attestation.json"
+    payload = _valid_policy_attestation()
+    payload["employee_virtual_key_only"]["confirmed"] = False
+    policy_file.write_text(json.dumps(payload), encoding="utf-8")
+
+    bundle = collect_production_readiness(
+        env={"AIMANAGER_PRODUCTION_POLICY_ATTESTATION_FILE": str(policy_file)},
+        admin_boundary_runner=lambda **kwargs: [
+            _script_result(status="PASS", detail="business/admin edge checks passed")
+        ],
+        live_ycapi_runner=lambda **kwargs: _script_result(status="PASS", detail="ycapi /models returned 3 models"),
+        wecom_router=lambda **kwargs: _script_result(status="PASS", detail="sent 1 alert to WeCom webhook"),
+        finance_runner=lambda **kwargs: CheckResult(
+            id="AC-12-13-FINANCE",
+            name="finance_export_reconciliation",
+            status="PASS",
+            detail="finance files exported",
+            evidence={"output_files": ["aimanager_usage_daily.csv"]},
+        ),
+    )
+
+    policy_check = next(check for check in bundle["checks"] if check["id"] == "AC-POLICY")
+    assert bundle["status"] == "FAIL"
+    assert policy_check["status"] == "FAIL"
+    assert "employee_virtual_key_only.confirmed" in policy_check["detail"]
+
+
+def test_production_policy_attestation_redacts_secret_like_values(tmp_path) -> None:
+    policy_file = tmp_path / "production_policy_attestation.json"
+    payload = _valid_policy_attestation()
+    payload["approvals"][0]["approval_ref"] = "Bearer should-not-leak"
+    policy_file.write_text(json.dumps(payload), encoding="utf-8")
+
+    bundle = collect_production_readiness(
+        env={"AIMANAGER_PRODUCTION_POLICY_ATTESTATION_FILE": str(policy_file)},
+        admin_boundary_runner=lambda **kwargs: [
+            _script_result(status="PASS", detail="business/admin edge checks passed")
+        ],
+        live_ycapi_runner=lambda **kwargs: _script_result(status="PASS", detail="ycapi /models returned 3 models"),
+        wecom_router=lambda **kwargs: _script_result(status="PASS", detail="sent 1 alert to WeCom webhook"),
+        finance_runner=lambda **kwargs: CheckResult(
+            id="AC-12-13-FINANCE",
+            name="finance_export_reconciliation",
+            status="PASS",
+            detail="finance files exported",
+            evidence={"output_files": ["aimanager_usage_daily.csv"]},
+        ),
+    )
+
+    serialized = json.dumps(bundle, ensure_ascii=False)
+    assert bundle["status"] == "FAIL"
+    assert "should-not-leak" not in serialized
+    assert "[redacted:secret-like-value]" in serialized
+
+
+def test_production_policy_attestation_blocks_when_file_is_missing(tmp_path) -> None:
+    missing_policy_file = tmp_path / "missing-policy.json"
+
+    bundle = _policy_bundle_for_env({"AIMANAGER_PRODUCTION_POLICY_ATTESTATION_FILE": str(missing_policy_file)})
+
+    policy_check = next(check for check in bundle["checks"] if check["id"] == "AC-POLICY")
+    assert bundle["status"] == "BLOCKED"
+    assert policy_check["status"] == "BLOCKED"
+    assert "does not exist" in policy_check["detail"]
+
+
+def test_production_policy_attestation_rejects_malformed_json(tmp_path) -> None:
+    policy_file = tmp_path / "production_policy_attestation.json"
+    policy_file.write_text("{", encoding="utf-8")
+
+    bundle = _policy_bundle_for_env({"AIMANAGER_PRODUCTION_POLICY_ATTESTATION_FILE": str(policy_file)})
+
+    policy_check = next(check for check in bundle["checks"] if check["id"] == "AC-POLICY")
+    assert bundle["status"] == "FAIL"
+    assert policy_check["status"] == "FAIL"
+    assert "could not be loaded" in policy_check["detail"]
+
+
+def test_production_policy_attestation_rejects_visible_ycapi_token_to_employee(tmp_path) -> None:
+    payload = _valid_policy_attestation()
+    payload["employee_virtual_key_only"]["ycapi_token_visible_to_employee"] = True
+
+    policy_check = _policy_check_for_payload(tmp_path, payload)
+
+    assert policy_check["status"] == "FAIL"
+    assert "employee_virtual_key_only.ycapi_token_visible_to_employee" in policy_check["detail"]
+
+
+def test_production_policy_attestation_rejects_missing_required_approval_role(tmp_path) -> None:
+    payload = _valid_policy_attestation()
+    payload["approvals"] = [
+        {"role": "finance", "approver": "finance-controller", "approval_ref": "FIN-APPROVED"},
+        {"role": "security", "approver": "security-owner", "approval_ref": "SEC-APPROVED"},
+        {"role": "operations", "approver": "ops-owner", "approval_ref": "OPS-ACK"},
+    ]
+
+    policy_check = _policy_check_for_payload(tmp_path, payload)
+
+    assert policy_check["status"] == "FAIL"
+    assert "approvals.legal" in policy_check["detail"]
+
+
+def test_production_policy_attestation_rejects_invalid_chargeback_mode(tmp_path) -> None:
+    payload = _valid_policy_attestation()
+    payload["chargeback"]["mode"] = "informal-tracking"
+
+    policy_check = _policy_check_for_payload(tmp_path, payload)
+
+    assert policy_check["status"] == "FAIL"
+    assert "chargeback.mode" in policy_check["detail"]
+
+
+def test_production_policy_attestation_rejects_non_positive_ycapi_limits(tmp_path) -> None:
+    payload = _valid_policy_attestation()
+    payload["ycapi_token_limit"]["monthly_budget_cny"] = "0"
+    payload["ycapi_token_limit"]["rpm_limit"] = 0
+
+    policy_check = _policy_check_for_payload(tmp_path, payload)
+
+    assert policy_check["status"] == "FAIL"
+    assert "ycapi_token_limit.monthly_budget_cny" in policy_check["detail"]
+    assert "ycapi_token_limit.rpm_limit" in policy_check["detail"]
+
+
+def test_production_policy_attestation_rejects_non_finite_ycapi_limits(tmp_path) -> None:
+    payload = _valid_policy_attestation()
+    payload["ycapi_token_limit"]["monthly_budget_cny"] = float("nan")
+    payload["ycapi_token_limit"]["rpm_limit"] = float("inf")
+
+    policy_check = _policy_check_for_payload(tmp_path, payload)
+
+    assert policy_check["status"] == "FAIL"
+    assert "ycapi_token_limit.monthly_budget_cny" in policy_check["detail"]
+    assert "ycapi_token_limit.rpm_limit" in policy_check["detail"]
+
+
+def test_production_policy_attestation_requires_distinct_approvers_for_required_roles(tmp_path) -> None:
+    payload = _valid_policy_attestation()
+    for approval in payload["approvals"]:
+        approval["approver"] = "same-person"
+
+    policy_check = _policy_check_for_payload(tmp_path, payload)
+
+    assert policy_check["status"] == "FAIL"
+    assert "approvals.distinct_approvers" in policy_check["detail"]
+
+
+def test_production_policy_attestation_normalizes_approver_names_for_distinctness(tmp_path) -> None:
+    payload = _valid_policy_attestation()
+    payload["approvals"][0]["approver"] = "Alice"
+    payload["approvals"][1]["approver"] = "alice"
+    payload["approvals"][2]["approver"] = " ALICE "
+
+    policy_check = _policy_check_for_payload(tmp_path, payload)
+
+    assert policy_check["status"] == "FAIL"
+    assert "approvals.distinct_approvers" in policy_check["detail"]
+
+
+def test_production_policy_attestation_example_file_is_valid() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    policy_file = repo_root / "docs" / "aimanager" / "production_policy_attestation.example.json"
+
+    bundle = collect_production_readiness(
+        env={"AIMANAGER_PRODUCTION_POLICY_ATTESTATION_FILE": str(policy_file)},
+        admin_boundary_runner=lambda **kwargs: [
+            _script_result(status="PASS", detail="business/admin edge checks passed")
+        ],
+        live_ycapi_runner=lambda **kwargs: _script_result(status="PASS", detail="ycapi /models returned 3 models"),
+        wecom_router=lambda **kwargs: _script_result(status="PASS", detail="sent 1 alert to WeCom webhook"),
+        finance_runner=lambda **kwargs: CheckResult(
+            id="AC-12-13-FINANCE",
+            name="finance_export_reconciliation",
+            status="PASS",
+            detail="finance files exported",
+            evidence={"output_files": ["aimanager_usage_daily.csv"]},
+        ),
+    )
+
+    policy_check = next(check for check in bundle["checks"] if check["id"] == "AC-POLICY")
+    assert policy_check["status"] == "PASS"
+
+
 def test_finance_evidence_blocks_empty_production_inputs(tmp_path) -> None:
     spend_file = tmp_path / "spend.json"
     bill_file = tmp_path / "ycapi_bill.json"
@@ -358,6 +586,79 @@ def _script_result(*, status: str, detail: str):
             "policy_code": "aimanager_route_not_allowed",
         },
     )()
+
+
+def _policy_check_for_payload(tmp_path, payload: dict[str, object]) -> dict[str, object]:
+    policy_file = tmp_path / "production_policy_attestation.json"
+    policy_file.write_text(json.dumps(payload), encoding="utf-8")
+    bundle = _policy_bundle_for_env({"AIMANAGER_PRODUCTION_POLICY_ATTESTATION_FILE": str(policy_file)})
+    return next(check for check in bundle["checks"] if check["id"] == "AC-POLICY")
+
+
+def _policy_bundle_for_env(env: dict[str, str]) -> dict[str, object]:
+    return collect_production_readiness(
+        env=env,
+        admin_boundary_runner=lambda **kwargs: [
+            _script_result(status="PASS", detail="business/admin edge checks passed")
+        ],
+        live_ycapi_runner=lambda **kwargs: _script_result(status="PASS", detail="ycapi /models returned 3 models"),
+        wecom_router=lambda **kwargs: _script_result(status="PASS", detail="sent 1 alert to WeCom webhook"),
+        finance_runner=lambda **kwargs: CheckResult(
+            id="AC-12-13-FINANCE",
+            name="finance_export_reconciliation",
+            status="PASS",
+            detail="finance files exported",
+            evidence={"output_files": ["aimanager_usage_daily.csv"]},
+        ),
+    )
+
+
+def _valid_policy_attestation() -> dict[str, object]:
+    return {
+        "policy_id": "aimanager-production-policy",
+        "policy_version": "2026-06",
+        "approved_at": "2026-06-30T09:00:00+08:00",
+        "chargeback": {
+            "mode": "showback",
+            "confirmed": True,
+            "policy_ref": "FIN-AI-2026-06",
+            "effective_month": "2026-06",
+        },
+        "pricing_approval": {
+            "confirmed": True,
+            "pricing_version": "m1-2026-06",
+            "approval_ref": "FIN-PRICE-2026-06",
+            "approver": "finance-controller",
+        },
+        "ycapi_token_limit": {
+            "confirmed": True,
+            "limit_ref": "YCAPI-LIMIT-2026-06",
+            "monthly_budget_cny": "10000",
+            "rpm_limit": 600,
+        },
+        "employee_virtual_key_only": {
+            "confirmed": True,
+            "distribution_channel": "aimanager-admin",
+            "ycapi_token_visible_to_employee": False,
+        },
+        "data_boundaries": {
+            "confirmed": True,
+            "policy_ref": "SEC-DATA-AI-2026-06",
+            "categories": ["personal_information", "customer_data", "trade_secret"],
+        },
+        "approvals": [
+            {"role": "finance", "approver": "finance-controller", "approval_ref": "FIN-APPROVED"},
+            {"role": "security", "approver": "security-owner", "approval_ref": "SEC-APPROVED"},
+            {"role": "legal", "approver": "legal-owner", "approval_ref": "LEGAL-APPROVED"},
+        ],
+    }
+
+
+def _observability_report_with_alert() -> dict[str, object]:
+    return {
+        "metrics": {"request_count": 1},
+        "alerts": [{"code": "aimanager_failure_rate_high", "severity": "high"}],
+    }
 
 
 def test_module_exports_main() -> None:

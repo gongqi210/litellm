@@ -6,6 +6,7 @@
     "config_validation": "PYTHONPATH=\"$PWD\" uv run --no-project --with pyyaml python -m aimanager.scripts.validate_config aimanager/config.yaml",
     "test_suite": "PYTHONPATH=\"$PWD\" uv run --no-project --with pytest --with pyyaml pytest aimanager/tests -q",
     "production_readiness": "PYTHONPATH=\"$PWD\" uv run --no-project --with pyyaml python -m aimanager.scripts.production_readiness_bundle --output-json-file /tmp/aimanager-production-readiness.json",
+    "production_policy_attestation_example": "PYTHONPATH=\"$PWD\" uv run --no-project --with pytest --with pyyaml pytest aimanager/tests/test_production_readiness_bundle.py::test_production_policy_attestation_example_file_is_valid -q",
     "business_trial_acceptance": "PYTHONPATH=\"$PWD\" uv run --no-project --with pyyaml python -m aimanager.scripts.business_trial_acceptance_bundle --output-json-file /tmp/aimanager-business-trial-acceptance.json",
     "live_ycapi_preflight": "PYTHONPATH=\"$PWD\" uv run --no-project python -m aimanager.scripts.smoke_live_ycapi --expect-model gemini-2.5-flash --expect-model deepseek-chat --expect-model ycapi-image-1",
     "lightweight_entry": "PYTHONPATH=\"$PWD\" uv run --no-project python -m aimanager.scripts.submit_lightweight_entry --form-file /path/to/lightweight-form.json --dry-run --output-json-file /tmp/aimanager-lightweight-entry.json",

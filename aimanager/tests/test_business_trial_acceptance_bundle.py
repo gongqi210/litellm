@@ -22,6 +22,16 @@ def test_business_trial_acceptance_blocks_without_trial_or_monitoring_evidence()
     assert bundle["summary"]["BLOCKED"] == 2
 
 
+def test_business_trial_acceptance_carries_ac_policy_from_production_readiness() -> None:
+    bundle = collect_business_trial_acceptance(
+        env={},
+        production_readiness_collector=lambda **kwargs: _production_bundle(ac19_status="PASS"),
+    )
+
+    statuses = {check["id"]: check["status"] for check in bundle["checks"]}
+    assert statuses["AC-POLICY"] == "PASS"
+
+
 @pytest.mark.parametrize(
     ("field_path", "bad_value", "expected_detail"),
     [
@@ -215,6 +225,12 @@ def test_business_trial_acceptance_cli_writes_json_and_returns_blocked(monkeypat
         "AIMANAGER_EMPLOYEE_MONITORING_POLICY_FILE",
         "AIMANAGER_EMPLOYEE_ROSTER_FILE",
         "AIMANAGER_EMPLOYEE_ACKNOWLEDGMENT_FILE",
+        "AIMANAGER_BUSINESS_BASE_URL",
+        "AIMANAGER_PUBLIC_ADMIN_URL",
+        "AIMANAGER_OBSERVABILITY_REPORT_FILE",
+        "AIMANAGER_SPEND_FILE",
+        "AIMANAGER_YCAPI_BILL_FILE",
+        "AIMANAGER_PRODUCTION_POLICY_ATTESTATION_FILE",
         "YCAPI_API_TOKEN",
         "AIMANAGER_WECOM_WEBHOOK_URL",
     ):
@@ -234,12 +250,13 @@ def _production_bundle(*, ac19_status: str, ac19_detail: str = "live ycapi prefl
     return {
         "status": "PASS" if ac19_status == "PASS" else ac19_status,
         "generated_at": "2026-06-30T00:00:00Z",
-        "summary": {"PASS": 4 if ac19_status == "PASS" else 3, "FAIL": 1 if ac19_status == "FAIL" else 0, "BLOCKED": 1 if ac19_status == "BLOCKED" else 0},
+        "summary": {"PASS": 5 if ac19_status == "PASS" else 4, "FAIL": 1 if ac19_status == "FAIL" else 0, "BLOCKED": 1 if ac19_status == "BLOCKED" else 0},
         "checks": [
             {"id": "AC-15", "name": "production_admin_boundary", "status": "PASS", "detail": "admin boundary ok", "evidence": {}},
             {"id": "AC-19", "name": "live_ycapi_preflight", "status": ac19_status, "detail": ac19_detail, "evidence": {"observed_models": ["gemini-2.5-flash"]}},
             {"id": "AC-16-WECOM", "name": "wecom_alert_routing", "status": "PASS", "detail": "WeCom alert delivered", "evidence": {"delivered_count": 1}},
             {"id": "AC-12-13-FINANCE", "name": "finance_export_reconciliation", "status": "PASS", "detail": "finance ok", "evidence": {"aimanager_billable_row_count": 1, "ycapi_billable_row_count": 1}},
+            {"id": "AC-POLICY", "name": "production_policy_attestation", "status": "PASS", "detail": "policy ok", "evidence": {"approver_count": 3}},
         ],
     }
 
