@@ -126,6 +126,44 @@ PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.export_finance
 
 `--spend-file` and `--ycapi-bill-file` accept JSON arrays or CSV files. Real production ycapi bill files or API output still need to be supplied during monthly close; the local importer and export schema are covered by tests.
 
+## Monthly Close Package
+
+`aimanager.monthly_close` turns the M1 finance exports plus a finance-owned adjustment ledger into a local monthly close package for AC-25. It supports:
+
+- `supplemental`: approved late charges or finance corrections that add spend.
+- `reversal`: negative entries that reverse duplicated or invalid monthly rows.
+- `attribution_adjustment`: movement of unassigned or mis-owned spend to the approved department/project/cost center/key.
+- `difference_resolution`: records that resolve `aimanager_reconciliation.csv` rows marked `needs_review`.
+
+The package writes JSON, optional adjusted monthly CSV, and optional Markdown. Missing input files return `BLOCKED`; invalid ledgers return `FAIL`; residual nonzero `unassigned` spend or unresolved `needs_review` reconciliation rows keep the close package `BLOCKED`.
+
+Local close command:
+
+```bash
+PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.generate_monthly_close_package \
+  --finance-monthly-file /tmp/aimanager-finance-export/aimanager_finance_monthly.csv \
+  --reconciliation-file /tmp/aimanager-finance-export/aimanager_reconciliation.csv \
+  --adjustment-file /path/to/aimanager-monthly-adjustments.csv \
+  --month 2026-06 \
+  --output-json-file /tmp/aimanager-monthly-close.json \
+  --output-adjusted-csv-file /tmp/aimanager-monthly-close-adjusted.csv \
+  --output-markdown-file /tmp/aimanager-monthly-close.md
+```
+
+When `aimanager_finance_monthly.csv` has no explicit `entry_id`, reversal and attribution rows target a stable row key composed from exported columns:
+
+```text
+month|department_id|project_id|cost_center_id|user_id|key_alias|model|endpoint|currency|pricing_version
+```
+
+For example, a row with month `2026-06`, `department_id=unassigned`, `project_id=unassigned`, `cost_center_id=unassigned`, `user_id=u_market_1`, `key_alias=shadow-key`, model `deepseek-chat`, endpoint `/v1/chat/completions`, currency `CNY`, and pricing version `m1-2026-06` is referenced as:
+
+```text
+2026-06|unassigned|unassigned|unassigned|u_market_1|shadow-key|deepseek-chat|/v1/chat/completions|CNY|m1-2026-06
+```
+
+This is local CLI evidence for AC-25. It is not production ERP posting, general-ledger writeback, or a substitute for finance approval policy; production month close still needs the real AiManager spend export, real ycapi monthly bill evidence, and finance-approved adjustment ledger.
+
 ## Audit Events
 
 `aimanager.audit.build_audit_event` standardizes M1 risk events:
@@ -361,6 +399,7 @@ cd /Volumes/AI-projects/01-yca-AiManager
 uv run --no-project --with pyyaml python -m aimanager.scripts.validate_config aimanager/config.yaml
 PYTHONPATH="$PWD" uv run --no-project --with pytest --with pyyaml pytest aimanager/tests -q
 PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.generate_business_overview --finance-monthly-file /tmp/aimanager-finance-export/aimanager_finance_monthly.csv --budget-file /path/to/aimanager-budgets.csv --observability-report-file /tmp/aimanager-observability.json --month 2026-06 --output-json-file /tmp/aimanager-business-overview.json --output-markdown-file /tmp/aimanager-business-overview.md
+PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.generate_monthly_close_package --finance-monthly-file /tmp/aimanager-finance-export/aimanager_finance_monthly.csv --reconciliation-file /tmp/aimanager-finance-export/aimanager_reconciliation.csv --adjustment-file /path/to/aimanager-monthly-adjustments.csv --month 2026-06 --output-json-file /tmp/aimanager-monthly-close.json --output-adjusted-csv-file /tmp/aimanager-monthly-close-adjusted.csv --output-markdown-file /tmp/aimanager-monthly-close.md
 docker compose -f aimanager/docker-compose.yml config
 docker compose -f aimanager/docker-compose.yml --profile admin config
 ```
@@ -603,6 +642,7 @@ Latest local runtime smoke evidence:
 - Local work-context validation tests prove `validate_work_context` can gate an external marketing request before generation with non-empty string identifiers, scenario, channel, project/customer, sensitivity, required boolean approval, non-empty brief/reviewer/approval-policy references, and brand-safety checklist evidence; malformed JSON and invalid work contexts return `FAIL`, missing context files return `BLOCKED`, and closure mode requires draft, human-review, final, external-approval, archive, and retrospective references before the workflow can be treated as traceable. This is the machine-readable contract for a future non-SDK WeCom/lightweight entry, not the final business portal.
 - Local lightweight-entry tests prove `submit_lightweight_entry` can turn a flat WeCom/page-style form into a governed `/v1/chat/completions` body with work-context metadata plus `cost_center_id`, `currency`, and `pricing_version`; it preserves identifier casing for finance attribution, rejects token-like fields or values without echoing them, blocks missing employee virtual keys, refuses employee keys that equal `YCAPI_API_TOKEN`, and can submit through an injected raw HTTP transport without using an SDK. This is backend/CLI evidence for AC-23, not final non-technical UI evidence.
 - Local business-overview tests prove `generate_business_overview` can combine monthly finance CSV, budget rows, and observability JSON into a CEO-readable JSON/Markdown report with monthly spend, budget utilization, anomaly events, TOP departments, TOP projects, and TOP keys; missing budget input returns `BLOCKED` and mixed currencies return `FAIL`. This is local report evidence for AC-24, not a production executive portal.
+- Local monthly-close tests prove `generate_monthly_close_package` can combine `aimanager_finance_monthly.csv`, `aimanager_reconciliation.csv`, and a finance adjustment ledger into JSON/CSV/Markdown close evidence; the contract covers supplemental entries, reversals, attribution adjustments, reconciliation difference resolutions, residual `unassigned` blocking, duplicate adjustment failure, unsupported resolution failure, stable composite row keys when `entry_id` is absent, and no serialization of token-like extra fields. This is local close-package evidence for AC-25, not production ERP posting or general-ledger writeback.
 - Local SDK compatibility tests prove `smoke_sdk_compat` uses an employee LiteLLM virtual key instead of `YCAPI_API_TOKEN`, rejects `YCAPI_API_TOKEN` as the employee-key env or value, checks `/v1/models`, chat models `gemini-2.5-flash` and `deepseek-chat`, image `ycapi-image-1` with `response_format=b64_json`, a vision chat request with a base64 `data:` URL, required work metadata, OpenAI-compatible response shape, and sanitized failure details. `smoke_runtime_sdk_compat` now has local runtime PASS evidence against running business/admin surfaces with mock ycapi and fails if key cleanup fails.
 - Local error-contract tests prove allowed downstream LiteLLM/ycapi 429 JSON errors preserve the upstream `error` object, inject top-level `request_id` aligned with `x-litellm-call-id`, keep 401/403/404 fallback types stable, pass successful streaming chunks through unchanged, and convert non-JSON downstream 5xx errors to OpenAI-compatible JSON without leaking Bearer, `sk-*`, ycapi token text, or DSN passwords.
 
