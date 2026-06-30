@@ -1,7 +1,7 @@
 # LiteLLM Makefile
 # Simple Makefile for running tests and basic development tasks
 
-.PHONY: help policy-check acceptance-gate test test-unit test-unit-llms test-unit-proxy-guardrails test-unit-proxy-core test-unit-proxy-misc \
+.PHONY: help policy-check acceptance-gate evidence-handoff test test-unit test-unit-llms test-unit-proxy-guardrails test-unit-proxy-core test-unit-proxy-misc \
 	test-unit-integrations test-unit-core-utils test-unit-other test-unit-root \
 	test-proxy-unit-a test-proxy-unit-b test-integration test-unit-helm \
 	info lint lint-dev format \
@@ -15,6 +15,7 @@ help:
 	@echo "Available commands:"
 	@echo "  make policy-check       - Run AiManager project policy gate"
 	@echo "  make acceptance-gate    - Run AiManager one-command acceptance gate into /tmp or AIMANAGER_ACCEPTANCE_GATE_OUTPUT_DIR"
+	@echo "  make evidence-handoff   - Generate owner-specific evidence requests from the latest acceptance gate"
 	@echo "  make install-dev        - Install development dependencies"
 	@echo "  make install-proxy-dev  - Install proxy development dependencies"
 	@echo "  make install-dev-ci     - Install dev dependencies (CI-compatible, pins OpenAI)"
@@ -58,6 +59,9 @@ policy-check:
 
 acceptance-gate:
 	PYTHONPATH="$$(pwd)" uv run --no-project --with pyyaml python -m aimanager.scripts.run_acceptance_gate --output-dir "$${AIMANAGER_ACCEPTANCE_GATE_OUTPUT_DIR:-/tmp/aimanager-acceptance-gate}"
+
+evidence-handoff:
+	PYTHONPATH="$$(pwd)" uv run --no-project python -m aimanager.scripts.generate_evidence_handoff --launch-gap-plan-file "$${AIMANAGER_ACCEPTANCE_GATE_OUTPUT_DIR:-/tmp/aimanager-acceptance-gate}/launch-gap-plan.json" --output-dir "$${AIMANAGER_EVIDENCE_HANDOFF_OUTPUT_DIR:-/tmp/aimanager-evidence-handoff}"
 
 # Show info
 info:

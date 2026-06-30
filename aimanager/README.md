@@ -416,7 +416,7 @@ uv run --no-project --with pyyaml python -m aimanager.scripts.validate_config ai
 PYTHONPATH="$PWD" uv run --no-project --with pytest --with pyyaml pytest aimanager/tests -q
 PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.generate_business_overview --finance-monthly-file /tmp/aimanager-finance-export/aimanager_finance_monthly.csv --budget-file /path/to/aimanager-budgets.csv --observability-report-file /tmp/aimanager-observability.json --month 2026-06 --output-json-file /tmp/aimanager-business-overview.json --output-markdown-file /tmp/aimanager-business-overview.md
 PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.generate_monthly_close_package --finance-monthly-file /tmp/aimanager-finance-export/aimanager_finance_monthly.csv --reconciliation-file /tmp/aimanager-finance-export/aimanager_reconciliation.csv --adjustment-file /path/to/aimanager-monthly-adjustments.csv --month 2026-06 --output-json-file /tmp/aimanager-monthly-close.json --output-adjusted-csv-file /tmp/aimanager-monthly-close-adjusted.csv --output-markdown-file /tmp/aimanager-monthly-close.md
-PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.validate_employee_monitoring_policy --policy-file /path/to/aimanager-employee-monitoring-policy.json --employee-roster-file /path/to/employee-roster.csv --acknowledgment-file /path/to/employee-monitoring-acknowledgments.csv --output-json-file /tmp/aimanager-employee-monitoring.json --output-markdown-file /tmp/aimanager-employee-monitoring.md
+PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.validate_employee_monitoring_policy --policy-file docs/aimanager/aimanager-employee-monitoring-policy.json --employee-roster-file /path/to/employee-roster.csv --acknowledgment-file /path/to/employee-monitoring-acknowledgments.csv --output-json-file /tmp/aimanager-employee-monitoring.json --output-markdown-file /tmp/aimanager-employee-monitoring.md
 PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.generate_launch_gap_plan --production-readiness-file /tmp/aimanager-production-readiness.json --business-trial-file /tmp/aimanager-business-trial-acceptance.json --output-json-file /tmp/aimanager-launch-gap-plan.json --output-markdown-file /tmp/aimanager-launch-gap-plan.md
 docker compose -f aimanager/docker-compose.yml config
 docker compose -f aimanager/docker-compose.yml --profile admin config
@@ -614,17 +614,16 @@ PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.capture_lightw
 This command converts a successful `submit_lightweight_entry` result into the AC-23 evidence file consumed by `business_trial_acceptance_bundle`. It is intentionally a capture step, not an evidence generator: `request_id`, nonzero `spend`, and timestamps must come from the live request/spend log and the human observer for that trial. The output keeps only safe attestation fields and allow-listed request metadata, including either a project or customer identifier; it does not serialize prompt text, assistant text, headers, Authorization, cookies, employee keys, or ycapi tokens. A non-PASS submission, secret-bearing field, secret-like output value, secret-like assistant echo, or raw-key-looking key alias returns `BLOCKED` or `FAIL` and does not write an evidence file.
 
 M2 employee monitoring notice and boundary validation:
-
 ```bash
 PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.validate_employee_monitoring_policy \
-  --policy-file /path/to/aimanager-employee-monitoring-policy.json \
+  --policy-file docs/aimanager/aimanager-employee-monitoring-policy.json \
   --employee-roster-file /path/to/employee-roster.csv \
   --acknowledgment-file /path/to/employee-monitoring-acknowledgments.csv \
   --output-json-file /tmp/aimanager-employee-monitoring.json \
   --output-markdown-file /tmp/aimanager-employee-monitoring.md
 ```
 
-The policy validator is the AC-26 machine-readable contract for non-covert employee monitoring. It requires a published policy version, notice channels, metadata-only monitoring fields, explicit prohibitions on prompt/response/raw IP/customer-content inspection, bounded retention, enabled off-hours and suspected key-sharing rules, restricted reviewer roles, no direct-manager review access, HR/legal guardrails for discipline, and an employee appeal channel. It also requires real active-employee roster and latest-version acknowledgment exports. Missing evidence files return `BLOCKED`; contradictory policy or missing active employee acknowledgment returns `FAIL`; `PASS` means the supplied notice, acknowledgment, and permission-boundary evidence is internally consistent. Local tests prove the contract, not production HR/legal publication.
+The policy validator is the AC-26 machine-readable contract for non-covert employee monitoring. The committed `docs/aimanager/aimanager-employee-monitoring-policy.json` is the canonical policy register for the local contract: metadata-only monitoring, explicit prohibitions on prompt/response/raw IP/customer-content inspection, bounded retention, enabled off-hours and suspected key-sharing rules, restricted reviewer roles, no direct-manager review access, HR/legal guardrails for discipline, and an employee appeal channel. It still requires real active-employee roster and latest-version acknowledgment exports before production AC-26 can pass. Missing evidence files return `BLOCKED`; contradictory policy or missing active employee acknowledgment returns `FAIL`; `PASS` means the supplied notice, acknowledgment, and permission-boundary evidence is internally consistent. Local tests prove the contract, not production HR/legal publication or all-employee acknowledgment.
 
 One-command acceptance gate:
 
@@ -679,6 +678,17 @@ PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.generate_launc
 ```
 
 This command is a read-only planning step for the remaining launch evidence. It consumes existing `production_readiness_bundle` and `business_trial_acceptance_bundle` JSON files, deduplicates checks that appear in both gates, and converts every `FAIL` or `BLOCKED` item into an owner-grouped action with required env, required files, rerun command, and next action. It does not call ycapi, WeCom, admin URLs, or any live service, and it redacts secret-like strings before writing JSON or Markdown. Exit code `0` means no supplied gap remains, `1` means at least one `FAIL`, and `2` means no failed checks but at least one missing input or blocked evidence item.
+
+Evidence handoff:
+```bash
+make evidence-handoff
+# equivalent explicit form:
+PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.generate_evidence_handoff \
+  --launch-gap-plan-file /tmp/aimanager-acceptance-gate/launch-gap-plan.json \
+  --output-dir /tmp/aimanager-evidence-handoff
+```
+
+This command turns the latest launch gap plan into owner-specific evidence request files such as `finance.md`, `ops.md`, and `HR_legal_security.md`, plus an `evidence-handoff.json` manifest. It is intentionally an evidence request package, not a `PASS` artifact: unresolved `FAIL` and `BLOCKED` states remain unchanged, and real production evidence must still be generated by the referenced commands and then rerun through `make acceptance-gate`. The handoff files repeat the required env, required files, rerun command, and next action for each owner while warning recipients not to paste secrets, raw prompts, raw responses, cookies, employee keys, ycapi tokens, or customer content. Output is redacted for Bearer, `sk-*`, DSN password, WeCom webhook, and known secret-like patterns.
 
 Acceptance coverage matrix:
 

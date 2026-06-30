@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import csv
 import json
+from pathlib import Path
 
 from aimanager.employee_monitoring import validate_employee_monitoring_controls
 from aimanager.scripts.validate_employee_monitoring_policy import main
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_employee_monitoring_policy_passes_with_notice_rules_and_boundaries() -> None:
@@ -33,6 +36,22 @@ def test_employee_monitoring_policy_passes_with_notice_rules_and_boundaries() ->
     assert "direct_manager" not in result["controls"]["permission_boundary"]["allowed_review_roles"]
     assert "# AiManager 员工监控制度验收 - 2026-06" in result["markdown"]
     assert "PASS" in result["markdown"]
+
+
+def test_committed_employee_monitoring_policy_register_matches_validator_contract() -> None:
+    policy_file = PROJECT_ROOT / "docs/aimanager/aimanager-employee-monitoring-policy.json"
+    policy = json.loads(policy_file.read_text(encoding="utf-8"))
+
+    result = validate_employee_monitoring_controls(
+        policy=policy,
+        employee_roster=_employee_roster(),
+        acknowledgments=_acknowledgments(),
+    )
+
+    assert result["status"] == "PASS"
+    assert result["policy_id"] == "aimanager-employee-monitoring-v1"
+    assert result["controls"]["permission_boundary"]["raw_prompt_access"] == "prohibited"
+    assert result["controls"]["permission_boundary"]["customer_content_access"] == "prohibited"
 
 
 def test_employee_monitoring_rejects_raw_prompt_or_response_monitoring() -> None:

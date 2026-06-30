@@ -49,11 +49,11 @@ Before AC-26 can be treated as production-ready, the company must provide real e
 
 ```bash
 PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.validate_employee_monitoring_policy \
-  --policy-file /path/to/aimanager-employee-monitoring-policy.json \
+  --policy-file docs/aimanager/aimanager-employee-monitoring-policy.json \
   --employee-roster-file /path/to/employee-roster.csv \
   --acknowledgment-file /path/to/employee-monitoring-acknowledgments.csv \
   --output-json-file /tmp/aimanager-employee-monitoring.json \
   --output-markdown-file /tmp/aimanager-employee-monitoring.md
 ```
 
-The resulting JSON must be retained with the business-trial readiness evidence. Local unit tests prove the contract and privacy boundaries; they are not a substitute for real employee notice and acknowledgment.
+The committed `docs/aimanager/aimanager-employee-monitoring-policy.json` is the canonical machine-readable policy register for the local contract. The roster and acknowledgment files must still come from real HR/employee-notice exports. The resulting JSON must be retained with the business-trial readiness evidence. Local unit tests prove the contract and privacy boundaries; they are not a substitute for real HR/legal publication, employee notice, or acknowledgment.
