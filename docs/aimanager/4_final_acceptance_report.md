@@ -37,13 +37,13 @@ docker compose -f aimanager/docker-compose.yml config
 docker compose -f aimanager/docker-compose.yml --profile admin config
 ```
 
-Production readiness gate:
+Business trial acceptance gate:
 
 ```bash
-PYTHONPATH="$PWD" uv run --no-project --with pyyaml python -m aimanager.scripts.production_readiness_bundle --output-json-file /tmp/aimanager-production-readiness.json
+PYTHONPATH="$PWD" uv run --no-project --with pyyaml python -m aimanager.scripts.business_trial_acceptance_bundle --output-json-file /tmp/aimanager-business-trial-acceptance.json
 ```
 
-That bundle must return `PASS` for all checks before a business trial can be called complete. Missing production inputs must stay `BLOCKED`, not be counted as success.
+That bundle wraps production readiness plus AC-23 and AC-26. It must return `PASS` for all checks before a business trial can be called complete. Missing production inputs, timed human trial evidence, or HR/legal acknowledgment evidence must stay `BLOCKED`, not be counted as success. AC-23 cannot pass from a hand-authored JSON alone; it also requires same-run AC-19 live ycapi `PASS`.
 
 ## Stage Scores
 
@@ -63,6 +63,7 @@ That bundle must return `PASS` for all checks before a business trial can be cal
 - AC-12/13: provide real AiManager spend export and ycapi monthly bill evidence with nonzero billable amounts.
 - AC-23: run a timed 5-minute nontechnical trial with live ycapi, controlled identity injection, and a governed employee virtual key.
 - AC-26: provide HR/legal-approved policy publication, roster, and latest-version acknowledgment export.
+- Final gate: rerun `business_trial_acceptance_bundle` and require every leaf check to be `PASS`.
 
 ## Final Conclusion
 

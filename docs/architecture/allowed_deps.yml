@@ -5,6 +5,7 @@ doc_line_limit: 800
 allowed_top_level_imports:
   - aimanager
   - litellm
+  - pydantic
   - playwright
   - pytest
   - uvicorn

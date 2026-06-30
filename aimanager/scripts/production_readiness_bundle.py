@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
@@ -18,6 +19,10 @@ from aimanager.scripts.smoke_live_ycapi import DEFAULT_YCAPI_BASE_URL, run_live_
 ReadinessStatus = Literal["PASS", "FAIL", "BLOCKED"]
 DEFAULT_EXPECTED_MODELS = ("gemini-2.5-flash", "deepseek-chat", "ycapi-image-1")
 DEFAULT_FINANCE_OUTPUT_DIR = "/tmp/aimanager-production-readiness-finance"
+SECRET_ENV_NAME_MARKERS = ("TOKEN", "KEY", "SECRET", "WEBHOOK", "PASSWORD")
+_WECOM_WEBHOOK_PATTERN = re.compile(r"https://qyapi\.weixin\.qq\.com/cgi-bin/webhook/send\?key=[A-Za-z0-9._~+/=-]+")
+_BEARER_PATTERN = re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]+")
+_SECRET_KEY_PATTERN = re.compile(r"\bsk-[A-Za-z0-9][A-Za-z0-9._-]{3,}\b")
 
 
 @dataclass(frozen=True)
@@ -373,13 +378,18 @@ def _sanitize_text(value: str, redactions: Mapping[str, str]) -> str:
     for secret, replacement in redactions.items():
         if secret:
             sanitized = sanitized.replace(secret, replacement)
+    sanitized = _WECOM_WEBHOOK_PATTERN.sub("[redacted:AIMANAGER_WECOM_WEBHOOK_URL]", sanitized)
+    sanitized = _BEARER_PATTERN.sub("[redacted:bearer-token]", sanitized)
+    sanitized = _SECRET_KEY_PATTERN.sub("[redacted:secret-like]", sanitized)
     return sanitized
 
 
 def _redactions(env: Mapping[str, str]) -> dict[str, str]:
     redactions: dict[str, str] = {}
-    for name in ("YCAPI_API_TOKEN", "AIMANAGER_WECOM_WEBHOOK_URL"):
-        value = _env_value(env, name)
+    for name, raw_value in sorted(env.items()):
+        if not any(marker in name.upper() for marker in SECRET_ENV_NAME_MARKERS):
+            continue
+        value = raw_value.strip() if isinstance(raw_value, str) else ""
         if value:
             redactions[value] = f"[redacted:{name}]"
     return redactions
