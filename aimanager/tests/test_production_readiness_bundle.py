@@ -9,6 +9,7 @@ from aimanager.scripts.production_readiness_bundle import (
     collect_production_readiness,
     main,
 )
+from aimanager.scripts.smoke_admin_boundary import AdminBoundaryResult
 
 
 def test_production_readiness_blocks_without_required_inputs() -> None:
@@ -49,6 +50,68 @@ def test_production_readiness_overall_status_prioritizes_fail_over_blocked() -> 
     statuses = {check["id"]: check["status"] for check in bundle["checks"]}
     assert statuses["AC-19"] == "FAIL"
     assert statuses["AC-16-WECOM"] == "BLOCKED"
+
+
+def test_admin_boundary_evidence_keeps_each_probe_result() -> None:
+    bundle = collect_production_readiness(
+        env={},
+        admin_boundary_runner=lambda **kwargs: [
+            AdminBoundaryResult(
+                name="business_admin_ui",
+                surface="business",
+                method="GET",
+                path="/ui",
+                status="PASS",
+                detail="blocked by AiManager business-surface policy",
+                status_code=403,
+                policy_code="aimanager_route_not_allowed",
+            ),
+            AdminBoundaryResult(
+                name="public_admin_ui",
+                surface="public_admin",
+                method="GET",
+                path="/ui",
+                status="PASS",
+                detail="allowed SSO redirect to https://sso.example.com/login",
+                status_code=302,
+                policy_code=None,
+            ),
+        ],
+        live_ycapi_runner=lambda **kwargs: _script_result(status="PASS", detail="ycapi /models returned 3 models"),
+        wecom_router=lambda **kwargs: _script_result(status="PASS", detail="sent 1 alert to WeCom webhook"),
+        finance_runner=lambda **kwargs: CheckResult(
+            id="AC-12-13-FINANCE",
+            name="finance_export_reconciliation",
+            status="PASS",
+            detail="finance files exported",
+            evidence={"output_files": ["aimanager_usage_daily.csv"]},
+        ),
+    )
+
+    ac15 = next(check for check in bundle["checks"] if check["id"] == "AC-15")
+    assert ac15["status"] == "PASS"
+    assert ac15["evidence"]["results"] == [
+        {
+            "name": "business_admin_ui",
+            "surface": "business",
+            "method": "GET",
+            "path": "/ui",
+            "status": "PASS",
+            "status_code": 403,
+            "policy_code": "aimanager_route_not_allowed",
+            "detail": "blocked by AiManager business-surface policy",
+        },
+        {
+            "name": "public_admin_ui",
+            "surface": "public_admin",
+            "method": "GET",
+            "path": "/ui",
+            "status": "PASS",
+            "status_code": 302,
+            "policy_code": None,
+            "detail": "allowed SSO redirect to https://sso.example.com/login",
+        },
+    ]
 
 
 def test_production_readiness_redacts_token_and_webhook_values(tmp_path) -> None:

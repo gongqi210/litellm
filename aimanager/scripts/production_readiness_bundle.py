@@ -113,8 +113,22 @@ def _admin_boundary_check(env: Mapping[str, str], *, admin_boundary_runner: Admi
             "result_count": len(results),
             **counts,
             "surfaces": sorted({str(getattr(result, "surface", "")) for result in results if getattr(result, "surface", "")}),
+            "results": [_admin_boundary_result_evidence(result) for result in results],
         },
     )
+
+
+def _admin_boundary_result_evidence(result: object) -> dict[str, object]:
+    return {
+        "name": getattr(result, "name", ""),
+        "surface": getattr(result, "surface", ""),
+        "method": getattr(result, "method", ""),
+        "path": getattr(result, "path", ""),
+        "status": _coerce_status(getattr(result, "status", "FAIL")),
+        "status_code": getattr(result, "status_code", None),
+        "policy_code": getattr(result, "policy_code", None),
+        "detail": str(getattr(result, "detail", "")),
+    }
 
 
 def _live_ycapi_check(env: Mapping[str, str], *, live_ycapi_runner: LiveYcapiRunner) -> CheckResult:

@@ -15,6 +15,7 @@ _AUDIT_MARKER = "aimanager_audit_event="
 _AUDIT_EVENT_TYPES = (
     "passthrough_blocked",
     "policy_blocked",
+    "enforced_params_blocked",
     "budget_blocked",
     "key_frozen",
     "key_revoked",
@@ -181,6 +182,14 @@ def _build_alerts(metrics: dict[str, Any], failure_rate_alert_threshold: Decimal
                 "code": "aimanager_passthrough_blocked_seen",
                 "severity": "warning",
                 "count": metrics["passthrough_blocked_count"],
+            }
+        )
+    if metrics["enforced_params_blocked_count"]:
+        alerts.append(
+            {
+                "code": "aimanager_enforced_params_blocked_seen",
+                "severity": "warning",
+                "count": metrics["enforced_params_blocked_count"],
             }
         )
     if metrics["missing_request_id_count"]:

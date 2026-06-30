@@ -79,6 +79,27 @@ def test_policy_blocked_event_defaults_to_warning_severity() -> None:
     assert event["reason"] == "aimanager_config_immutable"
 
 
+def test_enforced_params_blocked_event_defaults_to_warning_severity() -> None:
+    event = build_audit_event(
+        "enforced_params_blocked",
+        event_id="evt_enforced_params_1",
+        occurred_at="2026-06-30T12:45:00+08:00",
+        actor="aimanager-enforced-params-guard",
+        subject_key_alias="market-shared-key",
+        team_id="team_market",
+        department_id="dept_market",
+        project_id="proj_launch",
+        cost_center_id="cc_growth",
+        reason="aimanager_enforced_params_missing",
+        request_id="req_shared_1",
+        metadata={"missing_params": ["metadata.end_user_principal"]},
+    )
+
+    assert event["event_type"] == "enforced_params_blocked"
+    assert event["severity"] == "warning"
+    assert event["metadata"]["missing_params"] == ["metadata.end_user_principal"]
+
+
 def test_key_lifecycle_event_requires_reason() -> None:
     with pytest.raises(AuditEventError, match="reason"):
         build_audit_event(

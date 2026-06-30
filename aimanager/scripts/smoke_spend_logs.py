@@ -471,7 +471,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--shared-key",
         action="store_true",
-        help="Generate a shared key with enforced_params. Requires LiteLLM Enterprise at runtime.",
+        help="Generate a shared key with enforced_params and exercise AiManager OSS runtime enforcement.",
     )
     args = parser.parse_args(argv)
 

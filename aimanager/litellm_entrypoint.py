@@ -68,6 +68,29 @@ def register_aimanager_image_model_costs(
     return model_cost
 
 
+def register_aimanager_enforced_params_guard(*, litellm_module: Any | None = None) -> object:
+    if litellm_module is None:
+        import litellm as litellm_module
+
+    from aimanager.enforced_params_guard import AiManagerEnforcedParamsGuard
+
+    callbacks = getattr(litellm_module, "callbacks", None)
+    if isinstance(callbacks, list):
+        for callback in callbacks:
+            if isinstance(callback, AiManagerEnforcedParamsGuard):
+                return callback
+
+    guard = AiManagerEnforcedParamsGuard()
+    manager = getattr(litellm_module, "logging_callback_manager", None)
+    if manager is not None and hasattr(manager, "add_litellm_callback"):
+        manager.add_litellm_callback(guard)
+    elif isinstance(callbacks, list):
+        callbacks.append(guard)
+    else:
+        raise RuntimeEnvironmentError("LiteLLM callback registry is not available for AiManager startup")
+    return guard
+
+
 def main(argv: Sequence[str] | None = None) -> Any:
     cli_args = list(sys.argv[1:] if argv is None else argv)
     configure_litellm_startup_environment(os.environ, cli_args)

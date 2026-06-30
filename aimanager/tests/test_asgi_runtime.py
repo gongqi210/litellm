@@ -8,7 +8,7 @@ from aimanager import litellm_entrypoint
 from aimanager.asgi import _LazyLiteLLMProxyApp
 
 
-def test_lazy_proxy_registers_aimanager_image_costs_after_litellm_proxy_import(monkeypatch) -> None:
+def test_lazy_proxy_registers_aimanager_hooks_after_litellm_proxy_import(monkeypatch) -> None:
     async def downstream(scope, receive, send) -> None:
         await send({"type": "http.response.start", "status": 204, "headers": []})
         await send({"type": "http.response.body", "body": b""})
@@ -25,7 +25,12 @@ def test_lazy_proxy_registers_aimanager_image_costs_after_litellm_proxy_import(m
     monkeypatch.setattr(
         litellm_entrypoint,
         "register_aimanager_image_model_costs",
-        lambda: registrations.append("registered"),
+        lambda: registrations.append("image-costs"),
+    )
+    monkeypatch.setattr(
+        litellm_entrypoint,
+        "register_aimanager_enforced_params_guard",
+        lambda: registrations.append("enforced-params-guard"),
     )
 
     app = _LazyLiteLLMProxyApp()
@@ -33,7 +38,7 @@ def test_lazy_proxy_registers_aimanager_image_costs_after_litellm_proxy_import(m
     asyncio.run(_call_asgi(app))
 
     assert messages[0]["status"] == 204
-    assert registrations == ["registered"]
+    assert registrations == ["image-costs", "enforced-params-guard"]
 
 
 async def _call_asgi(app):

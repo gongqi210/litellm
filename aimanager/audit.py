@@ -11,6 +11,7 @@ UNASSIGNED = "unassigned"
 EVENT_SEVERITY = {
     "passthrough_blocked": "warning",
     "policy_blocked": "warning",
+    "enforced_params_blocked": "warning",
     "budget_blocked": "high",
     "key_frozen": "high",
     "key_revoked": "critical",

@@ -8,6 +8,7 @@ from aimanager.observability import build_observability_report, parse_audit_even
 def test_observability_report_counts_request_failures_and_audit_events() -> None:
     audit_lines = [
         'INFO aimanager_audit_event={"event_type":"passthrough_blocked","request_id":"req_passthrough_1","reason":"aimanager_passthrough_blocked","severity":"warning"}',
+        'INFO aimanager_audit_event={"event_type":"enforced_params_blocked","request_id":"req_shared_1","reason":"aimanager_enforced_params_missing","severity":"warning"}',
         'INFO aimanager_audit_event={"event_type":"budget_blocked","request_id":"req_budget_1","reason":"budget_exceeded","severity":"high"}',
         'INFO aimanager_audit_event={"event_type":"key_revoked","request_id":"req_revoke_1","reason":"offboarding","severity":"critical"}',
     ]
@@ -60,8 +61,10 @@ def test_observability_report_counts_request_failures_and_audit_events() -> None
     assert metrics["total_tokens"] == 150
     assert metrics["spend"] == Decimal("0.002")
     assert metrics["audit_events"]["passthrough_blocked"] == 1
+    assert metrics["audit_events"]["enforced_params_blocked"] == 1
     assert metrics["audit_events"]["budget_blocked"] == 1
     assert metrics["audit_events"]["key_revoked"] == 1
+    assert metrics["enforced_params_blocked_count"] == 1
     assert metrics["budget_blocked_count"] == 1
     assert metrics["passthrough_blocked_count"] == 1
     assert metrics["observed_request_ids"] == [
@@ -70,6 +73,7 @@ def test_observability_report_counts_request_failures_and_audit_events() -> None
         "req_passthrough_1",
         "req_rate_limited",
         "req_revoke_1",
+        "req_shared_1",
         "req_ycapi_5xx",
     ]
 

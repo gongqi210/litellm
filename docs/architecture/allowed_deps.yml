@@ -4,6 +4,7 @@ source_line_limit: 1600
 doc_line_limit: 800
 allowed_top_level_imports:
   - aimanager
+  - fastapi
   - litellm
   - pydantic
   - playwright

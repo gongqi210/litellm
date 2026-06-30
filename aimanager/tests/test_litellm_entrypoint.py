@@ -11,6 +11,7 @@ from aimanager.litellm_entrypoint import (
     RuntimeEnvironmentError,
     configure_litellm_startup_environment,
     install_aimanager_app_override,
+    register_aimanager_enforced_params_guard,
     register_aimanager_image_model_costs,
     validate_required_runtime_env,
 )
@@ -115,3 +116,24 @@ model_list:
         }
     }
     assert registered == [returned]
+
+
+def test_register_aimanager_enforced_params_guard_registers_proxy_callback_once() -> None:
+    registered: list[object] = []
+
+    class FakeCallbackManager:
+        def add_litellm_callback(self, callback: object) -> None:
+            registered.append(callback)
+            fake_litellm.callbacks.append(callback)
+
+    fake_litellm = SimpleNamespace(
+        callbacks=[],
+        logging_callback_manager=FakeCallbackManager(),
+    )
+
+    first = register_aimanager_enforced_params_guard(litellm_module=fake_litellm)
+    second = register_aimanager_enforced_params_guard(litellm_module=fake_litellm)
+
+    assert second is first
+    assert registered == [first]
+    assert fake_litellm.callbacks == [first]
