@@ -274,6 +274,8 @@ class TrialEvidence(BaseModel):
             raise ValueError("entry_channel must be a supported non-SDK entry")
         if not self.live_ycapi:
             raise ValueError("live_ycapi must be true")
+        if self.attestation.captured_at < self.timing.completed_at:
+            raise ValueError("attestation.captured_at must be at or after timing.completed_at")
         return self
 
 
@@ -295,7 +297,7 @@ def collect_business_trial_acceptance(
     ac19_status = _check_status(production_checks, "AC-19")
     checks = [
         *production_checks,
-        _lightweight_trial_check(current_env, ac19_status=ac19_status),
+        _lightweight_trial_check(current_env, ac19_status=ac19_status, bundle_generated_at=bundle_generated_at),
         _employee_monitoring_check(current_env, employee_monitoring_collector=employee_monitoring_collector),
     ]
     sanitized_checks = [_sanitize_check(check, redactions) for check in checks]
@@ -358,7 +360,9 @@ def _production_checks(
     return checks
 
 
-def _lightweight_trial_check(env: Mapping[str, str], *, ac19_status: ReadinessStatus) -> CheckResult:
+def _lightweight_trial_check(
+    env: Mapping[str, str], *, ac19_status: ReadinessStatus, bundle_generated_at: str
+) -> CheckResult:
     trial_file = _env_value(env, "AIMANAGER_LIGHTWEIGHT_TRIAL_EVIDENCE_FILE")
     if not trial_file:
         return CheckResult(
@@ -406,6 +410,24 @@ def _lightweight_trial_check(env: Mapping[str, str], *, ac19_status: ReadinessSt
             name="nontechnical_lightweight_trial",
             status="FAIL",
             detail="invalid AC-23 trial evidence: " + _compact_validation_errors(exc),
+        )
+
+    try:
+        generated_at = _parse_iso_datetime(bundle_generated_at)
+    except ValueError as exc:
+        return CheckResult(
+            id="AC-23",
+            name="nontechnical_lightweight_trial",
+            status="FAIL",
+            detail=f"business trial generated_at is invalid: {exc}",
+        )
+    if trial.attestation.captured_at > generated_at:
+        return CheckResult(
+            id="AC-23",
+            name="nontechnical_lightweight_trial",
+            status="FAIL",
+            detail="trial attestation.captured_at must not be after business trial generated_at",
+            evidence=_trial_safe_evidence(trial),
         )
 
     if ac19_status != "PASS":
@@ -616,6 +638,13 @@ def _compact_validation_errors(exc: ValidationError) -> str:
     if len(messages) <= 3:
         return "; ".join(messages)
     return f"{messages[0]}; {messages[1]}; {messages[2]}; ... {len(messages) - 3} more"
+
+
+def _parse_iso_datetime(value: str) -> datetime:
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        raise ValueError("timestamp must include timezone")
+    return parsed
 
 
 def _check_status(checks: Sequence[CheckResult], check_id: str) -> ReadinessStatus:

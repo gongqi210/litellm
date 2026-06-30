@@ -92,6 +92,94 @@ def test_ac23_valid_trial_requires_same_run_live_ycapi_pass(tmp_path) -> None:
     assert blocked_bundle["status"] == "BLOCKED"
 
 
+def test_ac23_rejects_attestation_captured_before_trial_completed(tmp_path) -> None:
+    trial_file = tmp_path / "trial.json"
+    monitoring_file = tmp_path / "monitoring.json"
+    trial = _valid_trial_evidence()
+    trial["attestation"]["captured_at"] = "2026-06-30T10:03:00+08:00"
+    trial_file.write_text(json.dumps(trial), encoding="utf-8")
+    monitoring_file.write_text(json.dumps(_monitoring_result("PASS")), encoding="utf-8")
+
+    bundle = collect_business_trial_acceptance(
+        env={
+            "AIMANAGER_LIGHTWEIGHT_TRIAL_EVIDENCE_FILE": str(trial_file),
+            "AIMANAGER_EMPLOYEE_MONITORING_RESULT_FILE": str(monitoring_file),
+        },
+        production_readiness_collector=lambda **kwargs: _production_bundle(ac19_status="PASS"),
+    )
+
+    ac23 = next(check for check in bundle["checks"] if check["id"] == "AC-23")
+    assert ac23["status"] == "FAIL"
+    assert "captured_at" in ac23["detail"]
+    assert bundle["status"] == "FAIL"
+
+
+def test_ac23_rejects_trial_evidence_captured_after_bundle_generated_at(tmp_path) -> None:
+    trial_file = tmp_path / "trial.json"
+    monitoring_file = tmp_path / "monitoring.json"
+    trial_file.write_text(json.dumps(_valid_trial_evidence()), encoding="utf-8")
+    monitoring_file.write_text(json.dumps(_monitoring_result("PASS")), encoding="utf-8")
+
+    bundle = collect_business_trial_acceptance(
+        env={
+            "AIMANAGER_LIGHTWEIGHT_TRIAL_EVIDENCE_FILE": str(trial_file),
+            "AIMANAGER_EMPLOYEE_MONITORING_RESULT_FILE": str(monitoring_file),
+        },
+        generated_at="2026-06-30T10:04:59+08:00",
+        production_readiness_collector=lambda **kwargs: _production_bundle(ac19_status="PASS"),
+    )
+
+    ac23 = next(check for check in bundle["checks"] if check["id"] == "AC-23")
+    assert ac23["status"] == "FAIL"
+    assert "captured_at" in ac23["detail"]
+    assert bundle["status"] == "FAIL"
+
+
+def test_ac23_accepts_attestation_captured_on_timing_boundaries(tmp_path) -> None:
+    trial_file = tmp_path / "trial.json"
+    monitoring_file = tmp_path / "monitoring.json"
+    trial = _valid_trial_evidence()
+    trial["timing"]["completed_at"] = "2026-06-30T10:04:30+08:00"
+    trial["attestation"]["captured_at"] = "2026-06-30T10:04:30+08:00"
+    trial_file.write_text(json.dumps(trial), encoding="utf-8")
+    monitoring_file.write_text(json.dumps(_monitoring_result("PASS")), encoding="utf-8")
+
+    bundle = collect_business_trial_acceptance(
+        env={
+            "AIMANAGER_LIGHTWEIGHT_TRIAL_EVIDENCE_FILE": str(trial_file),
+            "AIMANAGER_EMPLOYEE_MONITORING_RESULT_FILE": str(monitoring_file),
+        },
+        generated_at="2026-06-30T10:04:30+08:00",
+        production_readiness_collector=lambda **kwargs: _production_bundle(ac19_status="PASS"),
+    )
+
+    ac23 = next(check for check in bundle["checks"] if check["id"] == "AC-23")
+    assert ac23["status"] == "PASS"
+    assert bundle["status"] == "PASS"
+
+
+def test_ac23_rejects_invalid_business_trial_generated_at(tmp_path) -> None:
+    trial_file = tmp_path / "trial.json"
+    monitoring_file = tmp_path / "monitoring.json"
+    trial_file.write_text(json.dumps(_valid_trial_evidence()), encoding="utf-8")
+    monitoring_file.write_text(json.dumps(_monitoring_result("PASS")), encoding="utf-8")
+
+    bundle = collect_business_trial_acceptance(
+        env={
+            "AIMANAGER_LIGHTWEIGHT_TRIAL_EVIDENCE_FILE": str(trial_file),
+            "AIMANAGER_EMPLOYEE_MONITORING_RESULT_FILE": str(monitoring_file),
+        },
+        generated_at="2026-06-30T10:06:00",
+        production_readiness_collector=lambda **kwargs: _production_bundle(ac19_status="PASS"),
+    )
+
+    ac23 = next(check for check in bundle["checks"] if check["id"] == "AC-23")
+    assert ac23["status"] == "FAIL"
+    assert "generated_at" in ac23["detail"]
+    assert "timezone" in ac23["detail"]
+    assert bundle["status"] == "FAIL"
+
+
 def test_ac23_accepts_customer_context_without_project(tmp_path) -> None:
     trial_file = tmp_path / "trial.json"
     monitoring_file = tmp_path / "monitoring.json"
