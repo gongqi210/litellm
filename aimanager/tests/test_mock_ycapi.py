@@ -5,6 +5,21 @@ import json
 from aimanager.scripts.mock_ycapi import build_mock_response
 
 
+def test_mock_ycapi_returns_openai_compatible_model_list() -> None:
+    status, headers, body = build_mock_response("/v1/models", {})
+
+    payload = json.loads(body.decode("utf-8"))
+    assert status == 200
+    assert headers["content-type"] == "application/json"
+    assert payload["object"] == "list"
+    assert [model["id"] for model in payload["data"]] == [
+        "gemini-2.5-flash",
+        "deepseek-chat",
+        "ycapi-image-1",
+    ]
+    assert all(model["object"] == "model" for model in payload["data"])
+
+
 def test_mock_ycapi_returns_openai_compatible_chat_completion() -> None:
     status, headers, body = build_mock_response(
         "/v1/chat/completions",

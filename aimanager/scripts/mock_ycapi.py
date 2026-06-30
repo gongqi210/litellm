@@ -12,6 +12,17 @@ from typing import Any
 def build_mock_response(path: str, payload: dict[str, Any]) -> tuple[int, dict[str, str], bytes]:
     normalized_path = path.split("?", 1)[0].rstrip("/")
     headers = {"content-type": "application/json"}
+    if normalized_path in {"/v1/models", "/models"}:
+        body = {
+            "object": "list",
+            "data": [
+                {"id": "gemini-2.5-flash", "object": "model", "owned_by": "ycapi"},
+                {"id": "deepseek-chat", "object": "model", "owned_by": "ycapi"},
+                {"id": "ycapi-image-1", "object": "model", "owned_by": "ycapi"},
+            ],
+        }
+        return 200, headers, _json_bytes(body)
+
     if normalized_path in {"/v1/chat/completions", "/chat/completions"}:
         model = _string(payload.get("model"), default="gemini-2.5-flash")
         prompt_tokens = _estimate_prompt_tokens(payload.get("messages"))
