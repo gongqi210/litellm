@@ -4,6 +4,7 @@ import argparse
 import csv
 import json
 import sys
+from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Sequence
@@ -71,6 +72,15 @@ _FIELDNAMES: dict[str, list[str]] = {
 }
 
 
+@dataclass(frozen=True)
+class FinanceExportArtifacts:
+    output_files: list[str]
+    spend_row_count: int
+    ycapi_bill_row_count: int
+    aimanager_billable_row_count: int
+    ycapi_billable_row_count: int
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Export AiManager finance CSVs from LiteLLM spend rows and ycapi bills."
@@ -83,20 +93,38 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        spend_rows = _load_records(Path(args.spend_file))
-        ycapi_bill_rows = _load_records(Path(args.ycapi_bill_file))
-        output_dir = Path(args.output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-        bundle = build_finance_export_bundle(spend_rows=spend_rows, ycapi_bill_rows=ycapi_bill_rows)
-        for filename, rows in bundle.items():
-            _write_csv(output_dir / filename, rows, _FIELDNAMES[filename])
+        artifacts = export_finance_csvs(
+            spend_file=Path(args.spend_file),
+            ycapi_bill_file=Path(args.ycapi_bill_file),
+            output_dir=Path(args.output_dir),
+        )
     except Exception as exc:
         print(f"FAIL finance export: {exc}", file=sys.stderr)
         return 1
 
-    print(f"PASS finance export wrote {len(bundle)} file(s) to {output_dir}")
+    print(f"PASS finance export wrote {len(artifacts.output_files)} file(s) to {args.output_dir}")
     return 0
+
+
+def export_finance_csvs(*, spend_file: Path, ycapi_bill_file: Path, output_dir: Path) -> FinanceExportArtifacts:
+    spend_rows = _load_records(spend_file)
+    ycapi_bill_rows = _load_records(ycapi_bill_file)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    bundle = build_finance_export_bundle(spend_rows=spend_rows, ycapi_bill_rows=ycapi_bill_rows)
+    for filename, rows in bundle.items():
+        _write_csv(output_dir / filename, rows, _FIELDNAMES[filename])
+    return FinanceExportArtifacts(
+        output_files=sorted(bundle.keys()),
+        spend_row_count=len(spend_rows),
+        ycapi_bill_row_count=len(ycapi_bill_rows),
+        aimanager_billable_row_count=sum(
+            1 for row in bundle["aimanager_reconciliation.csv"] if _is_positive_decimal(row.get("aimanager_amount"))
+        ),
+        ycapi_billable_row_count=sum(
+            1 for row in bundle["aimanager_reconciliation.csv"] if _is_positive_decimal(row.get("ycapi_amount"))
+        ),
+    )
 
 
 def _load_records(path: Path) -> list[dict[str, Any]]:
@@ -137,6 +165,13 @@ def _csv_value(value: Any) -> Any:
     if isinstance(value, Decimal):
         return format_money(value)
     return value
+
+
+def _is_positive_decimal(value: Any) -> bool:
+    try:
+        return Decimal(str(value)) > 0
+    except Exception:
+        return False
 
 
 if __name__ == "__main__":

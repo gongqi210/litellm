@@ -462,6 +462,22 @@ PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.smoke_live_yca
 
 Expected result without a real `YCAPI_API_TOKEN`: `BLOCKED`. Expected result with a real production token: `PASS`, `status_code=200`, and `model_count > 0`, with the configured model ids present in ycapi `/models`. This preflight is intentionally read-only and never prints the ycapi token or request URL. It proves the live credential can reach ycapi and prevents missing-token runs from being misreported as `PASS`; billable chat/image evidence still comes from the governed AiManager runtime smokes.
 
+Production readiness evidence bundle:
+
+```bash
+PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.production_readiness_bundle \
+  --output-json-file /tmp/aimanager-production-readiness.json
+```
+
+The bundle is the pre-business-trial gate for the remaining production-only evidence. It aggregates:
+
+- AC-15 production admin boundary checks from `AIMANAGER_BUSINESS_BASE_URL`, `AIMANAGER_PUBLIC_ADMIN_URL`, and `AIMANAGER_ALLOWED_SSO_REDIRECT_HOSTS`.
+- AC-19 live ycapi `/models` preflight from `YCAPI_BASE_URL` and `YCAPI_API_TOKEN`.
+- AC-16 live WeCom alert routing from `AIMANAGER_OBSERVABILITY_REPORT_FILE`, `AIMANAGER_WECOM_WEBHOOK_URL`, and `AIMANAGER_WECOM_MIN_SEVERITY`.
+- AC-12/AC-13 finance export and ycapi bill reconciliation from `AIMANAGER_SPEND_FILE`, `AIMANAGER_YCAPI_BILL_FILE`, and `AIMANAGER_FINANCE_OUTPUT_DIR`.
+
+Exit code `0` means all checks are `PASS`; `1` means at least one `FAIL`; `2` means no failed checks but at least one required production input is still `BLOCKED`. The JSON bundle never writes `YCAPI_API_TOKEN` or the WeCom webhook URL; if a downstream error includes either value, it is replaced with a `[redacted:...]` marker. Without production inputs, the expected local result is `BLOCKED` with four blocked checks, not `PASS`. WeCom evidence is `BLOCKED` when no alert is actually delivered, and finance evidence is `BLOCKED` when either spend rows or ycapi bill rows are empty or lack non-zero billable amounts on either side of the reconciliation.
+
 Postgres-down runtime smoke:
 
 ```bash
@@ -526,7 +542,8 @@ Latest local runtime smoke evidence:
 - Local observability tests prove management `GET /metrics` is served by AiManager without reaching downstream LiteLLM, business `/metrics` remains blocked, audit events increment `aimanager_audit_events_total`, downstream 429/5xx increment `aimanager_http_responses_total`, and `export_observability` emits JSON metrics plus alert records from audit logs and request-status rows.
 - Local alert-routing tests prove `route_observability_alerts` can render WeCom markdown payloads from exported alert JSON, dry-run without a webhook, return `BLOCKED` when live alerts have no webhook, filter by severity, and validate WeCom `errcode=0` without printing the webhook URL.
 - Local live-ycapi preflight tests prove `smoke_live_ycapi` returns `BLOCKED` without `YCAPI_API_TOKEN`, validates ycapi `/models` with expected model ids when a token is present, and masks token/URL values on transport failures.
+- Local production-readiness bundle tests prove `production_readiness_bundle` aggregates AC-15 admin boundary, AC-19 live ycapi, AC-16 WeCom alert routing, and AC-12/AC-13 finance reconciliation into one JSON artifact; missing production inputs return exit code `2`/`BLOCKED`, failures take priority over blockers, WeCom 0-delivery runs stay `BLOCKED`, empty spend/bill files and non-billable placeholder finance rows stay `BLOCKED`, and ycapi token or WeCom webhook values are redacted from details and evidence.
 - Local SDK compatibility tests prove `smoke_sdk_compat` uses an employee LiteLLM virtual key instead of `YCAPI_API_TOKEN`, rejects `YCAPI_API_TOKEN` as the employee-key env or value, checks `/v1/models`, chat models `gemini-2.5-flash` and `deepseek-chat`, image `ycapi-image-1` with `response_format=b64_json`, a vision chat request with a base64 `data:` URL, required work metadata, OpenAI-compatible response shape, and sanitized failure details. `smoke_runtime_sdk_compat` now has local runtime PASS evidence against running business/admin surfaces with mock ycapi and fails if key cleanup fails.
 - Local error-contract tests prove allowed downstream LiteLLM/ycapi 429 JSON errors preserve the upstream `error` object, inject top-level `request_id` aligned with `x-litellm-call-id`, keep 401/403/404 fallback types stable, pass successful streaming chunks through unchanged, and convert non-JSON downstream 5xx errors to OpenAI-compatible JSON without leaking Bearer, `sk-*`, ycapi token text, or DSN passwords.
 
-Remaining before business trial: production ycapi bill evidence, live ycapi smoke with the production token policy, production admin SSO/reverse-proxy header stripping, and a live WeCom webhook routing run from the management metrics/report output.
+Remaining before business trial: run `production_readiness_bundle` with real production URLs, production ycapi token policy, a live WeCom webhook plus alert report, and real ycapi monthly bill evidence until every check in `/tmp/aimanager-production-readiness.json` is `PASS`.
