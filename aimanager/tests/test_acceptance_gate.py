@@ -46,6 +46,10 @@ def test_acceptance_gate_writes_run_scoped_artifacts_and_reuses_production_readi
     assert result["summary"]["steps"] == 5
     assert result["summary"]["FAIL"] == 0
     assert result["summary"]["BLOCKED"] == 5
+    assert result["evidence_handoff"]["json_file"] == str(tmp_path / "evidence-handoff/evidence-handoff.json")
+    assert result["evidence_template_pack"]["json_file"] == str(
+        tmp_path / "evidence-template-pack/evidence-template-pack.json"
+    )
     assert [step["id"] for step in result["steps"]] == [
         "production_readiness",
         "business_trial_acceptance",
@@ -62,6 +66,12 @@ def test_acceptance_gate_writes_run_scoped_artifacts_and_reuses_production_readi
         "acceptance-coverage.md",
         "final-acceptance-report.json",
         "final-acceptance-report.md",
+        "evidence-handoff/evidence-handoff.json",
+        "evidence-handoff/evidence-handoff.md",
+        "evidence-template-pack/evidence-template-pack.json",
+        "evidence-template-pack/evidence-template-pack.md",
+        "evidence-template-pack/evidence-env.template",
+        "evidence-template-pack/README.md",
         "acceptance-gate.json",
         "acceptance-gate.md",
     ):
@@ -123,7 +133,7 @@ def test_acceptance_gate_redacts_secret_like_values_in_all_written_artifacts(tmp
     )
 
     serialized = json.dumps(result, ensure_ascii=False)
-    for path in tmp_path.iterdir():
+    for path in (path for path in tmp_path.rglob("*") if path.is_file()):
         serialized += path.read_text(encoding="utf-8")
     assert result["status"] == "FAIL"
     assert "should-not-leak" not in serialized
@@ -152,7 +162,7 @@ def test_acceptance_gate_redacts_secret_env_values_and_common_dsn_passwords(tmp_
     )
 
     serialized = ""
-    for path in tmp_path.iterdir():
+    for path in (path for path in tmp_path.rglob("*") if path.is_file()):
         serialized += path.read_text(encoding="utf-8")
     assert "supersecret-value" not in serialized
     assert "mysql-secret" not in serialized

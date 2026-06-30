@@ -15,6 +15,8 @@ from aimanager.redaction import (
 )
 from aimanager.scripts.acceptance_coverage_matrix import collect_acceptance_coverage_matrix
 from aimanager.scripts.business_trial_acceptance_bundle import collect_business_trial_acceptance
+from aimanager.scripts.generate_evidence_handoff import collect_evidence_handoff
+from aimanager.scripts.generate_evidence_template_pack import collect_evidence_template_pack
 from aimanager.scripts.generate_final_acceptance_report import collect_final_acceptance_report
 from aimanager.scripts.generate_launch_gap_plan import collect_launch_gap_plan
 from aimanager.scripts.production_readiness_bundle import collect_production_readiness
@@ -106,6 +108,27 @@ def collect_acceptance_gate(
     _write_json(paths["launch_json"], launch)
     _write_text(paths["launch_markdown"], str(_mapping(launch).get("markdown") or ""))
 
+    evidence_handoff = _sanitize_value(
+        collect_evidence_handoff(
+            launch_gap_plan_file=paths["launch_json"],
+            output_dir=paths["handoff_dir"],
+            generated_at=gate_generated_at,
+        ),
+        redactions,
+    )
+    _write_evidence_handoff(paths, evidence_handoff)
+
+    evidence_template_pack = _sanitize_value(
+        collect_evidence_template_pack(
+            launch_gap_plan_file=paths["launch_json"],
+            output_dir=paths["template_pack_dir"],
+            generated_at=gate_generated_at,
+        ),
+        redactions,
+    )
+    _write_json(paths["template_pack_json"], evidence_template_pack)
+    _write_text(paths["template_pack_markdown"], str(_mapping(evidence_template_pack).get("markdown") or ""))
+
     coverage = _sanitize_value(
         collect_acceptance_coverage_matrix(
             acceptance_doc_file=acceptance_doc_file,
@@ -137,6 +160,8 @@ def collect_acceptance_gate(
         production=production,
         business=business,
         launch=launch,
+        evidence_handoff=evidence_handoff,
+        evidence_template_pack=evidence_template_pack,
         coverage=coverage,
         final_report=final_report,
         paths=paths,
@@ -154,6 +179,8 @@ def _manifest(
     production: object,
     business: object,
     launch: object,
+    evidence_handoff: object,
+    evidence_template_pack: object,
     coverage: object,
     final_report: object,
     paths: Mapping[str, Path],
@@ -200,6 +227,18 @@ def _manifest(
             "unique_blockers": int(final_summary.get("unique_blockers", 0) or 0),
         },
         "steps": steps,
+        "evidence_handoff": _supporting_artifact(
+            evidence_handoff,
+            directory=paths["handoff_dir"],
+            json_file=paths["handoff_json"],
+            markdown_file=paths["handoff_markdown"],
+        ),
+        "evidence_template_pack": _supporting_artifact(
+            evidence_template_pack,
+            directory=paths["template_pack_dir"],
+            json_file=paths["template_pack_json"],
+            markdown_file=paths["template_pack_markdown"],
+        ),
         "final_report": {
             "status": _coerce_status(_mapping(final_report).get("status")),
             "conclusion": str(_mapping(final_report).get("conclusion") or ""),
@@ -210,6 +249,23 @@ def _manifest(
     }
     result["markdown"] = _markdown(result)
     return result
+
+
+def _supporting_artifact(
+    payload: object,
+    *,
+    directory: Path,
+    json_file: Path,
+    markdown_file: Path,
+) -> dict[str, object]:
+    data = _mapping(payload)
+    return {
+        "status": _coerce_status(data.get("status")),
+        "directory": str(directory),
+        "json_file": str(json_file),
+        "markdown_file": str(markdown_file),
+        "summary": _mapping(data.get("summary")),
+    }
 
 
 def _step(
@@ -261,6 +317,24 @@ def _markdown(result: Mapping[str, object]) -> str:
             )
         )
     final_report = _mapping(result.get("final_report"))
+    evidence_handoff = _mapping(result.get("evidence_handoff"))
+    evidence_template_pack = _mapping(result.get("evidence_template_pack"))
+    if evidence_handoff or evidence_template_pack:
+        lines.extend(["", "## Evidence Collection", ""])
+        if evidence_handoff:
+            lines.extend(
+                [
+                    f"- Handoff: `{evidence_handoff.get('markdown_file', '')}`",
+                    f"- Handoff Dir: `{evidence_handoff.get('directory', '')}`",
+                ]
+            )
+        if evidence_template_pack:
+            lines.extend(
+                [
+                    f"- Template Pack: `{evidence_template_pack.get('markdown_file', '')}`",
+                    f"- Template Pack Dir: `{evidence_template_pack.get('directory', '')}`",
+                ]
+            )
     if final_report:
         lines.extend(
             [
@@ -282,6 +356,12 @@ def _artifact_paths(output_dir: Path) -> dict[str, Path]:
         "business_json": output_dir / "business-trial-acceptance.json",
         "launch_json": output_dir / "launch-gap-plan.json",
         "launch_markdown": output_dir / "launch-gap-plan.md",
+        "handoff_dir": output_dir / "evidence-handoff",
+        "handoff_json": output_dir / "evidence-handoff" / "evidence-handoff.json",
+        "handoff_markdown": output_dir / "evidence-handoff" / "evidence-handoff.md",
+        "template_pack_dir": output_dir / "evidence-template-pack",
+        "template_pack_json": output_dir / "evidence-template-pack" / "evidence-template-pack.json",
+        "template_pack_markdown": output_dir / "evidence-template-pack" / "evidence-template-pack.md",
         "coverage_json": output_dir / "acceptance-coverage.json",
         "coverage_markdown": output_dir / "acceptance-coverage.md",
         "final_json": output_dir / "final-acceptance-report.json",
@@ -299,6 +379,16 @@ def _write_json(path: Path, payload: object) -> None:
 def _write_text(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
+
+
+def _write_evidence_handoff(paths: Mapping[str, Path], payload: object) -> None:
+    _write_json(paths["handoff_json"], payload)
+    _write_text(paths["handoff_markdown"], str(_mapping(payload).get("markdown") or ""))
+    for owner in _mapping_list(_mapping(payload).get("owners")):
+        markdown_file = owner.get("markdown_file")
+        if not isinstance(markdown_file, str) or not markdown_file:
+            continue
+        _write_text(Path(markdown_file), str(owner.get("markdown") or ""))
 
 
 def _sanitize_value(value: object, redactions: Mapping[str, str]) -> object:
@@ -328,6 +418,10 @@ def _coerce_status(value: object) -> str:
 
 def _mapping(value: object) -> dict[str, Any]:
     return dict(value) if isinstance(value, Mapping) else {}
+
+
+def _mapping_list(value: object) -> list[Mapping[str, object]]:
+    return [item for item in value if isinstance(item, Mapping)] if isinstance(value, list) else []
 
 
 def _now_iso() -> str:

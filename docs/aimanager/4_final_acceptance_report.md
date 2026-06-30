@@ -1,6 +1,6 @@
 # AiManager Final Acceptance Report
 
-Date: 2026-06-30
+Date: 2026-07-01
 
 ## Result
 
@@ -47,7 +47,7 @@ PYTHONPATH="$PWD" uv run --no-project --with pyyaml python -m aimanager.scripts.
   --output-dir /tmp/aimanager-acceptance-gate
 ```
 
-This is the preferred final go/no-go entrypoint. It runs production readiness once, reuses that exact bundle inside business-trial acceptance, writes launch gap, coverage, final report, and gate manifest artifacts into one run-scoped directory, and avoids composing stale `/tmp` files from earlier rehearsals.
+This is the preferred final go/no-go entrypoint. It runs production readiness once, reuses that exact bundle inside business-trial acceptance, writes launch gap, evidence handoff, evidence template pack, coverage, final report, and gate manifest artifacts into one run-scoped directory, and avoids composing stale `/tmp` files from earlier rehearsals.
 
 Business trial acceptance gate:
 
