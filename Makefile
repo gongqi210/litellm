@@ -1,7 +1,7 @@
 # LiteLLM Makefile
 # Simple Makefile for running tests and basic development tasks
 
-.PHONY: help policy-check acceptance-gate evidence-handoff evidence-template-pack test test-unit test-unit-llms test-unit-proxy-guardrails test-unit-proxy-core test-unit-proxy-misc \
+.PHONY: help policy-check acceptance-gate evidence-handoff evidence-template-pack evidence-intake test test-unit test-unit-llms test-unit-proxy-guardrails test-unit-proxy-core test-unit-proxy-misc \
 	test-unit-integrations test-unit-core-utils test-unit-other test-unit-root \
 	test-proxy-unit-a test-proxy-unit-b test-integration test-unit-helm \
 	info lint lint-dev format \
@@ -17,6 +17,7 @@ help:
 	@echo "  make acceptance-gate    - Run AiManager one-command acceptance gate into /tmp or AIMANAGER_ACCEPTANCE_GATE_OUTPUT_DIR"
 	@echo "  make evidence-handoff   - Generate owner-specific evidence requests from the latest acceptance gate"
 	@echo "  make evidence-template-pack - Generate safe external evidence input templates from the latest acceptance gate"
+	@echo "  make evidence-intake    - Validate filled external evidence files before rerunning the acceptance gate"
 	@echo "  make install-dev        - Install development dependencies"
 	@echo "  make install-proxy-dev  - Install proxy development dependencies"
 	@echo "  make install-dev-ci     - Install dev dependencies (CI-compatible, pins OpenAI)"
@@ -66,6 +67,9 @@ evidence-handoff:
 
 evidence-template-pack:
 	PYTHONPATH="$$(pwd)" uv run --no-project python -m aimanager.scripts.generate_evidence_template_pack --launch-gap-plan-file "$${AIMANAGER_ACCEPTANCE_GATE_OUTPUT_DIR:-/tmp/aimanager-acceptance-gate}/launch-gap-plan.json" --output-dir "$${AIMANAGER_EVIDENCE_TEMPLATE_PACK_OUTPUT_DIR:-/tmp/aimanager-evidence-template-pack}"
+
+evidence-intake:
+	PYTHONPATH="$$(pwd)" uv run --no-project python -m aimanager.scripts.validate_evidence_intake --input-dir "$${AIMANAGER_EVIDENCE_INTAKE_INPUT_DIR:-/tmp/aimanager-evidence-template-pack}" --output-json-file "$${AIMANAGER_EVIDENCE_INTAKE_OUTPUT_JSON:-/tmp/aimanager-evidence-intake.json}" --output-markdown-file "$${AIMANAGER_EVIDENCE_INTAKE_OUTPUT_MARKDOWN:-/tmp/aimanager-evidence-intake.md}"
 
 # Show info
 info:

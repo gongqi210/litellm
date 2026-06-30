@@ -47,7 +47,7 @@ PYTHONPATH="$PWD" uv run --no-project --with pyyaml python -m aimanager.scripts.
   --output-dir /tmp/aimanager-acceptance-gate
 ```
 
-This is the preferred final go/no-go entrypoint. It runs production readiness once, reuses that exact bundle inside business-trial acceptance, writes launch gap, evidence handoff, evidence template pack, coverage, final report, and gate manifest artifacts into one run-scoped directory, and avoids composing stale `/tmp` files from earlier rehearsals.
+This is the preferred final go/no-go entrypoint. It runs production readiness once, reuses that exact bundle inside business-trial acceptance, writes launch gap, evidence handoff, evidence template pack, coverage, final report, and gate manifest artifacts into one run-scoped directory, and avoids composing stale `/tmp` files from earlier rehearsals. After owners fill evidence templates, run `make evidence-intake` before rerunning the final gate so unchanged templates, header-only CSV files, raw prompt/response/header fields, cookies, Authorization values, and secret-like strings are rejected before they enter readiness bundles.
 
 Business trial acceptance gate:
 
