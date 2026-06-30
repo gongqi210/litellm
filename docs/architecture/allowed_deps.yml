@@ -1,0 +1,19 @@
+schema_version: 1
+scope: aimanager-overlay
+source_line_limit: 1600
+doc_line_limit: 800
+allowed_top_level_imports:
+  - aimanager
+  - litellm
+  - playwright
+  - pytest
+  - uvicorn
+  - yaml
+forbidden_top_level_imports:
+  - anthropic
+  - azure
+  - boto3
+  - botocore
+  - google
+  - openai
+  - vertexai

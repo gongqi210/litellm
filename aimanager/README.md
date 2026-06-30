@@ -237,6 +237,22 @@ PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.generate_busin
 
 The JSON and Markdown include monthly spend, budget utilization, TOP departments, TOP projects, TOP keys, and anomalies derived from alert records plus 429/5xx/budget/passthrough/missing-request-id metrics. Missing budget, finance, or observability inputs return `BLOCKED`; mixed currencies return `FAIL`. This is the local report contract for AC-24. A self-service executive portal or live production dashboard can build on the same output but is not required for this CLI evidence.
 
+## Project Policy Gate
+
+Run this before and after meaningful AiManager changes:
+
+```bash
+make policy-check
+```
+
+The gate is intentionally scoped to AiManager-owned overlay files, not the entire upstream LiteLLM fork. It checks the project scaffold, `cli/main.py --help`, `cli/main.py --json`, documented non-stdlib imports, file line limits, `.env.example` secret placeholders, and the ycapi-only config boundary.
+
+Machine-readable project status:
+
+```bash
+python3 cli/main.py --json
+```
+
 ## Run
 
 ```bash
@@ -667,6 +683,7 @@ Latest local runtime smoke evidence:
 - Local alert-routing tests prove `route_observability_alerts` can render WeCom markdown payloads from exported alert JSON, dry-run without a webhook, return `BLOCKED` when live alerts have no webhook, filter by severity, and validate WeCom `errcode=0` without printing the webhook URL.
 - Local live-ycapi preflight tests prove `smoke_live_ycapi` returns `BLOCKED` without `YCAPI_API_TOKEN`, validates ycapi `/models` with expected model ids when a token is present, and masks token/URL values on transport failures.
 - Local production-readiness bundle tests prove `production_readiness_bundle` aggregates AC-15 admin boundary, AC-19 live ycapi, AC-16 WeCom alert routing, and AC-12/AC-13 finance reconciliation into one JSON artifact; missing production inputs return exit code `2`/`BLOCKED`, failures take priority over blockers, WeCom 0-delivery runs stay `BLOCKED`, empty spend/bill files and non-billable placeholder finance rows stay `BLOCKED`, and ycapi token or WeCom webhook values are redacted from details and evidence.
+- Project policy gate evidence proves `make policy-check` returns PASS for `PROJECT_TYPE=software-cli`, required scaffold files, CLI help/json contract, AiManager-owned file length limits, documented overlay imports, ycapi-only config text, and `.env.example` secret-placeholder safety.
 - Local work-context validation tests prove `validate_work_context` can gate an external marketing request before generation with non-empty string identifiers, scenario, channel, project/customer, sensitivity, required boolean approval, non-empty brief/reviewer/approval-policy references, and brand-safety checklist evidence; malformed JSON and invalid work contexts return `FAIL`, missing context files return `BLOCKED`, and closure mode requires draft, human-review, final, external-approval, archive, and retrospective references before the workflow can be treated as traceable. This is the machine-readable contract for a future non-SDK WeCom/lightweight entry, not the final business portal.
 - Local lightweight-entry and lightweight-web tests prove `submit_lightweight_entry` can turn a flat WeCom/page-style form into a governed `/v1/chat/completions` body with work-context metadata plus `cost_center_id`, `currency`, and `pricing_version`; it preserves identifier casing for finance attribution, rejects token-like fields or values without echoing them, blocks missing employee virtual keys, refuses employee keys that equal `YCAPI_API_TOKEN`, and can submit through an injected raw HTTP transport without using an SDK. `lightweight_web` adds a clickable stdlib ASGI page for internal collaboration/management trials, keeps keys server-side, refuses ycapi token misuse, and HTML-escapes model output. This is local non-SDK UI evidence for AC-23, not production live ycapi, SSO identity injection, or timed human-trial evidence.
 - Local business-overview tests prove `generate_business_overview` can combine monthly finance CSV, budget rows, and observability JSON into a CEO-readable JSON/Markdown report with monthly spend, budget utilization, anomaly events, TOP departments, TOP projects, and TOP keys; missing budget input returns `BLOCKED` and mixed currencies return `FAIL`. This is local report evidence for AC-24, not a production executive portal.
