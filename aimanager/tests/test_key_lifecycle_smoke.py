@@ -26,7 +26,7 @@ def test_key_lifecycle_smoke_passes_when_freeze_and_revoke_reject_inference_and_
                 return _json_response({"key": "sk-revoke-smoke"})
             raise AssertionError(f"unexpected key alias {payload['key_alias']}")
         if url.endswith("/v1/chat/completions"):
-            token = headers["Authorization"].removeprefix("Bearer ")
+            token = _credential_token(headers)
             if token == "sk-freeze-smoke" and headers["x-request-id"].startswith("lifecycle-freeze-reject"):
                 return _json_response(
                     {"error": {"type": "authentication_error", "message": "Key is blocked."}},
@@ -93,6 +93,18 @@ def test_key_lifecycle_smoke_passes_when_freeze_and_revoke_reject_inference_and_
         request[1].endswith("/key/delete") and request[2]["x-aimanager-reason"] == "AC-11 revoke lifecycle smoke"
         for request in requests
     )
+    assert any(
+        request[1].endswith("/v1/chat/completions")
+        and request[2].get("x-api-key") == "sk-freeze-smoke"
+        and request[2]["x-request-id"].startswith("lifecycle-freeze-reject")
+        for request in requests
+    )
+    assert any(
+        request[1].endswith("/v1/chat/completions")
+        and request[2].get("x-api-key") == "sk-revoke-smoke"
+        and request[2]["x-request-id"].startswith("lifecycle-revoke-reject")
+        for request in requests
+    )
 
 
 def test_key_lifecycle_smoke_fails_when_frozen_key_still_allows_inference() -> None:
@@ -145,3 +157,20 @@ def _json_response(payload: dict[str, object], status_code: int = 200) -> HttpRe
         headers={"content-type": "application/json"},
         body=json.dumps(payload).encode("utf-8"),
     )
+
+
+def _credential_token(headers: dict[str, str]) -> str:
+    if headers.get("Authorization", "").startswith("Bearer "):
+        return headers["Authorization"].removeprefix("Bearer ")
+    for header_name in (
+        "API-Key",
+        "x-api-key",
+        "x-goog-api-key",
+        "Ocp-Apim-Subscription-Key",
+        "x-litellm-api-key",
+    ):
+        if headers.get(header_name, "").startswith("Bearer "):
+            return headers[header_name].removeprefix("Bearer ")
+        if headers.get(header_name):
+            return headers[header_name]
+    return ""

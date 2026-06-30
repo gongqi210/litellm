@@ -91,6 +91,8 @@ BLOCKED_ROUTE_CASES = (
     BlockedRouteCase("DELETE", "/model/gemini-2.5-flash", "aimanager_config_immutable"),
     BlockedRouteCase("POST", "/v1/embeddings", "aimanager_route_not_allowed"),
     BlockedRouteCase("POST", "/v1/completions", "aimanager_route_not_allowed"),
+    BlockedRouteCase("GET", "/v1/models", "aimanager_business_token_forbidden"),
+    BlockedRouteCase("POST", "/v1/chat/completions", "aimanager_business_token_forbidden"),
 )
 
 

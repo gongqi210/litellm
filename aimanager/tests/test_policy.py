@@ -1176,10 +1176,17 @@ def test_allowlist_middleware_emits_budget_blocked_audit_for_downstream_budget_e
                         }
                     }
                 ).encode("utf-8"),
-            }
-        )
+                }
+            )
 
-    app = YcapiOnlyAllowlistMiddleware(downstream, audit_sink=audit_events.append)
+    async def no_key_disposition(token: str):
+        return None
+
+    app = YcapiOnlyAllowlistMiddleware(
+        downstream,
+        audit_sink=audit_events.append,
+        key_disposition_checker=no_key_disposition,
+    )
 
     messages = asyncio.run(
         _call_asgi(

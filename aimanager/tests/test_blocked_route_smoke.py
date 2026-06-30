@@ -31,6 +31,8 @@ def test_blocked_route_inventory_covers_m1_provider_and_config_risks() -> None:
     assert ("POST", "/reload/model_cost_map", "aimanager_config_immutable") in inventory
     assert ("POST", "/model/new", "aimanager_config_immutable") in inventory
     assert ("POST", "/v1/embeddings", "aimanager_route_not_allowed") in inventory
+    assert ("GET", "/v1/models", "aimanager_business_token_forbidden") in inventory
+    assert ("POST", "/v1/chat/completions", "aimanager_business_token_forbidden") in inventory
 
 
 def test_blocked_route_smoke_accepts_aimanager_policy_403_responses() -> None:

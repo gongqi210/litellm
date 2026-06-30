@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -12,7 +13,7 @@ from uuid import uuid4
 
 from aimanager.audit import build_audit_event
 from aimanager.governance import KeyGovernanceError, normalize_key_request
-from aimanager.policy import RouteDecision, build_policy_error_body, evaluate_route
+from aimanager.policy import ALLOWED_BUSINESS_ROUTES, RouteDecision, build_policy_error_body, evaluate_route
 from aimanager.runtime_metrics import DEFAULT_AIMANAGER_METRICS, AiManagerMetrics
 
 Scope = dict[str, Any]
@@ -23,11 +24,15 @@ ASGIApp = Callable[[Scope, Receive, Send], Awaitable[None]]
 AuditSink = Callable[[dict[str, Any]], None]
 MetricsSink = AiManagerMetrics
 DatabaseReadyChecker = Callable[[], bool]
+KeyDispositionChecker = Callable[[str], Awaitable[RouteDecision | None]]
 
 LOGGER = logging.getLogger("aimanager.audit")
 KEY_GOVERNANCE_POLICY_CODE = "aimanager_key_governance_invalid"
 REQUEST_BODY_POLICY_CODE = "aimanager_request_body_invalid"
 KEY_LIFECYCLE_POLICY_CODE = "aimanager_key_lifecycle_invalid"
+KEY_BLOCKED_POLICY_CODE = "aimanager_key_blocked"
+KEY_REVOKED_POLICY_CODE = "aimanager_key_revoked"
+BUSINESS_TOKEN_POLICY_CODE = "aimanager_business_token_forbidden"
 RBAC_POLICY_CODE = "aimanager_rbac_denied"
 DATABASE_UNAVAILABLE_POLICY_CODE = "aimanager_database_unavailable"
 MAX_KEY_GENERATE_BODY_BYTES = 64 * 1024
@@ -53,6 +58,14 @@ MANAGEMENT_HIGH_RISK_WRITE_PREFIXES = (
     "/budget",
     "/spend",
     "/global/spend",
+)
+LITELLM_CREDENTIAL_HEADER_PRECEDENCE = (
+    ("x-litellm-api-key", "bearer_or_raw"),
+    ("authorization", "bearer"),
+    ("api-key", "raw"),
+    ("x-api-key", "raw"),
+    ("x-goog-api-key", "raw"),
+    ("ocp-apim-subscription-key", "raw"),
 )
 ROLE_ALIASES = {
     "superadmin": "super_admin",
@@ -88,6 +101,7 @@ class YcapiOnlyAllowlistMiddleware:
         rbac_enabled: bool | None = None,
         database_ready_check_enabled: bool | None = None,
         database_ready_checker: DatabaseReadyChecker | None = None,
+        key_disposition_checker: KeyDispositionChecker | None = None,
     ) -> None:
         self.app = app
         self.metrics_sink = metrics_sink or DEFAULT_AIMANAGER_METRICS
@@ -102,6 +116,7 @@ class YcapiOnlyAllowlistMiddleware:
             else database_ready_check_enabled
         )
         self.database_ready_checker = database_ready_checker or _database_ready_from_env
+        self.key_disposition_checker = key_disposition_checker or _litellm_key_disposition_from_db
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope.get("type") != "http":
@@ -134,6 +149,24 @@ class YcapiOnlyAllowlistMiddleware:
                 scope,
                 request_id,
             )
+            if _requires_key_disposition_check(method, path):
+                token = _litellm_credential_token_from_scope(scope)
+                if token:
+                    if self.surface == "business":
+                        business_token_decision = _business_forbidden_credential_decision(token)
+                        if business_token_decision is not None:
+                            _emit_policy_audit_event(self.audit_sink, scope, business_token_decision, request_id)
+                            await _send_policy_error(metrics_send, business_token_decision, request_id)
+                            return
+                    try:
+                        key_disposition_decision = await self.key_disposition_checker(token)
+                    except Exception:
+                        LOGGER.exception("failed_to_check_aimanager_key_disposition request_id=%s", request_id)
+                        key_disposition_decision = _database_unavailable_decision(method, path)
+                    if key_disposition_decision is not None and not key_disposition_decision.allowed:
+                        _emit_policy_audit_event(self.audit_sink, scope, key_disposition_decision, request_id)
+                        await _send_policy_error(metrics_send, key_disposition_decision, request_id)
+                        return
             if self.surface == "management" and self.rbac_enabled:
                 rbac_decision = _management_rbac_decision(scope, method, path)
                 if rbac_decision is not None:
@@ -263,6 +296,80 @@ def _requires_database_ready(method: str, path: str) -> bool:
     return True
 
 
+def _requires_key_disposition_check(method: str, path: str) -> bool:
+    return (method.upper(), _normalized_request_path(path)) in ALLOWED_BUSINESS_ROUTES
+
+
+def _litellm_credential_token_from_scope(scope: Scope) -> str:
+    headers = _headers_from_scope(scope)
+    configured_header_name = _configured_litellm_key_header_name()
+    if configured_header_name:
+        token = _credential_token_from_header(_header(headers, configured_header_name), mode="bearer")
+        if token:
+            return token
+    for header_name, mode in LITELLM_CREDENTIAL_HEADER_PRECEDENCE:
+        token = _credential_token_from_header(_header(headers, header_name), mode=mode)
+        if token:
+            return token
+    return ""
+
+
+def _configured_litellm_key_header_name() -> str:
+    try:
+        from litellm.proxy.proxy_server import general_settings
+    except Exception:
+        return ""
+    if not isinstance(general_settings, dict):
+        return ""
+    value = general_settings.get("litellm_key_header_name")
+    return value.strip().lower() if isinstance(value, str) else ""
+
+
+def _credential_token_from_header(value: str, *, mode: str) -> str:
+    credential = value.strip()
+    if not credential:
+        return ""
+    if mode == "raw":
+        return credential
+    if credential.startswith("Bearer "):
+        return credential[7:].strip()
+    if credential.startswith("bearer "):
+        return credential[7:].strip()
+    if credential.startswith("Basic "):
+        return credential[6:].strip()
+    if credential.startswith("AWS4-HMAC-SHA256"):
+        match = re.search(r"Credential=Bearer\s+([^/\s,]+)", credential)
+        if match:
+            return match.group(1).strip()
+        match = re.search(r"Credential=([^/\s,]+)", credential)
+        return match.group(1).strip() if match else ""
+    if mode == "bearer_or_raw":
+        return credential
+    return ""
+
+
+def _business_forbidden_credential_decision(token: str) -> RouteDecision | None:
+    forbidden_tokens = {
+        secret
+        for secret in (
+            os.environ.get("LITELLM_MASTER_KEY", "").strip(),
+            os.environ.get("YCAPI_API_TOKEN", "").strip(),
+        )
+        if secret
+    }
+    if token not in forbidden_tokens:
+        return None
+    return RouteDecision(
+        allowed=False,
+        code=BUSINESS_TOKEN_POLICY_CODE,
+        message=(
+            "Admin or upstream tokens are not allowed on the business API; "
+            "use a governed LiteLLM virtual key."
+        ),
+        status_code=403,
+    )
+
+
 def _database_unavailable_decision(method: str, path: str) -> RouteDecision:
     normalized_method = method.upper()
     normalized_path = _normalized_request_path(path)
@@ -275,6 +382,45 @@ def _database_unavailable_decision(method: str, path: str) -> RouteDecision:
         ),
         status_code=503,
     )
+
+
+async def _litellm_key_disposition_from_db(token: str) -> RouteDecision | None:
+    hashed_token = _hash_litellm_token_for_lookup(token)
+    try:
+        from litellm.proxy.proxy_server import prisma_client
+    except Exception as exc:
+        raise RuntimeError("LiteLLM Prisma client is not importable") from exc
+
+    db = getattr(prisma_client, "db", None) if prisma_client is not None else None
+    if db is None:
+        raise RuntimeError("LiteLLM Prisma client is not initialized")
+
+    active_key = await db.litellm_verificationtoken.find_unique(where={"token": hashed_token})
+    if active_key is not None:
+        if getattr(active_key, "blocked", None) is True:
+            return RouteDecision(
+                allowed=False,
+                code=KEY_BLOCKED_POLICY_CODE,
+                message="Key is blocked. Update via `/key/unblock` if you're an admin.",
+                status_code=401,
+            )
+        return None
+
+    deleted_key = await db.litellm_deletedverificationtoken.find_first(where={"token": hashed_token})
+    if deleted_key is not None:
+        return RouteDecision(
+            allowed=False,
+            code=KEY_REVOKED_POLICY_CODE,
+            message="Authentication Error, Invalid proxy server token passed. Key was revoked.",
+            status_code=401,
+        )
+    return None
+
+
+def _hash_litellm_token_for_lookup(token: str) -> str:
+    if not token.startswith("sk-"):
+        return token
+    return hashlib.sha256(token.encode()).hexdigest()
 
 
 def _management_rbac_decision(scope: Scope, method: str, path: str) -> RouteDecision | None:

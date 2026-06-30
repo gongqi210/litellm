@@ -57,6 +57,14 @@ _REVOKE_ALIAS_PREFIX = "aimanager-lifecycle-revoke"
 _ACTOR = "aimanager-ci"
 _FREEZE_REASON = "AC-11 freeze lifecycle smoke"
 _REVOKE_REASON = "AC-11 revoke lifecycle smoke"
+_REJECTION_CREDENTIAL_HEADERS = (
+    ("Authorization", "Bearer {token}"),
+    ("API-Key", "{token}"),
+    ("x-api-key", "{token}"),
+    ("x-goog-api-key", "{token}"),
+    ("Ocp-Apim-Subscription-Key", "{token}"),
+    ("x-litellm-api-key", "{token}"),
+)
 
 
 def run_key_lifecycle_smoke(
@@ -408,33 +416,64 @@ def _poll_inference_rejection(
     if revoked_key is not None:
         token = _deleted_key_from_response(revoked_key) or virtual_key
     for attempt in range(poll_attempts):
-        response = fetcher(
-            "POST",
-            _join_url(business_base_url, "/v1/chat/completions"),
-            _auth_headers(
-                token,
-                request_id=f"{request_id_prefix}-{request_marker}-{attempt + 1}",
-                spend_logs_metadata=_request_metadata(request_marker, scenario_l2=_SCENARIO_L2),
-            ),
-            json.dumps(
-                {
-                    "model": chat_model,
-                    "messages": [{"role": "user", "content": "AiManager key lifecycle rejection"}],
-                    "max_tokens": 8,
-                    "user": "employee-smoke-001",
-                    "metadata": _request_metadata(request_marker, scenario_l2=_SCENARIO_L2),
-                }
-            ).encode("utf-8"),
-        )
-        status_code = response.status_code
-        error_message = _error_message(response)
-        if status_code in {401, 403} and (
-            not expected_message_fragment or expected_message_fragment in error_message.lower()
-        ):
+        all_rejected = True
+        for header_name, header_template in _REJECTION_CREDENTIAL_HEADERS:
+            response = fetcher(
+                "POST",
+                _join_url(business_base_url, "/v1/chat/completions"),
+                _rejection_auth_headers(
+                    token,
+                    request_id=(
+                        f"{request_id_prefix}-{request_marker}-"
+                        f"{_credential_header_slug(header_name)}-{attempt + 1}"
+                    ),
+                    spend_logs_metadata=_request_metadata(request_marker, scenario_l2=_SCENARIO_L2),
+                    credential_header=header_name,
+                    credential_template=header_template,
+                ),
+                json.dumps(
+                    {
+                        "model": chat_model,
+                        "messages": [{"role": "user", "content": "AiManager key lifecycle rejection"}],
+                        "max_tokens": 8,
+                        "user": "employee-smoke-001",
+                        "metadata": _request_metadata(request_marker, scenario_l2=_SCENARIO_L2),
+                    }
+                ).encode("utf-8"),
+            )
+            status_code = response.status_code
+            error_message = _error_message(response)
+            if status_code not in {401, 403} or (
+                expected_message_fragment and expected_message_fragment not in error_message.lower()
+            ):
+                all_rejected = False
+                break
+        if all_rejected:
             return True, status_code, error_message
         if attempt < poll_attempts - 1:
             sleep(poll_interval_seconds)
     return False, status_code, error_message
+
+
+def _rejection_auth_headers(
+    token: str,
+    *,
+    request_id: str,
+    spend_logs_metadata: dict[str, Any],
+    credential_header: str,
+    credential_template: str,
+) -> dict[str, str]:
+    headers = {
+        "Content-Type": "application/json",
+        "x-request-id": request_id,
+        "x-litellm-spend-logs-metadata": json.dumps(spend_logs_metadata, separators=(",", ":")),
+    }
+    headers[credential_header] = credential_template.format(token=token)
+    return headers
+
+
+def _credential_header_slug(header_name: str) -> str:
+    return header_name.lower().replace("-", "_")
 
 
 def _deleted_key_from_response(response: HttpResponse) -> str:
