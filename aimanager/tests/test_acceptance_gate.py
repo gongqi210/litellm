@@ -51,9 +51,10 @@ def test_acceptance_gate_writes_run_scoped_artifacts_and_reuses_production_readi
     ]
     assert result["status"] == "BLOCKED"
     assert result["summary"]["steps"] == 6
-    assert result["summary"]["PASS"] == 1
+    assert result["summary"]["PASS"] == 0
     assert result["summary"]["FAIL"] == 0
-    assert result["summary"]["BLOCKED"] == 5
+    assert result["summary"]["BLOCKED"] == 6
+    assert result["evidence_intake"]["status"] == "BLOCKED"
     assert result["evidence_handoff"]["json_file"] == str(tmp_path / "evidence-handoff/evidence-handoff.json")
     assert result["evidence_template_pack"]["json_file"] == str(
         tmp_path / "evidence-template-pack/evidence-template-pack.json"
@@ -100,13 +101,24 @@ def test_acceptance_gate_overwrites_stale_artifacts_and_can_reach_green_path(tmp
         "checks": [_check("POISON", "stale", "FAIL", "stale file should not be consumed")],
     }
     (tmp_path / "business-trial-acceptance.json").write_text(json.dumps(stale), encoding="utf-8")
+    safe_evidence = tmp_path / "safe-spend.csv"
+    safe_evidence.write_text(
+        "\n".join(
+            [
+                "startTime,status,model,call_type,user,key_alias,spend,currency,metadata",
+                "2026-07-01T09:00:00Z,success,openai/gemini-2.5-flash,completion,u1,key-alias,1.23,CNY,{}",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
     result = collect_acceptance_gate(
         output_dir=tmp_path,
         project_directory=PROJECT_ROOT,
         acceptance_doc_file=PROJECT_ROOT / "docs/aimanager/1_acceptance_criteria.md",
         generated_at=GENERATED_AT,
-        env={},
+        env={"AIMANAGER_SPEND_FILE": str(safe_evidence)},
         production_readiness_collector=lambda **_: _production_bundle("PASS"),
         business_trial_collector=lambda **kwargs: _business_bundle(
             "PASS",

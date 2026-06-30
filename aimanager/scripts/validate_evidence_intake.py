@@ -132,6 +132,17 @@ def _collect_checks(input_dir: Path) -> list[FileCheck]:
 
 def _collect_file_checks(input_files: Sequence[Path]) -> list[FileCheck]:
     files = tuple(dict.fromkeys(Path(path) for path in input_files))
+    if not files:
+        return [
+            FileCheck(
+                path="env:AIMANAGER_*_FILE",
+                status="BLOCKED",
+                detail=(
+                    "no evidence files were configured; set one or more AIMANAGER_*_FILE env vars "
+                    "before evidence intake can pass"
+                ),
+            )
+        ]
     checks: list[FileCheck] = []
     for path in sorted(files, key=str):
         if not path.exists():

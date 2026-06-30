@@ -6,6 +6,14 @@ from aimanager.scripts.generate_evidence_template_pack import collect_evidence_t
 from aimanager.scripts.validate_evidence_intake import validate_evidence_intake
 
 
+def test_evidence_intake_blocks_when_no_env_pointed_files_are_configured() -> None:
+    result = validate_evidence_intake(input_files=[], generated_at="2026-07-01T00:00:00Z")
+
+    assert result["status"] == "BLOCKED"
+    assert result["summary"] == {"PASS": 0, "FAIL": 0, "BLOCKED": 1, "files": 1}
+    assert "no evidence files were configured" in str(result["markdown"])
+
+
 def test_evidence_intake_blocks_unchanged_template_pack(tmp_path) -> None:
     launch_file = tmp_path / "launch-gap-plan.json"
     template_dir = tmp_path / "template-pack"
