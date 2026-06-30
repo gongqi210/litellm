@@ -417,6 +417,7 @@ PYTHONPATH="$PWD" uv run --no-project --with pytest --with pyyaml pytest aimanag
 PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.generate_business_overview --finance-monthly-file /tmp/aimanager-finance-export/aimanager_finance_monthly.csv --budget-file /path/to/aimanager-budgets.csv --observability-report-file /tmp/aimanager-observability.json --month 2026-06 --output-json-file /tmp/aimanager-business-overview.json --output-markdown-file /tmp/aimanager-business-overview.md
 PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.generate_monthly_close_package --finance-monthly-file /tmp/aimanager-finance-export/aimanager_finance_monthly.csv --reconciliation-file /tmp/aimanager-finance-export/aimanager_reconciliation.csv --adjustment-file /path/to/aimanager-monthly-adjustments.csv --month 2026-06 --output-json-file /tmp/aimanager-monthly-close.json --output-adjusted-csv-file /tmp/aimanager-monthly-close-adjusted.csv --output-markdown-file /tmp/aimanager-monthly-close.md
 PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.validate_employee_monitoring_policy --policy-file /path/to/aimanager-employee-monitoring-policy.json --employee-roster-file /path/to/employee-roster.csv --acknowledgment-file /path/to/employee-monitoring-acknowledgments.csv --output-json-file /tmp/aimanager-employee-monitoring.json --output-markdown-file /tmp/aimanager-employee-monitoring.md
+PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.generate_launch_gap_plan --production-readiness-file /tmp/aimanager-production-readiness.json --business-trial-file /tmp/aimanager-business-trial-acceptance.json --output-json-file /tmp/aimanager-launch-gap-plan.json --output-markdown-file /tmp/aimanager-launch-gap-plan.md
 docker compose -f aimanager/docker-compose.yml config
 docker compose -f aimanager/docker-compose.yml --profile admin config
 ```
@@ -654,6 +655,18 @@ PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.business_trial
 This is the M2 business-trial gate. It runs the production-readiness bundle, then adds AC-23 timed nontechnical trial evidence and AC-26 employee-monitoring evidence into one PASS/FAIL/BLOCKED JSON artifact. AC-23 evidence must be an attestation summary only: non-SDK business operator, server-side or SSO identity injection, employee LiteLLM virtual key used, ycapi token not exposed, request id, allowed model/endpoint, nonzero spend, CNY pricing version, work-context PASS, HTML escape/no-secret-echo flags, observer, and timestamps whose derived duration is greater than 0 and no more than 300 seconds. It rejects raw prompt/response/content, Authorization/cookie/token fields, `Bearer ...`, `sk-*`, and WeCom webhook values without echoing them.
 
 AC-23 can return `PASS` only when the same bundle's AC-19 live ycapi preflight is also `PASS`; a hand-written trial JSON cannot bypass live ycapi evidence. AC-26 can use either a prior `validate_employee_monitoring_policy` JSON result or the raw policy/roster/acknowledgment files. Empty local environments return exit code `2` with seven blocked checks: AC-15, AC-19, AC-16-WeCom, AC-12/13-Finance, AC-POLICY, AC-23, and AC-26.
+
+Launch gap plan:
+
+```bash
+PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.generate_launch_gap_plan \
+  --production-readiness-file /tmp/aimanager-production-readiness.json \
+  --business-trial-file /tmp/aimanager-business-trial-acceptance.json \
+  --output-json-file /tmp/aimanager-launch-gap-plan.json \
+  --output-markdown-file /tmp/aimanager-launch-gap-plan.md
+```
+
+This command is a read-only planning step for the remaining launch evidence. It consumes existing `production_readiness_bundle` and `business_trial_acceptance_bundle` JSON files, deduplicates checks that appear in both gates, and converts every `FAIL` or `BLOCKED` item into an owner-grouped action with required env, required files, rerun command, and next action. It does not call ycapi, WeCom, admin URLs, or any live service, and it redacts secret-like strings before writing JSON or Markdown. Exit code `0` means no supplied gap remains, `1` means at least one `FAIL`, and `2` means no failed checks but at least one missing input or blocked evidence item.
 
 Postgres-down runtime smoke:
 
