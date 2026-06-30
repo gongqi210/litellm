@@ -2,17 +2,15 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from aimanager.redaction import sanitize_text as sanitize_secret_text
+from aimanager.redaction import sanitize_value as sanitize_secret_value
+
 _EXIT_CODES = {"PASS": 0, "FAIL": 1, "BLOCKED": 2}
 _STATUS_ORDER = {"FAIL": 0, "BLOCKED": 1, "PASS": 2}
-_SECRET_LIKE_REDACTION = "[redacted:secret-like-value]"
-_WECOM_WEBHOOK_PATTERN = re.compile(r"https://qyapi\.weixin\.qq\.com/cgi-bin/webhook/send\?key=[A-Za-z0-9._~+/=-]+")
-_BEARER_PATTERN = re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]+")
-_SECRET_KEY_PATTERN = re.compile(r"\bsk-[A-Za-z0-9][A-Za-z0-9._-]{3,}\b")
 
 _GAP_CATALOG: dict[str, dict[str, object]] = {
     "AC-15": {
@@ -311,19 +309,11 @@ def _string_list(value: object) -> list[str]:
 
 
 def _sanitize_value(value: object) -> object:
-    if isinstance(value, str):
-        return _sanitize_text(value)
-    if isinstance(value, list):
-        return [_sanitize_value(item) for item in value]
-    if isinstance(value, dict):
-        return {str(key): _sanitize_value(item) for key, item in value.items()}
-    return value
+    return sanitize_secret_value(value)
 
 
 def _sanitize_text(value: str) -> str:
-    value = _WECOM_WEBHOOK_PATTERN.sub("[redacted:AIMANAGER_WECOM_WEBHOOK_URL]", value)
-    value = _BEARER_PATTERN.sub(_SECRET_LIKE_REDACTION, value)
-    return _SECRET_KEY_PATTERN.sub(_SECRET_LIKE_REDACTION, value)
+    return sanitize_secret_text(value)
 
 
 def _write_json(path: Path, payload: Mapping[str, object]) -> None:

@@ -11,6 +11,7 @@ from typing import Any, Callable, Literal, Mapping, Sequence
 
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, model_validator
 
+from aimanager.redaction import contains_secret_like
 from aimanager.scripts.production_readiness_bundle import (
     DEFAULT_EXPECTED_MODELS,
     CheckResult,
@@ -69,7 +70,6 @@ FORBIDDEN_EVIDENCE_KEYS = {
     "ycapi_api_key",
     "ycapi_api_token",
 }
-SECRET_VALUE_MARKERS = ("Bearer ", "sk-", "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=")
 
 
 class OperatorEvidence(BaseModel):
@@ -602,7 +602,7 @@ def _is_forbidden_evidence_key(key: str) -> bool:
 
 
 def _contains_secret_like_value(value: str) -> bool:
-    return any(marker in value for marker in SECRET_VALUE_MARKERS)
+    return contains_secret_like(value)
 
 
 def _compact_validation_errors(exc: ValidationError) -> str:

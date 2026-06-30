@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Mapping, Sequence
+
+from aimanager.redaction import sanitize_text as sanitize_secret_text
+from aimanager.redaction import sanitize_value as sanitize_secret_value
 
 _EXIT_CODES = {"PASS": 0, "FAIL": 1, "BLOCKED": 2}
 _STATUS_ORDER = {"FAIL": 0, "BLOCKED": 1, "PASS": 2}
@@ -19,18 +21,6 @@ _STAGE_SCORE_LABELS = {
     "launch_gap_plan": "launch_gap_closure",
     "acceptance_coverage": "acceptance_coverage",
 }
-_SECRET_PATTERNS = (
-    (
-        re.compile(r"https://qyapi\.weixin\.qq\.com/cgi-bin/webhook/send\?key=[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+"),
-        "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=[redacted:AIMANAGER_WECOM_WEBHOOK_URL]",
-    ),
-    (re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]+"), "Bearer [redacted:secret-like-value]"),
-    (re.compile(r"\bsk-[A-Za-z0-9._~-]+"), "[redacted:secret-like-value]"),
-    (
-        re.compile(r"(postgres(?:ql)?://[^:\s/@]+:)[^@\s]+(@)", re.IGNORECASE),
-        r"\1[redacted:secret-like-value]\2",
-    ),
-)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -478,20 +468,11 @@ def _string_list(value: object) -> list[str]:
 
 
 def _sanitize_value(value: object) -> object:
-    if isinstance(value, str):
-        return _sanitize_text(value)
-    if isinstance(value, list):
-        return [_sanitize_value(item) for item in value]
-    if isinstance(value, dict):
-        return {str(key): _sanitize_value(item) for key, item in value.items()}
-    return value
+    return sanitize_secret_value(value)
 
 
 def _sanitize_text(text: str) -> str:
-    sanitized = text
-    for pattern, replacement in _SECRET_PATTERNS:
-        sanitized = pattern.sub(replacement, sanitized)
-    return sanitized
+    return sanitize_secret_text(text)
 
 
 def _markdown_cell(text: str) -> str:

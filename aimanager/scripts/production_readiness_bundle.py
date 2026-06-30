@@ -4,13 +4,19 @@ import argparse
 import json
 import math
 import os
-import re
 import sys
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable, Literal, Mapping, Sequence
 
+from aimanager.redaction import (
+    SECRET_LIKE_REDACTION,
+    build_secret_redactions,
+    contains_secret_like,
+    sanitize_text as sanitize_secret_text,
+    sanitize_value as sanitize_secret_value,
+)
 from aimanager.scripts.export_finance import export_finance_csvs
 from aimanager.scripts.route_observability_alerts import route_observability_alerts
 from aimanager.scripts.smoke_admin_boundary import run_admin_boundary_smoke
@@ -20,10 +26,6 @@ from aimanager.scripts.smoke_live_ycapi import DEFAULT_YCAPI_BASE_URL, run_live_
 ReadinessStatus = Literal["PASS", "FAIL", "BLOCKED"]
 DEFAULT_EXPECTED_MODELS = ("gemini-2.5-flash", "deepseek-chat", "ycapi-image-1")
 DEFAULT_FINANCE_OUTPUT_DIR = "/tmp/aimanager-production-readiness-finance"
-SECRET_ENV_NAME_MARKERS = ("TOKEN", "KEY", "SECRET", "WEBHOOK", "PASSWORD")
-_WECOM_WEBHOOK_PATTERN = re.compile(r"https://qyapi\.weixin\.qq\.com/cgi-bin/webhook/send\?key=[A-Za-z0-9._~+/=-]+")
-_BEARER_PATTERN = re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]+")
-_SECRET_KEY_PATTERN = re.compile(r"\bsk-[A-Za-z0-9][A-Za-z0-9._-]{3,}\b")
 
 
 @dataclass(frozen=True)
@@ -39,7 +41,7 @@ AdminBoundaryRunner = Callable[..., Sequence[Any]]
 LiveYcapiRunner = Callable[..., Any]
 WeComRouter = Callable[..., Any]
 FinanceRunner = Callable[..., CheckResult]
-_SECRET_LIKE_REDACTION = "[redacted:secret-like-value]"
+_SECRET_LIKE_REDACTION = SECRET_LIKE_REDACTION
 
 
 def collect_production_readiness(
@@ -437,37 +439,15 @@ def _sanitize_check(check: CheckResult, redactions: Mapping[str, str]) -> dict[s
 
 
 def _sanitize_value(value: Any, redactions: Mapping[str, str]) -> Any:
-    if isinstance(value, str):
-        return _sanitize_text(value, redactions)
-    if isinstance(value, list):
-        return [_sanitize_value(item, redactions) for item in value]
-    if isinstance(value, tuple):
-        return [_sanitize_value(item, redactions) for item in value]
-    if isinstance(value, dict):
-        return {str(key): _sanitize_value(item, redactions) for key, item in value.items()}
-    return value
+    return sanitize_secret_value(value, redactions)
 
 
 def _sanitize_text(value: str, redactions: Mapping[str, str]) -> str:
-    sanitized = value
-    for secret, replacement in redactions.items():
-        if secret:
-            sanitized = sanitized.replace(secret, replacement)
-    sanitized = _WECOM_WEBHOOK_PATTERN.sub("[redacted:AIMANAGER_WECOM_WEBHOOK_URL]", sanitized)
-    sanitized = _BEARER_PATTERN.sub(_SECRET_LIKE_REDACTION, sanitized)
-    sanitized = _SECRET_KEY_PATTERN.sub(_SECRET_LIKE_REDACTION, sanitized)
-    return sanitized
+    return sanitize_secret_text(value, redactions)
 
 
 def _redactions(env: Mapping[str, str]) -> dict[str, str]:
-    redactions: dict[str, str] = {}
-    for name, raw_value in sorted(env.items()):
-        if not any(marker in name.upper() for marker in SECRET_ENV_NAME_MARKERS):
-            continue
-        value = raw_value.strip() if isinstance(raw_value, str) else ""
-        if value:
-            redactions[value] = f"[redacted:{name}]"
-    return redactions
+    return build_secret_redactions(env)
 
 
 def _summary(checks: Sequence[Mapping[str, Any]]) -> dict[str, int]:
@@ -641,7 +621,7 @@ def _positive_number(value: Any) -> float:
 
 
 def _contains_secret_like_value(value: str) -> bool:
-    return any(pattern.search(value) for pattern in (_WECOM_WEBHOOK_PATTERN, _BEARER_PATTERN, _SECRET_KEY_PATTERN))
+    return contains_secret_like(value)
 
 
 if __name__ == "__main__":

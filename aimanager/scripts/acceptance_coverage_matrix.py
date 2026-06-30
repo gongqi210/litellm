@@ -8,24 +8,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal, Mapping, Sequence
 
+from aimanager.redaction import sanitize_value as sanitize_secret_value
+
 Status = Literal["PASS", "FAIL", "BLOCKED"]
 BundleSource = Literal["production_readiness", "business_trial"]
 
 _EXIT_CODES: dict[str, int] = {"PASS": 0, "FAIL": 1, "BLOCKED": 2}
 _STATUS_ORDER: dict[str, int] = {"FAIL": 0, "BLOCKED": 1, "PASS": 2}
 _AC_PATTERN = re.compile(r"\b(?:AC-\d{2}|AC-POLICY)\b")
-_SECRET_PATTERNS = (
-    (
-        re.compile(r"https://qyapi\.weixin\.qq\.com/cgi-bin/webhook/send\?key=[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+"),
-        "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=[redacted:AIMANAGER_WECOM_WEBHOOK_URL]",
-    ),
-    (re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]+"), "Bearer [redacted:secret-like-value]"),
-    (re.compile(r"\bsk-[A-Za-z0-9._~-]+"), "[redacted:secret-like-value]"),
-    (
-        re.compile(r"(postgres(?:ql)?://[^:\s/@]+:)[^@\s]+(@)", re.IGNORECASE),
-        r"\1[redacted:secret-like-value]\2",
-    ),
-)
 
 
 @dataclass(frozen=True)
@@ -500,18 +490,7 @@ def _mapping(value: object) -> Mapping[str, object]:
 
 
 def _sanitize_value(value: object) -> object:
-    if isinstance(value, str):
-        sanitized = value
-        for pattern, replacement in _SECRET_PATTERNS:
-            sanitized = pattern.sub(replacement, sanitized)
-        return sanitized
-    if isinstance(value, list):
-        return [_sanitize_value(item) for item in value]
-    if isinstance(value, tuple):
-        return tuple(_sanitize_value(item) for item in value)
-    if isinstance(value, dict):
-        return {str(key): _sanitize_value(item) for key, item in value.items()}
-    return value
+    return sanitize_secret_value(value)
 
 
 if __name__ == "__main__":

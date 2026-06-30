@@ -3,12 +3,16 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
+from aimanager.redaction import (
+    build_secret_redactions,
+    sanitize_text as sanitize_secret_text,
+    sanitize_value as sanitize_secret_value,
+)
 from aimanager.scripts.acceptance_coverage_matrix import collect_acceptance_coverage_matrix
 from aimanager.scripts.business_trial_acceptance_bundle import collect_business_trial_acceptance
 from aimanager.scripts.generate_final_acceptance_report import collect_final_acceptance_report
@@ -18,22 +22,6 @@ from aimanager.scripts.production_readiness_bundle import collect_production_rea
 
 _EXIT_CODES = {"PASS": 0, "FAIL": 1, "BLOCKED": 2}
 _STATUS_ORDER = {"FAIL": 0, "BLOCKED": 1, "PASS": 2}
-_SECRET_ENV_NAME_MARKERS = ("TOKEN", "KEY", "SECRET", "WEBHOOK", "PASSWORD")
-_SECRET_PATTERNS = (
-    (
-        re.compile(r"https://qyapi\.weixin\.qq\.com/cgi-bin/webhook/send\?key=[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+"),
-        "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=[redacted:AIMANAGER_WECOM_WEBHOOK_URL]",
-    ),
-    (re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]+"), "Bearer [redacted:secret-like-value]"),
-    (re.compile(r"\bsk-[A-Za-z0-9._~-]+"), "[redacted:secret-like-value]"),
-    (
-        re.compile(
-            r"((?:postgres(?:ql)?|mysql|mariadb|redis|mongodb(?:\+srv)?)://[^:\s/@]+:)[^@\s]+(@)",
-            re.IGNORECASE,
-        ),
-        r"\1[redacted:secret-like-value]\2",
-    ),
-)
 
 ProductionReadinessCollector = Callable[..., dict[str, Any]]
 BusinessTrialCollector = Callable[..., dict[str, Any]]
@@ -314,36 +302,15 @@ def _write_text(path: Path, content: str) -> None:
 
 
 def _sanitize_value(value: object, redactions: Mapping[str, str]) -> object:
-    if isinstance(value, str):
-        return _sanitize_text(value, redactions)
-    if isinstance(value, list):
-        return [_sanitize_value(item, redactions) for item in value]
-    if isinstance(value, tuple):
-        return [_sanitize_value(item, redactions) for item in value]
-    if isinstance(value, dict):
-        return {str(key): _sanitize_value(item, redactions) for key, item in value.items()}
-    return value
+    return sanitize_secret_value(value, redactions)
 
 
 def _sanitize_text(value: str, redactions: Mapping[str, str]) -> str:
-    sanitized = value
-    for secret, replacement in redactions.items():
-        if secret:
-            sanitized = sanitized.replace(secret, replacement)
-    for pattern, replacement in _SECRET_PATTERNS:
-        sanitized = pattern.sub(replacement, sanitized)
-    return sanitized
+    return sanitize_secret_text(value, redactions)
 
 
 def _redactions(env: Mapping[str, str]) -> dict[str, str]:
-    redactions: dict[str, str] = {}
-    for name, raw_value in sorted(env.items()):
-        if not any(marker in name.upper() for marker in _SECRET_ENV_NAME_MARKERS):
-            continue
-        value = raw_value.strip() if isinstance(raw_value, str) else ""
-        if value:
-            redactions[value] = f"[redacted:{name}]"
-    return redactions
+    return build_secret_redactions(env)
 
 
 def _overall_status(statuses: Sequence[str] | Any) -> str:
