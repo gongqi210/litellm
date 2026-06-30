@@ -78,7 +78,7 @@
 | AC-20 | PASS | `pytest aimanager/tests/test_work_context.py`；`python -m aimanager.scripts.validate_work_context --context-file <work-context.json> --mode preflight` | 已新增工作场景包机器校验合同：非 SDK 入口在内容生成前应提交非空字符串形式的最终员工主体、部门、一级/二级场景、内用/外发、渠道、项目或客户、敏感级别，以及布尔型审批要求；非法一级/二级场景组合、缺项目/客户、外发但未要求审批、非字符串引用均返回 `FAIL`。当前证明的是后端契约，不代表 WeCom/网页入口已接入生成链路 |
 | AC-21 | PASS | `pytest aimanager/tests/test_work_context.py::test_work_context_closure_requires_full_marketing_workflow` | `closure` 模式要求外发市场内容具备 brief、草稿、人工审核、定稿、外发审批、归档和复盘引用，缺任一引用返回 `FAIL`；当前证明的是可机审追踪契约，不代表最终 WeCom/网页入口已完成 |
 | AC-22 | PASS | `pytest aimanager/tests/test_work_context.py::test_work_context_rejects_external_marketing_without_brand_safety` | 外发市场内容的工作场景包必须带品牌安全规则引用，并确认品牌语气、禁用承诺、价格/效果宣称、竞品比较、客户案例、版权、人物肖像、事实核查和外发审批要求；缺项或未确认返回 `FAIL`。当前证明的是可机审品牌安全合同，实际入口接入仍归 AC-23 |
-| AC-23 | BLOCKED | `validate_work_context` CLI 可作为非 SDK 入口后端契约 | 市场或业务人员的 WeCom Bot、轻量网页或部门管理员代操作入口尚未实现；当前只完成表单/入口应提交的 JSON 契约和校验命令 |
+| AC-23 | BLOCKED | `pytest aimanager/tests/test_lightweight_entry.py`；`python -m aimanager.scripts.submit_lightweight_entry --form-file <form.json> --dry-run --output-json-file <result.json>` | 已完成非 SDK 入口的后端/CLI 适配合同：扁平 WeCom/轻量页表单可经 `validate_work_context` 校验后生成受控 `/v1/chat/completions` 请求体，metadata 包含工作场景、员工/部门/项目、`cost_center_id`、`currency`、`pricing_version`，并保留业务 ID 大小写用于财务归集；表单夹带 token-like 字段或值会 `FAIL` 且不回显秘密；提交路径只接受员工 LiteLLM virtual key，拒绝 `YCAPI_API_TOKEN` 作为员工 key env 或同值密钥。当前仍不是最终 WeCom Bot/轻量网页，尚未完成市场或业务人员 5 分钟真实合规试用，因此 AC-23 保持 `BLOCKED` |
 | AC-24 | BLOCKED | M1 财务与 observability 导出可作为数据源 | 总经理业务化经营总览页面/报表聚合尚未完成 |
 | AC-25 | BLOCKED | M1 财务导出和 production readiness finance gate 可作为输入 | 关账、补记、冲销、归属调整和差异处理记录流程尚未实现 |
 | AC-26 | BLOCKED | PRD 已定义制度边界 | 非工作时间异常、key 共享检测等员工监控制度告知和权限边界确认尚未形成可验收产物 |

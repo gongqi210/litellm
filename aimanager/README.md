@@ -473,6 +473,29 @@ PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.validate_work_
 
 This is the CLI contract behind a future WeCom Bot, lightweight page, or department-admin form. `preflight` validates that a content request carries a real work context before model generation: final employee principal, department, scenario level 1/2, internal/external use, channel, project or customer, sensitivity level, and approval requirement. Required identifiers and references must be non-empty strings; `approval_required` must be a boolean. For external marketing content it also requires a non-empty brief reference, human reviewer, approval policy reference, and the visible brand-safety checklist. `closure` validates the full market-content trace after publishing: brief, draft, human review, final, external approval, archive, and retrospective references. Missing context file returns `BLOCKED`; malformed or incomplete context returns `FAIL`; valid context returns `PASS`.
 
+M2 lightweight non-SDK entry adapter:
+
+```bash
+PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.submit_lightweight_entry \
+  --form-file /path/to/lightweight-form.json \
+  --dry-run \
+  --output-json-file /tmp/aimanager-lightweight-entry.json
+```
+
+The form is a flat JSON object from a future WeCom Bot, lightweight page, or department-admin workflow. It must include the same work-context fields plus request text and finance metadata: `prompt`, `model`, `cost_center_id`, `currency`, and `pricing_version`. Dry-run validates the form through `validate_work_context`, rejects token-like fields or values, preserves employee/department/project/cost-center identifier casing for finance attribution, and renders a governed OpenAI-compatible `POST /v1/chat/completions` body without any `Authorization` header.
+
+To submit through the business gateway without an SDK:
+
+```bash
+AIMANAGER_EMPLOYEE_VIRTUAL_KEY="$EMPLOYEE_VIRTUAL_KEY" \
+PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.submit_lightweight_entry \
+  --form-file /path/to/lightweight-form.json \
+  --base-url http://localhost:4000 \
+  --output-json-file /tmp/aimanager-lightweight-entry-submit.json
+```
+
+The submit path uses only an employee LiteLLM virtual key and refuses `YCAPI_API_TOKEN` as the employee-key env or value. It posts the rendered body to the AiManager business URL `/v1/chat/completions`, validates an OpenAI-compatible chat response, and never prints the employee key, ycapi token, or upstream error bodies. This is backend/CLI evidence for AC-23; a real WeCom Bot or lightweight page plus a demonstrated 5-minute non-technical trial is still required before AC-23 can be marked `PASS`.
+
 Production readiness evidence bundle:
 
 ```bash
@@ -555,6 +578,7 @@ Latest local runtime smoke evidence:
 - Local live-ycapi preflight tests prove `smoke_live_ycapi` returns `BLOCKED` without `YCAPI_API_TOKEN`, validates ycapi `/models` with expected model ids when a token is present, and masks token/URL values on transport failures.
 - Local production-readiness bundle tests prove `production_readiness_bundle` aggregates AC-15 admin boundary, AC-19 live ycapi, AC-16 WeCom alert routing, and AC-12/AC-13 finance reconciliation into one JSON artifact; missing production inputs return exit code `2`/`BLOCKED`, failures take priority over blockers, WeCom 0-delivery runs stay `BLOCKED`, empty spend/bill files and non-billable placeholder finance rows stay `BLOCKED`, and ycapi token or WeCom webhook values are redacted from details and evidence.
 - Local work-context validation tests prove `validate_work_context` can gate an external marketing request before generation with non-empty string identifiers, scenario, channel, project/customer, sensitivity, required boolean approval, non-empty brief/reviewer/approval-policy references, and brand-safety checklist evidence; malformed JSON and invalid work contexts return `FAIL`, missing context files return `BLOCKED`, and closure mode requires draft, human-review, final, external-approval, archive, and retrospective references before the workflow can be treated as traceable. This is the machine-readable contract for a future non-SDK WeCom/lightweight entry, not the final business portal.
+- Local lightweight-entry tests prove `submit_lightweight_entry` can turn a flat WeCom/page-style form into a governed `/v1/chat/completions` body with work-context metadata plus `cost_center_id`, `currency`, and `pricing_version`; it preserves identifier casing for finance attribution, rejects token-like fields or values without echoing them, blocks missing employee virtual keys, refuses employee keys that equal `YCAPI_API_TOKEN`, and can submit through an injected raw HTTP transport without using an SDK. This is backend/CLI evidence for AC-23, not final non-technical UI evidence.
 - Local SDK compatibility tests prove `smoke_sdk_compat` uses an employee LiteLLM virtual key instead of `YCAPI_API_TOKEN`, rejects `YCAPI_API_TOKEN` as the employee-key env or value, checks `/v1/models`, chat models `gemini-2.5-flash` and `deepseek-chat`, image `ycapi-image-1` with `response_format=b64_json`, a vision chat request with a base64 `data:` URL, required work metadata, OpenAI-compatible response shape, and sanitized failure details. `smoke_runtime_sdk_compat` now has local runtime PASS evidence against running business/admin surfaces with mock ycapi and fails if key cleanup fails.
 - Local error-contract tests prove allowed downstream LiteLLM/ycapi 429 JSON errors preserve the upstream `error` object, inject top-level `request_id` aligned with `x-litellm-call-id`, keep 401/403/404 fallback types stable, pass successful streaming chunks through unchanged, and convert non-JSON downstream 5xx errors to OpenAI-compatible JSON without leaking Bearer, `sk-*`, ycapi token text, or DSN passwords.
 
