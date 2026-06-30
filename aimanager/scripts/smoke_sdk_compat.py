@@ -16,6 +16,7 @@ from typing import Any, Literal
 SdkCompatStatus = Literal["PASS", "FAIL", "BLOCKED"]
 DEFAULT_BASE_URL = "http://localhost:4000"
 DEFAULT_EMPLOYEE_KEY_ENV = "AIMANAGER_EMPLOYEE_VIRTUAL_KEY"
+YCAPI_TOKEN_ENV = "YCAPI_API_TOKEN"
 DEFAULT_CHAT_MODEL = "gemini-2.5-flash"
 DEFAULT_CHAT_MODELS = (DEFAULT_CHAT_MODEL, "deepseek-chat")
 DEFAULT_IMAGE_MODEL = "ycapi-image-1"
@@ -59,6 +60,11 @@ def run_sdk_compat_smoke(
     fetch: Fetch | None = None,
     timeout_seconds: float = 10,
 ) -> SdkCompatSmokeResult:
+    if employee_key_env_name == YCAPI_TOKEN_ENV:
+        return SdkCompatSmokeResult(
+            status="FAIL",
+            detail=f"employee key env cannot be {YCAPI_TOKEN_ENV}; use a LiteLLM virtual key env",
+        )
     if not employee_key.strip():
         return SdkCompatSmokeResult(
             status="BLOCKED",
@@ -388,18 +394,33 @@ def main(argv: Sequence[str] | None = None) -> int:
     chat_models = tuple(args.chat_model) if args.chat_model else DEFAULT_CHAT_MODELS
 
     try:
-        result = run_sdk_compat_smoke(
-            base_url=args.base_url,
-            employee_key=os.environ.get(args.employee_key_env, ""),
-            employee_key_env_name=args.employee_key_env,
-            request_marker=args.request_marker,
-            chat_models=chat_models,
-            image_model=args.image_model,
-            vision_model=args.vision_model,
-            include_image=not args.skip_image,
-            include_vision=not args.skip_vision,
-            timeout_seconds=args.timeout,
-        )
+        employee_key = os.environ.get(args.employee_key_env, "")
+        ycapi_token = os.environ.get(YCAPI_TOKEN_ENV, "")
+        stripped_employee_key = employee_key.strip()
+        stripped_ycapi_token = ycapi_token.strip()
+        if (
+            args.employee_key_env != YCAPI_TOKEN_ENV
+            and stripped_employee_key
+            and stripped_ycapi_token
+            and stripped_employee_key == stripped_ycapi_token
+        ):
+            result = SdkCompatSmokeResult(
+                status="FAIL",
+                detail=f"employee key matches {YCAPI_TOKEN_ENV}; provide a LiteLLM virtual key instead",
+            )
+        else:
+            result = run_sdk_compat_smoke(
+                base_url=args.base_url,
+                employee_key=employee_key,
+                employee_key_env_name=args.employee_key_env,
+                request_marker=args.request_marker,
+                chat_models=chat_models,
+                image_model=args.image_model,
+                vision_model=args.vision_model,
+                include_image=not args.skip_image,
+                include_vision=not args.skip_vision,
+                timeout_seconds=args.timeout,
+            )
     except Exception as exc:
         print(f"FAIL SDK compatibility smoke: {type(exc).__name__}", file=sys.stderr)
         return 1

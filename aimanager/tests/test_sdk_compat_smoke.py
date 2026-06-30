@@ -21,6 +21,23 @@ def test_sdk_compat_smoke_blocks_without_employee_key() -> None:
     assert calls == []
 
 
+def test_sdk_compat_smoke_rejects_ycapi_token_env_name_without_fetch() -> None:
+    calls: list[str] = []
+
+    result = run_sdk_compat_smoke(
+        base_url="http://localhost:4000",
+        employee_key="ycapi-token-secret",
+        employee_key_env_name="YCAPI_API_TOKEN",
+        request_marker="sdk-smoke-123",
+        fetch=lambda method, url, headers, body: calls.append(url) or _json_response({"ok": True}),
+    )
+
+    assert result.status == "FAIL"
+    assert result.detail == "employee key env cannot be YCAPI_API_TOKEN; use a LiteLLM virtual key env"
+    assert calls == []
+    assert "ycapi-token-secret" not in result.detail
+
+
 def test_sdk_compat_smoke_calls_models_chat_and_image_with_work_metadata() -> None:
     employee_key = "evk-secret"
     calls: list[tuple[str, str, dict[str, str], dict[str, object] | None]] = []
@@ -230,6 +247,45 @@ def test_sdk_compat_smoke_cli_blocks_without_employee_key_and_ignores_ycapi_toke
     assert exit_code == 2
     assert "BLOCKED SDK compatibility smoke" in output
     assert "AIMANAGER_EMPLOYEE_VIRTUAL_KEY" in output
+    assert "ycapi-token-secret" not in output
+
+
+def test_sdk_compat_smoke_cli_rejects_ycapi_token_env_as_employee_key(monkeypatch, capsys) -> None:
+    monkeypatch.setenv("YCAPI_API_TOKEN", "ycapi-token-secret")
+
+    exit_code = main(["--base-url", "http://localhost:4000", "--employee-key-env", "YCAPI_API_TOKEN"])
+
+    output = capsys.readouterr().out
+    assert exit_code == 1
+    assert "FAIL SDK compatibility smoke" in output
+    assert "employee key env cannot be YCAPI_API_TOKEN" in output
+    assert "ycapi-token-secret" not in output
+
+
+def test_sdk_compat_smoke_cli_rejects_employee_key_equal_to_ycapi_token(monkeypatch, capsys) -> None:
+    monkeypatch.setenv("AIMANAGER_EMPLOYEE_VIRTUAL_KEY", "ycapi-token-secret")
+    monkeypatch.setenv("YCAPI_API_TOKEN", "ycapi-token-secret")
+
+    exit_code = main(["--base-url", "http://localhost:4000"])
+
+    output = capsys.readouterr().out
+    assert exit_code == 1
+    assert "FAIL SDK compatibility smoke" in output
+    assert "employee key matches YCAPI_API_TOKEN" in output
+    assert "ycapi-token-secret" not in output
+
+
+def test_sdk_compat_smoke_cli_rejects_employee_key_equal_to_ycapi_token_after_strip(
+    monkeypatch, capsys
+) -> None:
+    monkeypatch.setenv("AIMANAGER_EMPLOYEE_VIRTUAL_KEY", "  ycapi-token-secret ")
+    monkeypatch.setenv("YCAPI_API_TOKEN", "ycapi-token-secret")
+
+    exit_code = main(["--base-url", "http://localhost:4000"])
+
+    output = capsys.readouterr().out
+    assert exit_code == 1
+    assert "employee key matches YCAPI_API_TOKEN" in output
     assert "ycapi-token-secret" not in output
 
 
