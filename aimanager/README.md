@@ -351,6 +351,18 @@ PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.smoke_sdk_comp
 
 Expected result without `AIMANAGER_EMPLOYEE_VIRTUAL_KEY`: `BLOCKED`. Expected result with a governed employee virtual key and a running business proxy: `PASS`, with `/v1/models`, chat for `gemini-2.5-flash` and `deepseek-chat`, image `ycapi-image-1` using `response_format=b64_json`, and a vision request through the OpenAI-compatible chat route. The smoke reads only the configured employee virtual-key env var and never reads or prints `YCAPI_API_TOKEN`; it returns `FAIL` before making a request if `--employee-key-env YCAPI_API_TOKEN` is used or if the employee key value matches `YCAPI_API_TOKEN`.
 
+Runtime SDK compatibility smoke with a disposable employee key:
+
+```bash
+LITELLM_MASTER_KEY=aimanager-local-master-key \
+PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.smoke_runtime_sdk_compat \
+  --master-key aimanager-local-master-key \
+  --business-base-url http://localhost:4000 \
+  --admin-base-url http://localhost:4001
+```
+
+This smoke uses the management surface to create a governed one-hour employee LiteLLM virtual key, runs the SDK compatibility smoke against the business surface, and deletes the disposable key with lifecycle audit headers. It never reads or prints `YCAPI_API_TOKEN`, the generated virtual key, or the master key. Cleanup failure is a `FAIL`, even when the SDK calls pass.
+
 With a running local proxy:
 
 ```bash
@@ -513,7 +525,7 @@ Latest local runtime smoke evidence:
 - Local observability tests prove management `GET /metrics` is served by AiManager without reaching downstream LiteLLM, business `/metrics` remains blocked, audit events increment `aimanager_audit_events_total`, downstream 429/5xx increment `aimanager_http_responses_total`, and `export_observability` emits JSON metrics plus alert records from audit logs and request-status rows.
 - Local alert-routing tests prove `route_observability_alerts` can render WeCom markdown payloads from exported alert JSON, dry-run without a webhook, return `BLOCKED` when live alerts have no webhook, filter by severity, and validate WeCom `errcode=0` without printing the webhook URL.
 - Local live-ycapi preflight tests prove `smoke_live_ycapi` returns `BLOCKED` without `YCAPI_API_TOKEN`, validates ycapi `/models` with expected model ids when a token is present, and masks token/URL values on transport failures.
-- Local SDK compatibility tests prove `smoke_sdk_compat` uses an employee LiteLLM virtual key instead of `YCAPI_API_TOKEN`, rejects `YCAPI_API_TOKEN` as the employee-key env or value, checks `/v1/models`, chat models `gemini-2.5-flash` and `deepseek-chat`, image `ycapi-image-1` with `response_format=b64_json`, a vision chat request with a base64 `data:` URL, required work metadata, OpenAI-compatible response shape, and sanitized failure details. Runtime AC-06 remains blocked until a real employee virtual key is supplied against a running business surface.
+- Local SDK compatibility tests prove `smoke_sdk_compat` uses an employee LiteLLM virtual key instead of `YCAPI_API_TOKEN`, rejects `YCAPI_API_TOKEN` as the employee-key env or value, checks `/v1/models`, chat models `gemini-2.5-flash` and `deepseek-chat`, image `ycapi-image-1` with `response_format=b64_json`, a vision chat request with a base64 `data:` URL, required work metadata, OpenAI-compatible response shape, and sanitized failure details. `smoke_runtime_sdk_compat` adds an AC-06 runtime entrypoint that creates a disposable governed employee key through the management surface, runs the SDK smoke through the business surface, and fails if key cleanup fails. Runtime AC-06 remains blocked until this command is run against a real running business/admin surface.
 - Local error-contract tests prove allowed downstream LiteLLM/ycapi 429 JSON errors preserve the upstream `error` object, inject top-level `request_id` aligned with `x-litellm-call-id`, keep 401/403/404 fallback types stable, pass successful streaming chunks through unchanged, and convert non-JSON downstream 5xx errors to OpenAI-compatible JSON without leaking Bearer, `sk-*`, ycapi token text, or DSN passwords.
 
-Remaining before business trial: AC-06 runtime employee virtual-key evidence, production ycapi bill evidence, live ycapi smoke with the production token policy, production admin SSO/reverse-proxy header stripping, and a live WeCom webhook routing run from the management metrics/report output.
+Remaining before business trial: run AC-06 disposable-key runtime SDK smoke against the running business/admin surfaces, production ycapi bill evidence, live ycapi smoke with the production token policy, production admin SSO/reverse-proxy header stripping, and a live WeCom webhook routing run from the management metrics/report output.
