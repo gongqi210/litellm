@@ -400,6 +400,7 @@ uv run --no-project --with pyyaml python -m aimanager.scripts.validate_config ai
 PYTHONPATH="$PWD" uv run --no-project --with pytest --with pyyaml pytest aimanager/tests -q
 PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.generate_business_overview --finance-monthly-file /tmp/aimanager-finance-export/aimanager_finance_monthly.csv --budget-file /path/to/aimanager-budgets.csv --observability-report-file /tmp/aimanager-observability.json --month 2026-06 --output-json-file /tmp/aimanager-business-overview.json --output-markdown-file /tmp/aimanager-business-overview.md
 PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.generate_monthly_close_package --finance-monthly-file /tmp/aimanager-finance-export/aimanager_finance_monthly.csv --reconciliation-file /tmp/aimanager-finance-export/aimanager_reconciliation.csv --adjustment-file /path/to/aimanager-monthly-adjustments.csv --month 2026-06 --output-json-file /tmp/aimanager-monthly-close.json --output-adjusted-csv-file /tmp/aimanager-monthly-close-adjusted.csv --output-markdown-file /tmp/aimanager-monthly-close.md
+PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.validate_employee_monitoring_policy --policy-file /path/to/aimanager-employee-monitoring-policy.json --employee-roster-file /path/to/employee-roster.csv --acknowledgment-file /path/to/employee-monitoring-acknowledgments.csv --output-json-file /tmp/aimanager-employee-monitoring.json --output-markdown-file /tmp/aimanager-employee-monitoring.md
 docker compose -f aimanager/docker-compose.yml config
 docker compose -f aimanager/docker-compose.yml --profile admin config
 ```
@@ -558,6 +559,19 @@ PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.submit_lightwe
 
 The submit path uses only an employee LiteLLM virtual key and refuses `YCAPI_API_TOKEN` as the employee-key env or value. It posts the rendered body to the AiManager business URL `/v1/chat/completions`, validates an OpenAI-compatible chat response, and never prints the employee key, ycapi token, or upstream error bodies. This is backend/CLI evidence for AC-23; a real WeCom Bot or lightweight page plus a demonstrated 5-minute non-technical trial is still required before AC-23 can be marked `PASS`.
 
+M2 employee monitoring notice and boundary validation:
+
+```bash
+PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.validate_employee_monitoring_policy \
+  --policy-file /path/to/aimanager-employee-monitoring-policy.json \
+  --employee-roster-file /path/to/employee-roster.csv \
+  --acknowledgment-file /path/to/employee-monitoring-acknowledgments.csv \
+  --output-json-file /tmp/aimanager-employee-monitoring.json \
+  --output-markdown-file /tmp/aimanager-employee-monitoring.md
+```
+
+The policy validator is the AC-26 machine-readable contract for non-covert employee monitoring. It requires a published policy version, notice channels, metadata-only monitoring fields, explicit prohibitions on prompt/response/raw IP/customer-content inspection, bounded retention, enabled off-hours and suspected key-sharing rules, restricted reviewer roles, no direct-manager review access, HR/legal guardrails for discipline, and an employee appeal channel. It also requires real active-employee roster and latest-version acknowledgment exports. Missing evidence files return `BLOCKED`; contradictory policy or missing active employee acknowledgment returns `FAIL`; `PASS` means the supplied notice, acknowledgment, and permission-boundary evidence is internally consistent. Local tests prove the contract, not production HR/legal publication.
+
 Production readiness evidence bundle:
 
 ```bash
@@ -643,6 +657,7 @@ Latest local runtime smoke evidence:
 - Local lightweight-entry tests prove `submit_lightweight_entry` can turn a flat WeCom/page-style form into a governed `/v1/chat/completions` body with work-context metadata plus `cost_center_id`, `currency`, and `pricing_version`; it preserves identifier casing for finance attribution, rejects token-like fields or values without echoing them, blocks missing employee virtual keys, refuses employee keys that equal `YCAPI_API_TOKEN`, and can submit through an injected raw HTTP transport without using an SDK. This is backend/CLI evidence for AC-23, not final non-technical UI evidence.
 - Local business-overview tests prove `generate_business_overview` can combine monthly finance CSV, budget rows, and observability JSON into a CEO-readable JSON/Markdown report with monthly spend, budget utilization, anomaly events, TOP departments, TOP projects, and TOP keys; missing budget input returns `BLOCKED` and mixed currencies return `FAIL`. This is local report evidence for AC-24, not a production executive portal.
 - Local monthly-close tests prove `generate_monthly_close_package` can combine `aimanager_finance_monthly.csv`, `aimanager_reconciliation.csv`, and a finance adjustment ledger into JSON/CSV/Markdown close evidence; the contract covers supplemental entries, reversals, attribution adjustments, reconciliation difference resolutions, residual `unassigned` blocking, duplicate adjustment failure, unsupported resolution failure, stable composite row keys when `entry_id` is absent, and no serialization of token-like extra fields. This is local close-package evidence for AC-25, not production ERP posting or general-ledger writeback.
+- Local employee-monitoring tests prove `validate_employee_monitoring_policy` can validate AC-26 notice and permission-boundary evidence: metadata-only monitoring fields, prompt/response/raw IP/customer-content prohibitions, off-hours and suspected key-sharing rules, retention cap, reviewer role restrictions, HR/legal disciplinary guardrails, employee appeal channel, latest-version active-employee acknowledgment coverage, missing evidence `BLOCKED`, and token-like extras excluded from output. This is local policy/evidence contract, not proof that HR/legal has published the policy or that all real employees have acknowledged it.
 - Local SDK compatibility tests prove `smoke_sdk_compat` uses an employee LiteLLM virtual key instead of `YCAPI_API_TOKEN`, rejects `YCAPI_API_TOKEN` as the employee-key env or value, checks `/v1/models`, chat models `gemini-2.5-flash` and `deepseek-chat`, image `ycapi-image-1` with `response_format=b64_json`, a vision chat request with a base64 `data:` URL, required work metadata, OpenAI-compatible response shape, and sanitized failure details. `smoke_runtime_sdk_compat` now has local runtime PASS evidence against running business/admin surfaces with mock ycapi and fails if key cleanup fails.
 - Local error-contract tests prove allowed downstream LiteLLM/ycapi 429 JSON errors preserve the upstream `error` object, inject top-level `request_id` aligned with `x-litellm-call-id`, keep 401/403/404 fallback types stable, pass successful streaming chunks through unchanged, and convert non-JSON downstream 5xx errors to OpenAI-compatible JSON without leaking Bearer, `sk-*`, ycapi token text, or DSN passwords.
 
