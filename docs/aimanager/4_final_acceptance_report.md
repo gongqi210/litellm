@@ -57,6 +57,19 @@ PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.acceptance_cov
 
 This matrix parses the acceptance criteria document, verifies AC-01 through AC-26 plus AC-POLICY have executable local artifacts or bundle checks, overlays the M1/M2 bundle statuses, and fails on mapping drift such as a missing `AC-16-WECOM` or `AC-12-13-FINANCE` check. It is a final consistency gate, not a substitute for live production evidence.
 
+Machine-generated final report:
+
+```bash
+PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.generate_final_acceptance_report \
+  --business-trial-file /tmp/aimanager-business-trial-acceptance.json \
+  --launch-gap-plan-file /tmp/aimanager-launch-gap-plan.json \
+  --acceptance-coverage-file /tmp/aimanager-acceptance-coverage.json \
+  --output-json-file /tmp/aimanager-final-acceptance-report.json \
+  --output-markdown-file /tmp/aimanager-final-acceptance-report.md
+```
+
+This final report is now the executable go/no-go composition layer. It consumes only existing JSON artifacts, never calls live services, and returns `PASS` only when the business trial bundle is `PASS`, the launch gap plan has no unresolved gaps, and the acceptance coverage matrix is `PASS` with a non-empty list of criteria objects. Missing inputs or production-only evidence keep the report `BLOCKED`; malformed inputs, malformed coverage criteria, or failing inputs return `FAIL`. The generated JSON/Markdown carries owner, required env/files, rerun command, and next action for each unresolved blocker.
+
 ## Stage Scores
 
 | Stage | Score | Status |
@@ -75,7 +88,7 @@ This matrix parses the acceptance criteria document, verifies AC-01 through AC-2
 - AC-12/13: provide real AiManager spend export and ycapi monthly bill evidence with nonzero billable amounts.
 - AC-23: run a timed 5-minute nontechnical trial with live ycapi, controlled identity injection, and a governed employee virtual key.
 - AC-26: provide HR/legal-approved policy publication, roster, and latest-version acknowledgment export.
-- Final gate: rerun `business_trial_acceptance_bundle`, then run `acceptance_coverage_matrix`; require every leaf check and every mapped AC row to be `PASS`.
+- Final gate: rerun `business_trial_acceptance_bundle`, `generate_launch_gap_plan`, `acceptance_coverage_matrix`, and `generate_final_acceptance_report`; require every leaf check, launch gap, mapped AC row, and final report blocker to be `PASS` or empty.
 
 ## Final Conclusion
 
