@@ -21,8 +21,9 @@ _GAP_CATALOG: dict[str, dict[str, object]] = {
             "--inventory-file \"$AIMANAGER_KEY_INVENTORY_FILE\" --output-json-file /tmp/aimanager-key-inventory.json"
         ),
         "next_action": (
-            "导出生产 LiteLLM virtual key metadata-only inventory，确认所有 active key 都有员工/团队、模型、"
-            "预算、限流、治理 metadata；shared virtual key 必须带 enforced_params。"
+            "导出 24 小时内的生产 LiteLLM virtual key metadata-only 全量 inventory，并提供 exported_at、export_source、"
+            "export_scope=all_virtual_keys、exported_by、expected_total_key_count；确认所有 active key 都有员工/团队、"
+            "模型、预算、限流、duration 和治理 metadata；shared virtual key 必须带 enforced_params。"
         ),
     },
     "AC-15": {

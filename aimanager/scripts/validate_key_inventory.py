@@ -5,7 +5,7 @@ import json
 import math
 import os
 import sys
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal, Mapping, Sequence
 
@@ -25,7 +25,18 @@ _REQUIRED_ACTIVE_KEY_FIELDS = (
     "max_budget",
     "rpm_limit",
     "tpm_limit",
+    "duration",
 )
+_REQUIRED_EXPORT_METADATA_FIELDS = (
+    "exported_at",
+    "export_source",
+    "export_scope",
+    "exported_by",
+    "expected_total_key_count",
+)
+_EXPECTED_EXPORT_SCOPE = "all_virtual_keys"
+_MAX_EXPORT_AGE = timedelta(hours=24)
+_MAX_EXPORT_FUTURE_SKEW = timedelta(minutes=5)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -117,6 +128,28 @@ def collect_key_inventory_validation(
     if keys is None:
         return _result(status="FAIL", detail="key inventory must contain a keys or data list", generated_at=generated_at)
 
+    export_metadata_status, export_metadata_detail, export_metadata_violations = _validate_export_metadata(
+        payload,
+        exported_key_count=len(keys),
+        generated_at=generated_at,
+    )
+    if export_metadata_status == "BLOCKED":
+        return _result(
+            status="BLOCKED",
+            detail=export_metadata_detail,
+            generated_at=generated_at,
+            total_key_count=len(keys),
+            required_fields=_REQUIRED_EXPORT_METADATA_FIELDS,
+        )
+    if export_metadata_status == "FAIL":
+        return _result(
+            status="FAIL",
+            detail=export_metadata_detail,
+            generated_at=generated_at,
+            total_key_count=len(keys),
+            violations=export_metadata_violations,
+        )
+
     violations: list[dict[str, object]] = []
     active_key_count = 0
     blocked_key_count = 0
@@ -154,6 +187,7 @@ def collect_key_inventory_validation(
         active_key_count=active_key_count,
         blocked_key_count=blocked_key_count,
         violations=violations,
+        export_metadata=_export_metadata_evidence(payload),
     )
 
 
@@ -187,7 +221,16 @@ def _active_key_violations(key: Mapping[str, Any], *, index: int) -> list[dict[s
             }
         )
 
-    if metadata.get("shared_key") is True:
+    shared_key_value = metadata.get("shared_key")
+    if shared_key_value is not None and not isinstance(shared_key_value, bool):
+        violations.append(
+            {
+                "key_ref": _key_ref(key, index=index),
+                "reason": "metadata.shared_key must be a boolean when present",
+                "fields": ["metadata.shared_key"],
+            }
+        )
+    if shared_key_value is True:
         enforced_params = _string_list(metadata.get("enforced_params"))
         missing_enforced_params = [param for param in SHARED_KEY_ENFORCED_PARAMS if param not in enforced_params]
         if missing_enforced_params:
@@ -211,7 +254,9 @@ def _result(
     blocked_key_count: int = 0,
     violations: Sequence[Mapping[str, object]] | None = None,
     required_env: Sequence[str] | None = None,
+    required_fields: Sequence[str] | None = None,
     raw_preview: str | None = None,
+    export_metadata: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     violation_list = [dict(item) for item in violations or ()]
     result: dict[str, object] = {
@@ -228,8 +273,12 @@ def _result(
     }
     if required_env:
         result["required_env"] = list(required_env)
+    if required_fields:
+        result["required_fields"] = list(required_fields)
     if raw_preview:
         result["raw_preview"] = raw_preview
+    if export_metadata:
+        result["export_metadata"] = dict(export_metadata)
     return sanitize_secret_value(result)
 
 
@@ -239,6 +288,116 @@ def _extract_keys(payload: Mapping[str, Any]) -> list[Any] | None:
         if isinstance(value, list):
             return value
     return None
+
+
+def _validate_export_metadata(
+    payload: Mapping[str, Any],
+    *,
+    exported_key_count: int,
+    generated_at: str | None,
+) -> tuple[Status, str, list[dict[str, object]]]:
+    missing_fields = [field_name for field_name in _REQUIRED_EXPORT_METADATA_FIELDS if _is_missing(payload.get(field_name))]
+    if missing_fields:
+        return (
+            "BLOCKED",
+            "key inventory is missing trusted export metadata; cannot prove this is a complete LiteLLM virtual-key export",
+            [],
+        )
+
+    violations: list[dict[str, object]] = []
+    exported_at = _parse_datetime(payload.get("exported_at"))
+    if exported_at is None:
+        violations.append(
+            {
+                "key_ref": "export",
+                "reason": "exported_at must be an ISO-8601 timestamp",
+                "fields": ["exported_at"],
+            }
+        )
+    else:
+        reference_time = _parse_datetime(generated_at) or datetime.now(UTC)
+        if exported_at - reference_time > _MAX_EXPORT_FUTURE_SKEW:
+            return (
+                "BLOCKED",
+                "key inventory export timestamp is in the future; rerun export with synchronized production clock",
+                [],
+            )
+        if reference_time - exported_at > _MAX_EXPORT_AGE:
+            return (
+                "BLOCKED",
+                "key inventory export is stale; rerun a fresh complete LiteLLM virtual-key export",
+                [],
+            )
+
+    export_scope = str(payload.get("export_scope")).strip()
+    if export_scope != _EXPECTED_EXPORT_SCOPE:
+        violations.append(
+            {
+                "key_ref": "export",
+                "reason": "export_scope must prove a full virtual-key inventory",
+                "fields": ["export_scope"],
+            }
+        )
+
+    expected_total = _non_negative_int(payload.get("expected_total_key_count"))
+    if expected_total is None:
+        violations.append(
+            {
+                "key_ref": "export",
+                "reason": "expected_total_key_count must be a non-negative integer",
+                "fields": ["expected_total_key_count"],
+            }
+        )
+    elif expected_total != exported_key_count:
+        violations.append(
+            {
+                "key_ref": "export",
+                "reason": "declared export total does not match keys list",
+                "fields": ["expected_total_key_count"],
+            }
+        )
+
+    if violations:
+        detail = (
+            "expected_total_key_count does not match exported key count"
+            if any("expected_total_key_count" in violation.get("fields", []) for violation in violations)
+            else "trusted export metadata is invalid"
+        )
+        return ("FAIL", detail, violations)
+    return ("PASS", "trusted export metadata is present", [])
+
+
+def _export_metadata_evidence(payload: Mapping[str, Any]) -> dict[str, object]:
+    return {
+        "exported_at": str(payload.get("exported_at", "")).strip(),
+        "export_source": str(payload.get("export_source", "")).strip(),
+        "export_scope": str(payload.get("export_scope", "")).strip(),
+        "exported_by": str(payload.get("exported_by", "")).strip(),
+        "expected_total_key_count": payload.get("expected_total_key_count"),
+    }
+
+
+def _non_negative_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int) and value >= 0:
+        return value
+    return None
+
+
+def _parse_datetime(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip()
+    if text.endswith("Z"):
+        text = f"{text[:-1]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def _env_path(env: Mapping[str, str], name: str) -> Path | None:

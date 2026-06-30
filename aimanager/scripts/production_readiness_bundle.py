@@ -59,7 +59,7 @@ def collect_production_readiness(
     checks = [
         _admin_boundary_check(current_env, admin_boundary_runner=admin_boundary_runner),
         _live_ycapi_check(current_env, live_ycapi_runner=live_ycapi_runner),
-        _key_inventory_check(current_env),
+        _key_inventory_check(current_env, generated_at=generated_at),
         _wecom_routing_check(current_env, wecom_router=wecom_router),
         (finance_runner or _finance_evidence_check)(env=current_env),
         _production_policy_attestation_check(current_env),
@@ -163,9 +163,9 @@ def _live_ycapi_check(env: Mapping[str, str], *, live_ycapi_runner: LiveYcapiRun
     )
 
 
-def _key_inventory_check(env: Mapping[str, str]) -> CheckResult:
+def _key_inventory_check(env: Mapping[str, str], *, generated_at: str | None) -> CheckResult:
     try:
-        result = collect_key_inventory_validation(env=env)
+        result = collect_key_inventory_validation(env=env, generated_at=generated_at)
     except Exception as exc:
         return CheckResult(
             id="AC-08-KEY-INVENTORY",
@@ -186,6 +186,11 @@ def _key_inventory_check(env: Mapping[str, str]) -> CheckResult:
     violations = result.get("violations")
     if isinstance(violations, list) and violations:
         evidence["violations"] = violations[:12]
+    export_metadata = result.get("export_metadata")
+    if isinstance(export_metadata, dict):
+        for field_name in ("exported_at", "export_source", "export_scope", "exported_by", "expected_total_key_count"):
+            if field_name in export_metadata:
+                evidence[field_name] = export_metadata[field_name]
     return CheckResult(
         id="AC-08-KEY-INVENTORY",
         name="production_key_inventory_governance",

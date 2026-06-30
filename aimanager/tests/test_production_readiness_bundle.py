@@ -11,6 +11,8 @@ from aimanager.scripts.production_readiness_bundle import (
 )
 from aimanager.scripts.smoke_admin_boundary import AdminBoundaryResult
 
+GENERATED_AT = "2026-07-01T02:30:00Z"
+
 
 def test_production_readiness_blocks_without_required_inputs() -> None:
     bundle = collect_production_readiness(env={})
@@ -57,11 +59,24 @@ def test_production_readiness_blocks_empty_key_inventory(tmp_path) -> None:
     inventory_file = tmp_path / "key-inventory.json"
     policy_file = tmp_path / "production-policy.json"
     report_file = tmp_path / "observability.json"
-    inventory_file.write_text(json.dumps({"keys": []}), encoding="utf-8")
+    inventory_file.write_text(
+        json.dumps(
+            {
+                "exported_at": "2026-07-01T10:00:00+08:00",
+                "export_source": "litellm-production-verification-token-table",
+                "export_scope": "all_virtual_keys",
+                "exported_by": "security-ops",
+                "expected_total_key_count": 0,
+                "keys": [],
+            }
+        ),
+        encoding="utf-8",
+    )
     policy_file.write_text(json.dumps(_valid_policy_attestation()), encoding="utf-8")
     report_file.write_text(json.dumps(_observability_report_with_alert()), encoding="utf-8")
 
     bundle = collect_production_readiness(
+        generated_at=GENERATED_AT,
         env={
             "AIMANAGER_KEY_INVENTORY_FILE": str(inventory_file),
             "AIMANAGER_PRODUCTION_POLICY_ATTESTATION_FILE": str(policy_file),
@@ -97,6 +112,7 @@ def test_production_readiness_passes_with_governed_key_inventory(tmp_path) -> No
     report_file.write_text(json.dumps(_observability_report_with_alert()), encoding="utf-8")
 
     bundle = collect_production_readiness(
+        generated_at=GENERATED_AT,
         env={
             "AIMANAGER_KEY_INVENTORY_FILE": str(inventory_file),
             "AIMANAGER_PRODUCTION_POLICY_ATTESTATION_FILE": str(policy_file),
@@ -122,6 +138,7 @@ def test_production_readiness_passes_with_governed_key_inventory(tmp_path) -> No
     assert key_inventory["status"] == "PASS"
     assert key_inventory["evidence"]["active_key_count"] == 1
     assert key_inventory["evidence"]["violation_count"] == 0
+    assert key_inventory["evidence"]["export_scope"] == "all_virtual_keys"
 
 
 def test_production_readiness_overall_status_prioritizes_fail_over_blocked() -> None:
@@ -438,6 +455,7 @@ def test_production_policy_attestation_passes_with_required_manual_checks(tmp_pa
     inventory_file.write_text(json.dumps(_valid_key_inventory()), encoding="utf-8")
 
     bundle = collect_production_readiness(
+        generated_at=GENERATED_AT,
         env={
             "AIMANAGER_KEY_INVENTORY_FILE": str(inventory_file),
             "AIMANAGER_PRODUCTION_POLICY_ATTESTATION_FILE": str(policy_file),
@@ -827,6 +845,10 @@ def _observability_report_with_alert() -> dict[str, object]:
 def _valid_key_inventory() -> dict[str, object]:
     return {
         "exported_at": "2026-07-01T10:00:00+08:00",
+        "export_source": "litellm-production-verification-token-table",
+        "export_scope": "all_virtual_keys",
+        "exported_by": "security-ops",
+        "expected_total_key_count": 1,
         "keys": [
             {
                 "key_alias": "market-campaign-key",
@@ -837,6 +859,7 @@ def _valid_key_inventory() -> dict[str, object]:
                 "max_budget": 100,
                 "rpm_limit": 60,
                 "tpm_limit": 120000,
+                "duration": "30d",
                 "metadata": {
                     "owner": "alice",
                     "department_id": "dept_marketing",

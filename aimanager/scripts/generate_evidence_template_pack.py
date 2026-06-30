@@ -100,6 +100,10 @@ def _key_inventory_templates(gaps: Sequence[Mapping[str, object]], *, output_dir
         {
             "template_marker": "TEMPLATE_DO_NOT_SUBMIT",
             "exported_at": "2026-07-01T00:00:00+08:00",
+            "export_source": "replace-with-litellm-production-export-source",
+            "export_scope": "all_virtual_keys",
+            "exported_by": "replace-with-export-operator",
+            "expected_total_key_count": 1,
             "keys": [
                 {
                     "key_alias": "replace-with-key-alias-not-raw-key",
@@ -110,6 +114,7 @@ def _key_inventory_templates(gaps: Sequence[Mapping[str, object]], *, output_dir
                     "max_budget": 0,
                     "rpm_limit": 0,
                     "tpm_limit": 0,
+                    "duration": "replace-with-real-key-duration-or-expiry-policy",
                     "metadata": {
                         "owner": "replace-with-owner",
                         "department_id": "replace-with-department-id",

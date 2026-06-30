@@ -97,6 +97,13 @@ def test_evidence_template_pack_writes_safe_templates_without_secret_echo(tmp_pa
     assert "# YCAPI_API_TOKEN must be injected by a secret manager or secure shell" in env_template
     assert "export YCAPI_API_TOKEN" not in env_template
     assert "do-not-leak-token" not in env_template
+    key_inventory_template = json.loads(
+        (output_dir / "templates/security-ops/key-inventory.template.json").read_text(encoding="utf-8")
+    )
+    assert key_inventory_template["export_scope"] == "all_virtual_keys"
+    assert key_inventory_template["expected_total_key_count"] == len(key_inventory_template["keys"])
+    assert key_inventory_template["export_source"]
+    assert key_inventory_template["exported_by"]
 
 
 def test_evidence_template_pack_cli_writes_manifest_and_exits_non_pass(tmp_path, capsys) -> None:

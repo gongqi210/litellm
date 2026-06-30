@@ -4,13 +4,14 @@ import json
 
 from aimanager.scripts.validate_key_inventory import collect_key_inventory_validation, main
 
+GENERATED_AT = "2026-07-01T02:30:00Z"
+
 
 def test_key_inventory_passes_when_all_active_keys_are_governed(tmp_path) -> None:
     inventory_file = tmp_path / "keys.json"
     inventory_file.write_text(
         json.dumps(
             {
-                "exported_at": "2026-07-01T10:00:00+08:00",
                 "keys": [
                     _governed_key("market-campaign-key"),
                     _governed_key(
@@ -30,12 +31,13 @@ def test_key_inventory_passes_when_all_active_keys_are_governed(tmp_path) -> Non
                         "metadata": {},
                     },
                 ],
+                **_trusted_export_metadata(expected_total_key_count=3),
             }
         ),
         encoding="utf-8",
     )
 
-    result = collect_key_inventory_validation(inventory_file=inventory_file)
+    result = collect_key_inventory_validation(inventory_file=inventory_file, generated_at=GENERATED_AT)
 
     assert result["status"] == "PASS"
     assert result["summary"] == {
@@ -65,12 +67,13 @@ def test_key_inventory_fails_active_legacy_keys_without_governance(tmp_path) -> 
                         metadata_extra={"shared_key": True, "enforced_params": ["user"]},
                     ),
                 ],
+                **_trusted_export_metadata(expected_total_key_count=3),
             }
         ),
         encoding="utf-8",
     )
 
-    result = collect_key_inventory_validation(inventory_file=inventory_file)
+    result = collect_key_inventory_validation(inventory_file=inventory_file, generated_at=GENERATED_AT)
 
     assert result["status"] == "FAIL"
     assert result["summary"]["violation_count"] >= 2
@@ -85,21 +88,25 @@ def test_key_inventory_fails_active_legacy_keys_without_governance(tmp_path) -> 
 def test_key_inventory_blocks_empty_or_zero_active_exports(tmp_path) -> None:
     empty_inventory_file = tmp_path / "empty.json"
     all_blocked_inventory_file = tmp_path / "all-blocked.json"
-    empty_inventory_file.write_text(json.dumps({"keys": []}), encoding="utf-8")
+    empty_inventory_file.write_text(
+        json.dumps({"keys": [], **_trusted_export_metadata(expected_total_key_count=0)}),
+        encoding="utf-8",
+    )
     all_blocked_inventory_file.write_text(
         json.dumps(
             {
                 "keys": [
                     {"key_alias": "old-blocked-key", "blocked": True},
                     {"key_alias": "old-revoked-key", "revoked": True},
-                ]
+                ],
+                **_trusted_export_metadata(expected_total_key_count=2),
             }
         ),
         encoding="utf-8",
     )
 
-    empty_result = collect_key_inventory_validation(inventory_file=empty_inventory_file)
-    all_blocked_result = collect_key_inventory_validation(inventory_file=all_blocked_inventory_file)
+    empty_result = collect_key_inventory_validation(inventory_file=empty_inventory_file, generated_at=GENERATED_AT)
+    all_blocked_result = collect_key_inventory_validation(inventory_file=all_blocked_inventory_file, generated_at=GENERATED_AT)
 
     assert empty_result["status"] == "BLOCKED"
     assert empty_result["summary"]["active_key_count"] == 0
@@ -122,13 +129,14 @@ def test_key_inventory_fails_raw_secret_values_without_echoing_them(tmp_path) ->
                         **_governed_key("bad-secret-key"),
                         "token": "sk-live-raw-secret-that-must-not-leak",
                     }
-                ]
+                ],
+                **_trusted_export_metadata(expected_total_key_count=1),
             }
         ),
         encoding="utf-8",
     )
 
-    result = collect_key_inventory_validation(inventory_file=inventory_file)
+    result = collect_key_inventory_validation(inventory_file=inventory_file, generated_at=GENERATED_AT)
 
     payload = json.dumps(result, ensure_ascii=False)
     assert result["status"] == "FAIL"
@@ -148,6 +156,149 @@ def test_key_inventory_cli_writes_json_and_returns_blocked_for_missing_input(tmp
     result = json.loads(output_file.read_text(encoding="utf-8"))
     assert result["status"] == "BLOCKED"
     assert "AIMANAGER_KEY_INVENTORY_FILE" in json.dumps(result, ensure_ascii=False)
+
+
+def test_key_inventory_blocks_exports_without_trusted_provenance(tmp_path) -> None:
+    inventory_file = tmp_path / "keys.json"
+    inventory_file.write_text(
+        json.dumps({"keys": [_governed_key("partial-handwritten-export")]}),
+        encoding="utf-8",
+    )
+
+    result = collect_key_inventory_validation(inventory_file=inventory_file, generated_at=GENERATED_AT)
+
+    assert result["status"] == "BLOCKED"
+    assert "trusted export metadata" in result["detail"]
+    assert result["required_fields"] == [
+        "exported_at",
+        "export_source",
+        "export_scope",
+        "exported_by",
+        "expected_total_key_count",
+    ]
+    assert result["summary"]["total_key_count"] == 1
+
+
+def test_key_inventory_fails_when_declared_total_count_does_not_match_exported_keys(tmp_path) -> None:
+    inventory_file = tmp_path / "keys.json"
+    inventory_file.write_text(
+        json.dumps(
+            {
+                "keys": [_governed_key("missing-from-export")],
+                **_trusted_export_metadata(expected_total_key_count=2),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = collect_key_inventory_validation(inventory_file=inventory_file, generated_at=GENERATED_AT)
+
+    assert result["status"] == "FAIL"
+    assert "expected_total_key_count does not match exported key count" in result["detail"]
+    assert result["violations"] == [
+        {
+            "key_ref": "export",
+            "reason": "declared export total does not match keys list",
+            "fields": ["expected_total_key_count"],
+        }
+    ]
+    assert result["summary"]["total_key_count"] == 1
+
+
+def test_key_inventory_blocks_stale_exports(tmp_path) -> None:
+    inventory_file = tmp_path / "keys.json"
+    inventory_file.write_text(
+        json.dumps(
+            {
+                "keys": [_governed_key("stale-but-governed-key")],
+                **_trusted_export_metadata(
+                    expected_total_key_count=1,
+                    exported_at="2026-07-01T00:00:00Z",
+                ),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = collect_key_inventory_validation(
+        inventory_file=inventory_file,
+        generated_at="2026-07-03T00:00:01Z",
+    )
+
+    assert result["status"] == "BLOCKED"
+    assert "stale" in result["detail"]
+    assert result["summary"]["total_key_count"] == 1
+
+
+def test_key_inventory_blocks_exports_from_the_future(tmp_path) -> None:
+    inventory_file = tmp_path / "keys.json"
+    inventory_file.write_text(
+        json.dumps(
+            {
+                "keys": [_governed_key("future-dated-key")],
+                **_trusted_export_metadata(
+                    expected_total_key_count=1,
+                    exported_at="2026-07-01T02:40:01Z",
+                ),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = collect_key_inventory_validation(
+        inventory_file=inventory_file,
+        generated_at="2026-07-01T02:30:00Z",
+    )
+
+    assert result["status"] == "BLOCKED"
+    assert "future" in result["detail"]
+
+
+def test_key_inventory_fails_active_keys_without_duration(tmp_path) -> None:
+    key = _governed_key("no-duration-key")
+    key.pop("duration")
+    inventory_file = tmp_path / "keys.json"
+    inventory_file.write_text(
+        json.dumps({"keys": [key], **_trusted_export_metadata(expected_total_key_count=1)}),
+        encoding="utf-8",
+    )
+
+    result = collect_key_inventory_validation(inventory_file=inventory_file, generated_at=GENERATED_AT)
+
+    assert result["status"] == "FAIL"
+    assert result["violations"][0]["fields"] == ["duration"]
+
+
+def test_key_inventory_fails_non_boolean_shared_key_marker(tmp_path) -> None:
+    inventory_file = tmp_path / "keys.json"
+    inventory_file.write_text(
+        json.dumps(
+            {
+                "keys": [
+                    _governed_key(
+                        "shared-string-true-bypass",
+                        metadata_extra={
+                            "shared_key": "true",
+                            "enforced_params": [],
+                        },
+                    )
+                ],
+                **_trusted_export_metadata(expected_total_key_count=1),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = collect_key_inventory_validation(inventory_file=inventory_file, generated_at=GENERATED_AT)
+
+    assert result["status"] == "FAIL"
+    assert result["violations"] == [
+        {
+            "key_ref": "shared-string-true-bypass",
+            "reason": "metadata.shared_key must be a boolean when present",
+            "fields": ["metadata.shared_key"],
+        }
+    ]
 
 
 def _governed_key(key_alias: str, *, metadata_extra: dict[str, object] | None = None) -> dict[str, object]:
@@ -172,5 +323,20 @@ def _governed_key(key_alias: str, *, metadata_extra: dict[str, object] | None = 
         "max_budget": 100,
         "rpm_limit": 60,
         "tpm_limit": 120000,
+        "duration": "30d",
         "metadata": metadata,
+    }
+
+
+def _trusted_export_metadata(
+    *,
+    expected_total_key_count: int,
+    exported_at: str = "2026-07-01T10:00:00+08:00",
+) -> dict[str, object]:
+    return {
+        "exported_at": exported_at,
+        "export_source": "litellm-production-verification-token-table",
+        "export_scope": "all_virtual_keys",
+        "exported_by": "security-ops",
+        "expected_total_key_count": expected_total_key_count,
     }
