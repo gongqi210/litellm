@@ -20,6 +20,7 @@ def test_production_readiness_blocks_without_required_inputs() -> None:
     assert statuses == {
         "AC-15": "BLOCKED",
         "AC-19": "BLOCKED",
+        "AC-08-KEY-INVENTORY": "BLOCKED",
         "AC-16-WECOM": "BLOCKED",
         "AC-12-13-FINANCE": "BLOCKED",
         "AC-POLICY": "BLOCKED",
@@ -27,6 +28,100 @@ def test_production_readiness_blocks_without_required_inputs() -> None:
     assert "YCAPI_API_TOKEN" in bundle["checks"][1]["detail"]
     assert bundle["checks"][0]["evidence"]["result_count"] == 2
     assert "AIMANAGER_WECOM_WEBHOOK_URL" in json.dumps(bundle, ensure_ascii=False)
+
+
+def test_production_readiness_blocks_without_key_inventory() -> None:
+    bundle = collect_production_readiness(
+        env={},
+        admin_boundary_runner=lambda **kwargs: [
+            _script_result(status="PASS", detail="business/admin edge checks passed")
+        ],
+        live_ycapi_runner=lambda **kwargs: _script_result(status="PASS", detail="ycapi /models returned 3 models"),
+        wecom_router=lambda **kwargs: _script_result(status="PASS", detail="sent 1 alert to WeCom webhook"),
+        finance_runner=lambda **kwargs: CheckResult(
+            id="AC-12-13-FINANCE",
+            name="finance_export_reconciliation",
+            status="PASS",
+            detail="finance files exported",
+            evidence={"output_files": ["aimanager_usage_daily.csv"]},
+        ),
+    )
+
+    key_inventory = next(check for check in bundle["checks"] if check["id"] == "AC-08-KEY-INVENTORY")
+    assert bundle["status"] == "BLOCKED"
+    assert key_inventory["status"] == "BLOCKED"
+    assert "AIMANAGER_KEY_INVENTORY_FILE" in key_inventory["detail"]
+
+
+def test_production_readiness_blocks_empty_key_inventory(tmp_path) -> None:
+    inventory_file = tmp_path / "key-inventory.json"
+    policy_file = tmp_path / "production-policy.json"
+    report_file = tmp_path / "observability.json"
+    inventory_file.write_text(json.dumps({"keys": []}), encoding="utf-8")
+    policy_file.write_text(json.dumps(_valid_policy_attestation()), encoding="utf-8")
+    report_file.write_text(json.dumps(_observability_report_with_alert()), encoding="utf-8")
+
+    bundle = collect_production_readiness(
+        env={
+            "AIMANAGER_KEY_INVENTORY_FILE": str(inventory_file),
+            "AIMANAGER_PRODUCTION_POLICY_ATTESTATION_FILE": str(policy_file),
+            "AIMANAGER_OBSERVABILITY_REPORT_FILE": str(report_file),
+            "AIMANAGER_WECOM_WEBHOOK_URL": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=redaction",
+        },
+        admin_boundary_runner=lambda **kwargs: [
+            _script_result(status="PASS", detail="business/admin edge checks passed")
+        ],
+        live_ycapi_runner=lambda **kwargs: _script_result(status="PASS", detail="ycapi /models returned 3 models"),
+        wecom_router=lambda **kwargs: _script_result(status="PASS", detail="sent 1 alert to WeCom webhook"),
+        finance_runner=lambda **kwargs: CheckResult(
+            id="AC-12-13-FINANCE",
+            name="finance_export_reconciliation",
+            status="PASS",
+            detail="finance files exported",
+            evidence={"output_files": ["aimanager_usage_daily.csv"]},
+        ),
+    )
+
+    key_inventory = next(check for check in bundle["checks"] if check["id"] == "AC-08-KEY-INVENTORY")
+    assert bundle["status"] == "BLOCKED"
+    assert key_inventory["status"] == "BLOCKED"
+    assert key_inventory["evidence"]["active_key_count"] == 0
+
+
+def test_production_readiness_passes_with_governed_key_inventory(tmp_path) -> None:
+    inventory_file = tmp_path / "key-inventory.json"
+    policy_file = tmp_path / "production-policy.json"
+    report_file = tmp_path / "observability.json"
+    inventory_file.write_text(json.dumps(_valid_key_inventory()), encoding="utf-8")
+    policy_file.write_text(json.dumps(_valid_policy_attestation()), encoding="utf-8")
+    report_file.write_text(json.dumps(_observability_report_with_alert()), encoding="utf-8")
+
+    bundle = collect_production_readiness(
+        env={
+            "AIMANAGER_KEY_INVENTORY_FILE": str(inventory_file),
+            "AIMANAGER_PRODUCTION_POLICY_ATTESTATION_FILE": str(policy_file),
+            "AIMANAGER_OBSERVABILITY_REPORT_FILE": str(report_file),
+            "AIMANAGER_WECOM_WEBHOOK_URL": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=redaction",
+        },
+        admin_boundary_runner=lambda **kwargs: [
+            _script_result(status="PASS", detail="business/admin edge checks passed")
+        ],
+        live_ycapi_runner=lambda **kwargs: _script_result(status="PASS", detail="ycapi /models returned 3 models"),
+        wecom_router=lambda **kwargs: _script_result(status="PASS", detail="sent 1 alert to WeCom webhook"),
+        finance_runner=lambda **kwargs: CheckResult(
+            id="AC-12-13-FINANCE",
+            name="finance_export_reconciliation",
+            status="PASS",
+            detail="finance files exported",
+            evidence={"output_files": ["aimanager_usage_daily.csv"]},
+        ),
+    )
+
+    key_inventory = next(check for check in bundle["checks"] if check["id"] == "AC-08-KEY-INVENTORY")
+    assert bundle["status"] == "PASS"
+    assert key_inventory["status"] == "PASS"
+    assert key_inventory["evidence"]["active_key_count"] == 1
+    assert key_inventory["evidence"]["violation_count"] == 0
 
 
 def test_production_readiness_overall_status_prioritizes_fail_over_blocked() -> None:
@@ -171,6 +266,7 @@ def test_production_readiness_cli_writes_json_and_returns_blocked(monkeypatch, t
     monkeypatch.delenv("AIMANAGER_SPEND_FILE", raising=False)
     monkeypatch.delenv("AIMANAGER_YCAPI_BILL_FILE", raising=False)
     monkeypatch.delenv("AIMANAGER_PRODUCTION_POLICY_ATTESTATION_FILE", raising=False)
+    monkeypatch.delenv("AIMANAGER_KEY_INVENTORY_FILE", raising=False)
 
     exit_code = main(["--output-json-file", str(output_file)])
 
@@ -182,6 +278,7 @@ def test_production_readiness_cli_writes_json_and_returns_blocked(monkeypatch, t
     assert {check["id"] for check in bundle["checks"]} == {
         "AC-15",
         "AC-19",
+        "AC-08-KEY-INVENTORY",
         "AC-16-WECOM",
         "AC-12-13-FINANCE",
         "AC-POLICY",
@@ -335,11 +432,14 @@ def test_finance_evidence_passes_with_real_export_files(tmp_path) -> None:
 def test_production_policy_attestation_passes_with_required_manual_checks(tmp_path) -> None:
     policy_file = tmp_path / "production_policy_attestation.json"
     report_file = tmp_path / "observability.json"
+    inventory_file = tmp_path / "key-inventory.json"
     policy_file.write_text(json.dumps(_valid_policy_attestation()), encoding="utf-8")
     report_file.write_text(json.dumps(_observability_report_with_alert()), encoding="utf-8")
+    inventory_file.write_text(json.dumps(_valid_key_inventory()), encoding="utf-8")
 
     bundle = collect_production_readiness(
         env={
+            "AIMANAGER_KEY_INVENTORY_FILE": str(inventory_file),
             "AIMANAGER_PRODUCTION_POLICY_ATTESTATION_FILE": str(policy_file),
             "AIMANAGER_OBSERVABILITY_REPORT_FILE": str(report_file),
             "AIMANAGER_WECOM_WEBHOOK_URL": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=redaction",
@@ -721,6 +821,34 @@ def _observability_report_with_alert() -> dict[str, object]:
     return {
         "metrics": {"request_count": 1},
         "alerts": [{"code": "aimanager_failure_rate_high", "severity": "high"}],
+    }
+
+
+def _valid_key_inventory() -> dict[str, object]:
+    return {
+        "exported_at": "2026-07-01T10:00:00+08:00",
+        "keys": [
+            {
+                "key_alias": "market-campaign-key",
+                "blocked": False,
+                "user_id": "employee-1",
+                "team_id": "team-marketing",
+                "models": ["gemini-2.5-flash"],
+                "max_budget": 100,
+                "rpm_limit": 60,
+                "tpm_limit": 120000,
+                "metadata": {
+                    "owner": "alice",
+                    "department_id": "dept_marketing",
+                    "project_id": "proj_launch",
+                    "cost_center_id": "cc_growth",
+                    "scenario_l1": "marketing",
+                    "scenario_l2": "campaign_brief",
+                    "approver": "finance-controller",
+                    "internal_or_external": "internal",
+                },
+            }
+        ],
     }
 
 

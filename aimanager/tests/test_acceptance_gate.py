@@ -9,7 +9,14 @@ from aimanager.scripts.run_acceptance_gate import collect_acceptance_gate, main
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 GENERATED_AT = "2026-06-30T00:00:00Z"
-M1_CHECK_IDS = ("AC-15", "AC-19", "AC-16-WECOM", "AC-12-13-FINANCE", "AC-POLICY")
+M1_CHECK_IDS = (
+    "AC-15",
+    "AC-19",
+    "AC-08-KEY-INVENTORY",
+    "AC-16-WECOM",
+    "AC-12-13-FINANCE",
+    "AC-POLICY",
+)
 M2_CHECK_IDS = (*M1_CHECK_IDS, "AC-23", "AC-26")
 
 
@@ -159,6 +166,48 @@ def test_acceptance_gate_fails_when_env_pointed_evidence_fails_intake(tmp_path: 
     assert "Bearer [redacted:secret-like-value]" in serialized
 
 
+def test_acceptance_gate_intake_scans_env_pointed_key_inventory(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifacts"
+    owner_dir = tmp_path / "owner-evidence"
+    owner_dir.mkdir()
+    unsafe_inventory = owner_dir / "unsafe-key-inventory.json"
+    unsafe_inventory.write_text(
+        json.dumps(
+            {
+                "keys": [
+                    {
+                        "key_alias": "raw-key-export",
+                        "token": "sk-live-raw-secret-that-must-not-leak",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = collect_acceptance_gate(
+        output_dir=artifact_dir,
+        project_directory=PROJECT_ROOT,
+        acceptance_doc_file=PROJECT_ROOT / "docs/aimanager/1_acceptance_criteria.md",
+        generated_at=GENERATED_AT,
+        env={"AIMANAGER_KEY_INVENTORY_FILE": str(unsafe_inventory)},
+        production_readiness_collector=lambda **_: _production_bundle("PASS"),
+        business_trial_collector=lambda **kwargs: _business_bundle(
+            "PASS",
+            production_checks=kwargs["production_readiness_collector"]()["checks"],
+        ),
+    )
+
+    intake = json.loads((artifact_dir / "evidence-intake.json").read_text(encoding="utf-8"))
+    serialized = json.dumps(result, ensure_ascii=False)
+    for path in (path for path in artifact_dir.rglob("*") if path.is_file()):
+        serialized += path.read_text(encoding="utf-8")
+    assert result["status"] == "FAIL"
+    assert intake["status"] == "FAIL"
+    assert "sk-live-raw-secret" not in serialized
+    assert "[redacted:secret-like-value]" in serialized
+
+
 def test_acceptance_gate_passes_safe_env_pointed_evidence_without_validating_generated_templates(tmp_path: Path) -> None:
     artifact_dir = tmp_path / "artifacts"
     owner_dir = tmp_path / "owner-evidence"
@@ -295,6 +344,7 @@ def test_acceptance_gate_cli_runs_empty_env_without_production_secrets(tmp_path:
         "AIMANAGER_WECOM_WEBHOOK_URL",
         "AIMANAGER_SPEND_FILE",
         "AIMANAGER_YCAPI_BILL_FILE",
+        "AIMANAGER_KEY_INVENTORY_FILE",
         "AIMANAGER_PRODUCTION_POLICY_ATTESTATION_FILE",
         "AIMANAGER_LIGHTWEIGHT_TRIAL_EVIDENCE_FILE",
         "AIMANAGER_EMPLOYEE_MONITORING_POLICY_FILE",
@@ -323,7 +373,7 @@ def test_acceptance_gate_cli_runs_empty_env_without_production_secrets(tmp_path:
     assert "BLOCKED acceptance gate" in output
     assert result["status"] == "BLOCKED"
     assert result["final_report"]["status"] == "BLOCKED"
-    assert result["summary"]["unique_blockers"] >= 7
+    assert result["summary"]["unique_blockers"] >= 8
 
 
 def _production_bundle(status: str, *, detail: str | None = None) -> dict[str, Any]:

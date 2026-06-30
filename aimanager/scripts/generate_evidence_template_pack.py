@@ -67,6 +67,7 @@ def collect_evidence_template_pack(
     files.append(_file_record(output_dir, env_file, "env_template", "all"))
 
     for writer in (
+        _key_inventory_templates,
         _finance_templates,
         _ops_templates,
         _business_trial_templates,
@@ -88,6 +89,45 @@ def collect_evidence_template_pack(
     _write_json(output_dir / "evidence-template-pack.json", sanitized)
     _write_text(output_dir / "evidence-template-pack.md", str(sanitized["markdown"]))
     return sanitized
+
+
+def _key_inventory_templates(gaps: Sequence[Mapping[str, object]], *, output_dir: Path) -> list[dict[str, object]]:
+    if not _has_gap(gaps, "AC-08-KEY-INVENTORY"):
+        return []
+    inventory_file = output_dir / "templates" / "security-ops" / "key-inventory.template.json"
+    _write_json(
+        inventory_file,
+        {
+            "template_marker": "TEMPLATE_DO_NOT_SUBMIT",
+            "exported_at": "2026-07-01T00:00:00+08:00",
+            "keys": [
+                {
+                    "key_alias": "replace-with-key-alias-not-raw-key",
+                    "blocked": False,
+                    "user_id": "replace-with-real-employee-or-system-id",
+                    "team_id": "replace-with-real-team-id",
+                    "models": ["gemini-2.5-flash"],
+                    "max_budget": 0,
+                    "rpm_limit": 0,
+                    "tpm_limit": 0,
+                    "metadata": {
+                        "owner": "replace-with-owner",
+                        "department_id": "replace-with-department-id",
+                        "project_id": "replace-with-project-id",
+                        "cost_center_id": "replace-with-cost-center-id",
+                        "scenario_l1": "marketing",
+                        "scenario_l2": "campaign_brief",
+                        "approver": "replace-with-approver",
+                        "internal_or_external": "internal",
+                        "shared_key": False,
+                        "enforced_params": [],
+                    },
+                }
+            ],
+            "note": "Replace with real LiteLLM virtual key metadata export. Do not include raw keys, tokens, headers, prompts, or responses.",
+        },
+    )
+    return [_file_record(output_dir, inventory_file, "key_inventory_template", "security/ops")]
 
 
 def _finance_templates(gaps: Sequence[Mapping[str, object]], *, output_dir: Path) -> list[dict[str, object]]:
@@ -279,6 +319,7 @@ def _env_template(gaps: Sequence[Mapping[str, object]], *, output_dir: Path) -> 
     file_defaults = {
         "AIMANAGER_SPEND_FILE": output_dir / "templates/finance/aimanager-spend.template.csv",
         "AIMANAGER_YCAPI_BILL_FILE": output_dir / "templates/finance/ycapi-bill.template.csv",
+        "AIMANAGER_KEY_INVENTORY_FILE": output_dir / "templates/security-ops/key-inventory.template.json",
         "AIMANAGER_OBSERVABILITY_REPORT_FILE": output_dir / "templates/ops/observability-report.template.json",
         "AIMANAGER_LIGHTWEIGHT_TRIAL_EVIDENCE_FILE": output_dir
         / "templates/business-trial/ac23-trial-evidence.template.json",

@@ -69,26 +69,9 @@ The M1 implementation treats `x-aimanager-role` as a trusted internal header for
 
 The management surface intercepts `POST /key/generate` before the request reaches LiteLLM and normalizes it with `aimanager.governance.normalize_key_request`. Invalid key-creation payloads return HTTP 400 with `error.code=aimanager_key_governance_invalid`, preserve `request_id`, emit a structured `policy_blocked` audit event, and never reach downstream LiteLLM.
 
-Required top-level fields:
+Required top-level fields: `user_id`, `team_id`, `models`, `max_budget`, `rpm_limit`, `tpm_limit`, and `duration`.
 
-- `user_id`
-- `team_id`
-- `models`
-- `max_budget`
-- `rpm_limit`
-- `tpm_limit`
-- `duration`
-
-Required metadata:
-
-- `owner`
-- `department_id`
-- `project_id`
-- `cost_center_id`
-- `scenario_l1`
-- `scenario_l2`
-- `approver`
-- `internal_or_external`
+Required metadata: `owner`, `department_id`, `project_id`, `cost_center_id`, `scenario_l1`, `scenario_l2`, `approver`, and `internal_or_external`.
 
 Shared keys must set `metadata.shared_key=true`; AiManager then calls `normalize_key_request(payload, shared_key=True)` and injects LiteLLM `enforced_params`:
 
@@ -103,6 +86,22 @@ Shared keys must set `metadata.shared_key=true`; AiManager then calls `normalize
 The helper, management-surface ASGI wiring, running API key-creation path, and LiteLLM Admin UI key-creation flow are tested locally. The UI sends numeric form values as strings; AiManager normalizes those strings to numbers before forwarding the governed payload to LiteLLM.
 
 Runtime inference enforcement for LiteLLM `metadata.enforced_params` is handled by AiManager's OSS `AiManagerEnforcedParamsGuard`, registered as a LiteLLM proxy pre-call callback. Shared-key requests missing `user`, `metadata.scenario_l1`, or `metadata.end_user_principal` return HTTP 400 `aimanager_enforced_params_missing` and emit `enforced_params_blocked`.
+
+## Production Key Inventory Validation
+
+The governed creation path is not enough for production if legacy or imported LiteLLM virtual keys already exist. Before launch, export a metadata-only virtual key inventory from the production LiteLLM admin store and validate it:
+
+```bash
+PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.validate_key_inventory \
+  --inventory-file "$AIMANAGER_KEY_INVENTORY_FILE" \
+  --output-json-file /tmp/aimanager-key-inventory.json
+```
+
+The inventory JSON must be an object with `keys` or `data`. It must not contain raw key values, tokens, headers, prompts, or responses. Blocked, revoked, or deleted keys are counted but skipped for active-key governance.
+
+Every active key must include `user_id`, `team_id`, an explicit `models` list that is not `*`, positive `max_budget`, `rpm_limit`, and `tpm_limit`, plus the governance metadata required by `normalize_key_request`: owner, department, project, cost center, scenario, approver, and internal/external scope. Active shared keys must also carry the full `metadata.enforced_params` set: `user`, `metadata.scenario_l1`, and `metadata.end_user_principal`.
+
+Missing `AIMANAGER_KEY_INVENTORY_FILE` or a zero-active-key export returns `BLOCKED`. Ungoverned active keys, wildcard/unbounded keys, zero budgets or rate limits, missing shared-key enforced params, and secret-like raw values return `FAIL` without echoing the secret. The production readiness bundle consumes the same file as AC-08-KEY-INVENTORY.
 
 ## Finance Reporting
 
@@ -650,11 +649,12 @@ The bundle is the pre-business-trial gate for the remaining production-only evid
 
 - AC-15 production admin boundary checks from `AIMANAGER_BUSINESS_BASE_URL`, `AIMANAGER_PUBLIC_ADMIN_URL`, and `AIMANAGER_ALLOWED_SSO_REDIRECT_HOSTS`, including per-probe method/path/status/policy evidence.
 - AC-19 live ycapi `/models` preflight from `YCAPI_BASE_URL` and `YCAPI_API_TOKEN`.
+- AC-08 production virtual-key inventory governance from `AIMANAGER_KEY_INVENTORY_FILE`; every active LiteLLM key must be metadata-only, employee/team-bound, model-scoped, budgeted, rate-limited, and governed.
 - AC-16 live WeCom alert routing from `AIMANAGER_OBSERVABILITY_REPORT_FILE`, `AIMANAGER_WECOM_WEBHOOK_URL`, and `AIMANAGER_WECOM_MIN_SEVERITY`.
 - AC-12/AC-13 finance export and ycapi bill reconciliation from `AIMANAGER_SPEND_FILE`, `AIMANAGER_YCAPI_BILL_FILE`, and `AIMANAGER_FINANCE_OUTPUT_DIR`.
 - AC-POLICY production policy attestation from `AIMANAGER_PRODUCTION_POLICY_ATTESTATION_FILE`; start from `docs/aimanager/production_policy_attestation.example.json` and replace every approval reference with the real finance, security, and legal records for the pilot. Finance, security, and legal must be three distinct approver identities after whitespace/case normalization, and ycapi monthly budget/RPM limits must be finite positive numbers.
 
-Exit code `0` means all checks are `PASS`; `1` means at least one `FAIL`; `2` means no failed checks but at least one required production input is still `BLOCKED`. The JSON bundle never writes `YCAPI_API_TOKEN` or the WeCom webhook URL; if a downstream error includes either value, it is replaced with a `[redacted:...]` marker. Without production inputs, the expected local result is `BLOCKED` with five blocked checks, not `PASS`. WeCom evidence is `BLOCKED` when no alert is actually delivered, finance evidence is `BLOCKED` when either spend rows or ycapi bill rows are empty or lack non-zero billable amounts on either side of the reconciliation, and production policy evidence is `FAIL` if showback/chargeback, pricing approval, ycapi token limit, employee-virtual-key-only distribution, data boundary, or independent finance/security/legal approver records are incomplete.
+Exit code `0` means all checks are `PASS`; `1` means at least one `FAIL`; `2` means no failed checks but at least one required production input is still `BLOCKED`. The JSON bundle never writes `YCAPI_API_TOKEN`, raw LiteLLM key values, or the WeCom webhook URL; if a downstream error includes those values, they are replaced with a `[redacted:...]` marker. Without production inputs, the expected local result is `BLOCKED` with six blocked checks, not `PASS`. Key-inventory evidence is `BLOCKED` without `AIMANAGER_KEY_INVENTORY_FILE` or when the export has zero active keys, and `FAIL` if any active key is legacy, wildcard, unbounded, missing governance metadata, or contains raw secret-like values. WeCom evidence is `BLOCKED` when no alert is actually delivered, finance evidence is `BLOCKED` when either spend rows or ycapi bill rows are empty or lack non-zero billable amounts on either side of the reconciliation, and production policy evidence is `FAIL` if showback/chargeback, pricing approval, ycapi token limit, employee-virtual-key-only distribution, data boundary, or independent finance/security/legal approver records are incomplete.
 
 Business trial acceptance gate:
 
@@ -690,7 +690,7 @@ PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.generate_evide
   --output-dir /tmp/aimanager-evidence-handoff
 ```
 
-This command turns the latest launch gap plan into owner-specific evidence request files such as `finance.md`, `ops.md`, and `HR_legal_security.md`, plus an `evidence-handoff.json` manifest. It is intentionally an evidence request package, not a `PASS` artifact: unresolved `FAIL` and `BLOCKED` states remain unchanged, and real production evidence must still be generated by the referenced commands and then rerun through `make acceptance-gate`. The companion `make evidence-template-pack` creates safe starter input templates marked `TEMPLATE_DO_NOT_SUBMIT`; those templates omit ycapi token values, leave webhooks blank, and cannot substitute for real production evidence. `make acceptance-gate` validates env-pointed evidence files before folding the gate status; `make evidence-intake` remains available for owner evidence directories before reruns. Both block unchanged templates/header-only CSVs and fail raw prompt/response/header/secret-like submissions. Output is redacted for Bearer, `sk-*`, DSN password, WeCom webhook, and known secret-like patterns.
+This command turns the latest launch gap plan into owner-specific evidence request files such as `finance.md`, `ops.md`, and `HR_legal_security.md`, plus an `evidence-handoff.json` manifest. It is intentionally an evidence request package, not a `PASS` artifact: unresolved `FAIL` and `BLOCKED` states remain unchanged, and real production evidence must still be generated by the referenced commands and then rerun through `make acceptance-gate`. The companion `make evidence-template-pack` creates safe starter input templates marked `TEMPLATE_DO_NOT_SUBMIT`; those templates omit ycapi token values, keep virtual-key inventory metadata-only, leave webhooks blank, and cannot substitute for real production evidence. `make acceptance-gate` validates env-pointed evidence files before folding the gate status; `make evidence-intake` remains available for owner evidence directories before reruns. Both block unchanged templates/header-only CSVs and fail raw prompt/response/header/secret-like submissions. Output is redacted for Bearer, `sk-*`, DSN password, WeCom webhook, and known secret-like patterns.
 
 Acceptance coverage matrix:
 ```bash
@@ -781,11 +781,11 @@ Latest local runtime smoke evidence:
 - Local observability tests prove management `GET /metrics` is served by AiManager without reaching downstream LiteLLM, business `/metrics` remains blocked, audit events including `enforced_params_blocked` increment `aimanager_audit_events_total`, downstream 429/5xx increment `aimanager_http_responses_total`, and `export_observability` emits JSON metrics plus alert records from audit logs and request-status rows.
 - Local alert-routing tests prove `route_observability_alerts` can render WeCom markdown payloads from exported alert JSON, dry-run without a webhook, return `BLOCKED` when live alerts have no webhook, filter by severity, and validate WeCom `errcode=0` without printing the webhook URL.
 - Local live-ycapi preflight tests prove `smoke_live_ycapi` returns `BLOCKED` without `YCAPI_API_TOKEN`, validates ycapi `/models` with expected model ids when a token is present, and masks token/URL values on transport failures.
-- Local production-readiness bundle tests prove `production_readiness_bundle` aggregates AC-15 admin boundary with per-probe evidence, AC-19 live ycapi, AC-16 WeCom alert routing, AC-12/AC-13 finance reconciliation, and AC-POLICY production policy attestation into one JSON artifact; missing production inputs return exit code `2`/`BLOCKED`, failures take priority over blockers, WeCom 0-delivery runs stay `BLOCKED`, empty spend/bill files and non-billable placeholder finance rows stay `BLOCKED`, missing or incomplete policy approval evidence returns `BLOCKED`/`FAIL`, finance/security/legal approval roles must use distinct approvers, and ycapi token, WeCom webhook, or secret-like attestation values are redacted from details and evidence.
+- Local production-readiness bundle tests prove `production_readiness_bundle` aggregates AC-15 admin boundary with per-probe evidence, AC-19 live ycapi, AC-08 production key inventory governance, AC-16 WeCom alert routing, AC-12/AC-13 finance reconciliation, and AC-POLICY production policy attestation into one JSON artifact; missing production inputs return exit code `2`/`BLOCKED`, failures take priority over blockers, legacy/unbounded active key inventory returns `FAIL`, raw key-like inventory values are redacted, WeCom 0-delivery runs stay `BLOCKED`, empty spend/bill files and non-billable placeholder finance rows stay `BLOCKED`, missing or incomplete policy approval evidence returns `BLOCKED`/`FAIL`, finance/security/legal approval roles must use distinct approvers, and ycapi token, WeCom webhook, or secret-like attestation values are redacted from details and evidence.
 - Local business-trial acceptance bundle tests prove `business_trial_acceptance_bundle` composes production readiness with AC-23 and AC-26 into one JSON gate; AC-23 rejects SDK use, ycapi token exposure, missing employee virtual key use, unapproved models, zero spend, invalid work-context status, malformed JSON, token/raw-content fields, and trial durations over 5 minutes; AC-23 `PASS` is blocked unless same-run AC-19 is `PASS`; AC-26 status propagates; env/file-only secrets are redacted.
 - Local acceptance coverage matrix tests prove `acceptance_coverage_matrix` covers every documented AC-01 through AC-26 plus AC-POLICY, keeps merged bundle ids such as `AC-12-13-FINANCE` mapped to the documented AC rows, detects missing local scripts/tests, detects supplied bundle schema drift, folds `FAIL` before `BLOCKED`, and redacts Bearer, `sk-*`, and WeCom webhook values in JSON/Markdown output.
 - Local final acceptance report tests prove `generate_final_acceptance_report` is a pure composition gate over the business-trial bundle, launch gap plan, acceptance coverage matrix, and supplied evidence intake; missing inputs remain `BLOCKED`, malformed inputs return `FAIL`, unresolved launch gaps and failed intake checks stay visible with owner/command/required evidence plus source-level and unique blocker counts, all-green inputs are required for `PASS`, hand-authored `PASS` coverage JSON without a non-empty list of criteria objects is rejected, and Bearer, `sk-*`, DSN passwords, and WeCom webhook values are redacted.
-- Local acceptance-gate and evidence-intake tests prove `run_acceptance_gate` writes all gate artifacts plus evidence handoff/template pack/intake files into a run-scoped directory, validates env-pointed evidence files before folding gate status, and `validate_evidence_intake` blocks unchanged templates/header-only CSV evidence while failing raw prompt/response/header/secret-like submissions without echoing secrets; the gate executes production readiness exactly once, reuses that same readiness result inside business-trial acceptance, overwrites stale artifacts from prior runs, reaches a fully green path with injected PASS evidence, runs safely in an empty env as `BLOCKED`, and redacts secret-valued env vars, Bearer, `sk-*`, common DSN passwords, and WeCom webhook values across written JSON/Markdown artifacts.
+- Local acceptance-gate and evidence-intake tests prove `run_acceptance_gate` writes all gate artifacts plus evidence handoff/template pack/intake files into a run-scoped directory, validates env-pointed evidence files including `AIMANAGER_KEY_INVENTORY_FILE` before folding gate status, and `validate_evidence_intake` blocks unchanged templates/header-only CSV evidence while failing raw prompt/response/header/secret-like submissions without echoing secrets; the gate executes production readiness exactly once, reuses that same readiness result inside business-trial acceptance, overwrites stale artifacts from prior runs, reaches a fully green path with injected PASS evidence, runs safely in an empty env as `BLOCKED`, and redacts secret-valued env vars, Bearer, `sk-*`, common DSN passwords, and WeCom webhook values across written JSON/Markdown artifacts.
 - Local streaming usage tests prove `aimanager/config.yaml` requires `always_include_stream_usage=true`, `validate_config` rejects missing or disabled stream usage accounting, the ASGI business chat boundary rewrites `stream_options.include_usage=false` to `true`, caps chat body buffering, fails closed on invalid body chunks, preserves non-stream request bytes, and mock ycapi can return OpenAI-compatible SSE chunks with a final `usage` event when usage is requested. This closes the local body-level bypass path for streaming spend attribution; production nonzero spend evidence still comes from the governed runtime smokes and live ycapi/finance bundles.
 - Local lightweight trial evidence capture tests prove `capture_lightweight_trial_evidence` can safely convert a successful lightweight-entry submission result into AC-23 evidence for the business-trial gate while omitting prompt text, assistant text, request headers, Authorization, employee key values, ycapi token values, and WeCom webhook values; it supports project/customer context, blocks non-PASS submissions, requires live-ycapi/brand-safety/no-secret-echo/html-escaped confirmations, rejects secret-like output values, secret-like assistant echo, and raw-key-looking aliases, and writes no output on `FAIL` or `BLOCKED`.
 - Project policy gate evidence proves `make policy-check` returns PASS for `PROJECT_TYPE=software-cli`, required scaffold files, CLI help/json contract, AiManager-owned file length limits, documented overlay imports, ycapi-only config text, and `.env.example` secret-placeholder safety.
@@ -797,4 +797,4 @@ Latest local runtime smoke evidence:
 - Local SDK compatibility tests prove `smoke_sdk_compat` uses an employee LiteLLM virtual key instead of `YCAPI_API_TOKEN`, rejects `YCAPI_API_TOKEN` as the employee-key env or value, checks `/v1/models`, chat models `gemini-2.5-flash` and `deepseek-chat`, image `ycapi-image-1` with `response_format=b64_json`, a vision chat request with a base64 `data:` URL, required work metadata, OpenAI-compatible response shape, and sanitized failure details. `smoke_runtime_sdk_compat` now has local runtime PASS evidence against running business/admin surfaces with mock ycapi and fails if key cleanup fails.
 - Local error-contract tests prove allowed downstream LiteLLM/ycapi 429 JSON errors preserve the upstream `error` object, inject top-level `request_id` aligned with `x-litellm-call-id`, keep 401/403/404 fallback types stable, pass successful streaming chunks through unchanged, normalize/redact SSE error events including split secrets, and convert non-JSON downstream 5xx errors to OpenAI-compatible JSON without leaking Bearer, `sk-*`, ycapi token text, or DSN passwords.
 
-Remaining before business trial: run `make acceptance-gate` with real production URLs, production ycapi token policy, a live WeCom webhook plus alert report, real ycapi monthly bill evidence, AC-23 human trial evidence, and AC-26 HR/legal acknowledgment evidence until the final report in `/tmp/aimanager-acceptance-gate/final-acceptance-report.json` is `PASS`.
+Remaining before business trial: run `make acceptance-gate` with real production URLs, a metadata-only production LiteLLM key inventory, production ycapi token policy, a live WeCom webhook plus alert report, real ycapi monthly bill evidence, AC-23 human trial evidence, and AC-26 HR/legal acknowledgment evidence until the final report in `/tmp/aimanager-acceptance-gate/final-acceptance-report.json` is `PASS`.

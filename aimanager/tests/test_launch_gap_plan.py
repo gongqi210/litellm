@@ -87,6 +87,36 @@ def test_launch_gap_plan_redacts_secret_like_values_from_json_and_markdown(tmp_p
     assert "[redacted:AIMANAGER_WECOM_WEBHOOK_URL]" in serialized
 
 
+def test_launch_gap_plan_assigns_key_inventory_gap_to_security_ops(tmp_path) -> None:
+    production_file = tmp_path / "production-readiness.json"
+    production_file.write_text(
+        json.dumps(
+            _bundle(
+                checks=[
+                    _check(
+                        "AC-08-KEY-INVENTORY",
+                        "production_key_inventory_governance",
+                        "BLOCKED",
+                        "missing AIMANAGER_KEY_INVENTORY_FILE",
+                        {"required_env": ["AIMANAGER_KEY_INVENTORY_FILE"]},
+                    )
+                ]
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    result = collect_launch_gap_plan(production_readiness_file=production_file)
+
+    assert result["status"] == "BLOCKED"
+    gap = result["gaps"][0]
+    assert gap["id"] == "AC-08-KEY-INVENTORY"
+    assert gap["owner"] == "security/ops"
+    assert gap["required_env"] == ["AIMANAGER_KEY_INVENTORY_FILE"]
+    assert "validate_key_inventory" in gap["command"]
+    assert "virtual key" in gap["next_action"]
+
+
 def test_launch_gap_plan_keeps_worst_duplicate_status_and_preserves_existing_evidence(tmp_path) -> None:
     production_file = tmp_path / "production-readiness.json"
     business_file = tmp_path / "business-trial.json"

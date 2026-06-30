@@ -13,6 +13,18 @@ _EXIT_CODES = {"PASS": 0, "FAIL": 1, "BLOCKED": 2}
 _STATUS_ORDER = {"FAIL": 0, "BLOCKED": 1, "PASS": 2}
 
 _GAP_CATALOG: dict[str, dict[str, object]] = {
+    "AC-08-KEY-INVENTORY": {
+        "owner": "security/ops",
+        "required_env": ["AIMANAGER_KEY_INVENTORY_FILE"],
+        "command": (
+            "PYTHONPATH=\"$PWD\" uv run --no-project python -m aimanager.scripts.validate_key_inventory "
+            "--inventory-file \"$AIMANAGER_KEY_INVENTORY_FILE\" --output-json-file /tmp/aimanager-key-inventory.json"
+        ),
+        "next_action": (
+            "导出生产 LiteLLM virtual key metadata-only inventory，确认所有 active key 都有员工/团队、模型、"
+            "预算、限流、治理 metadata；shared virtual key 必须带 enforced_params。"
+        ),
+    },
     "AC-15": {
         "owner": "architecture/security/ops",
         "required_env": ["AIMANAGER_BUSINESS_BASE_URL", "AIMANAGER_PUBLIC_ADMIN_URL"],

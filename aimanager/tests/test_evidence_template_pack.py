@@ -28,6 +28,12 @@ def test_evidence_template_pack_writes_safe_templates_without_secret_echo(tmp_pa
                         required_env=["AIMANAGER_SPEND_FILE", "AIMANAGER_YCAPI_BILL_FILE"],
                     ),
                     _gap(
+                        "AC-08-KEY-INVENTORY",
+                        "production_key_inventory_governance",
+                        "security/ops",
+                        required_env=["AIMANAGER_KEY_INVENTORY_FILE"],
+                    ),
+                    _gap(
                         "AC-16-WECOM",
                         "wecom_alert_routing",
                         "ops",
@@ -74,6 +80,7 @@ def test_evidence_template_pack_writes_safe_templates_without_secret_echo(tmp_pa
     assert result["status"] == "BLOCKED"
     assert result["summary"]["templates"] >= 8
     assert (output_dir / "evidence-env.template").exists()
+    assert (output_dir / "templates/security-ops/key-inventory.template.json").exists()
     assert (output_dir / "templates/finance/aimanager-spend.template.csv").exists()
     assert (output_dir / "templates/finance/ycapi-bill.template.csv").exists()
     assert (output_dir / "templates/ops/observability-report.template.json").exists()
@@ -85,6 +92,7 @@ def test_evidence_template_pack_writes_safe_templates_without_secret_echo(tmp_pa
     assert "do-not-leak" not in serialized
     assert "[redacted:AIMANAGER_WECOM_WEBHOOK_URL]" in serialized
     env_template = (output_dir / "evidence-env.template").read_text(encoding="utf-8")
+    assert "export AIMANAGER_KEY_INVENTORY_FILE=" in env_template
     assert "export AIMANAGER_WECOM_WEBHOOK_URL=\"\"" in env_template
     assert "# YCAPI_API_TOKEN must be injected by a secret manager or secure shell" in env_template
     assert "export YCAPI_API_TOKEN" not in env_template
@@ -113,6 +121,7 @@ def test_generated_templates_cannot_satisfy_production_readiness(tmp_path) -> No
             {
                 "status": "BLOCKED",
                 "gaps": [
+                    _gap("AC-08-KEY-INVENTORY", "key-inventory", "security/ops"),
                     _gap("AC-12-13-FINANCE", "finance", "finance"),
                     _gap("AC-POLICY", "policy", "general_manager/finance/security/legal"),
                 ],
@@ -124,6 +133,7 @@ def test_generated_templates_cannot_satisfy_production_readiness(tmp_path) -> No
 
     bundle = collect_production_readiness(
         env={
+            "AIMANAGER_KEY_INVENTORY_FILE": str(output_dir / "templates/security-ops/key-inventory.template.json"),
             "AIMANAGER_SPEND_FILE": str(output_dir / "templates/finance/aimanager-spend.template.csv"),
             "AIMANAGER_YCAPI_BILL_FILE": str(output_dir / "templates/finance/ycapi-bill.template.csv"),
             "AIMANAGER_PRODUCTION_POLICY_ATTESTATION_FILE": str(
@@ -134,6 +144,7 @@ def test_generated_templates_cannot_satisfy_production_readiness(tmp_path) -> No
 
     checks = {check["id"]: check for check in bundle["checks"]}
     assert bundle["status"] == "FAIL"
+    assert checks["AC-08-KEY-INVENTORY"]["status"] == "FAIL"
     assert checks["AC-12-13-FINANCE"]["status"] == "BLOCKED"
     assert checks["AC-POLICY"]["status"] == "FAIL"
 
