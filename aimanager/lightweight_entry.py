@@ -77,6 +77,7 @@ class LightweightEntrySubmissionResult:
     entry: LightweightEntryResult | None = None
     checked_endpoint: str | None = None
     status_code: int | None = None
+    assistant_text: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -217,8 +218,8 @@ def submit_lightweight_entry(
             status_code=response.status_code,
         )
 
-    shape_error = _chat_shape_error(response.body)
-    if shape_error:
+    assistant_text, shape_error = _chat_message_content_or_error(response.body)
+    if assistant_text is None:
         return LightweightEntrySubmissionResult(
             status="FAIL",
             detail=f"business gateway response {shape_error}",
@@ -233,6 +234,7 @@ def submit_lightweight_entry(
         entry=entry,
         checked_endpoint=endpoint,
         status_code=response.status_code,
+        assistant_text=assistant_text,
     )
 
 
@@ -397,19 +399,27 @@ def _fetch_with_urllib(*, timeout_seconds: float) -> Fetch:
 
 
 def _chat_shape_error(body: bytes) -> str:
+    return _chat_message_content_or_error(body)[1]
+
+
+def _chat_message_content(body: bytes) -> str | None:
+    return _chat_message_content_or_error(body)[0]
+
+
+def _chat_message_content_or_error(body: bytes) -> tuple[str | None, str]:
     try:
         payload: Any = json.loads(body.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError):
-        return "returned non-JSON body"
+        return None, "returned non-JSON body"
     if not isinstance(payload, dict):
-        return "returned non-object body"
+        return None, "returned non-object body"
     choices = payload.get("choices")
     if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
-        return "missing choices message content"
+        return None, "missing choices message content"
     message = choices[0].get("message")
     if not isinstance(message, dict):
-        return "missing choices message content"
+        return None, "missing choices message content"
     content = message.get("content")
     if not isinstance(content, str) or not content.strip():
-        return "missing choices message content"
-    return ""
+        return None, "missing choices message content"
+    return content, ""

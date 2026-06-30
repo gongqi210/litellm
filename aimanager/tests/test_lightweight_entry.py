@@ -203,6 +203,7 @@ def test_lightweight_entry_submission_uses_employee_key_and_business_gateway() -
     assert result.status == "PASS"
     assert result.status_code == 200
     assert result.checked_endpoint == "/v1/chat/completions"
+    assert result.assistant_text == "draft"
     assert len(calls) == 1
     method, url, headers, payload = calls[0]
     assert method == "POST"
