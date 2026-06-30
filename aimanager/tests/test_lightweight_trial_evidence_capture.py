@@ -381,6 +381,71 @@ def test_build_trial_evidence_requires_live_ycapi_and_confirmation_flags() -> No
     assert "live ycapi" in str(result["detail"])
 
 
+def test_build_trial_evidence_requires_validated_work_context_proof() -> None:
+    missing_context_payload = _successful_submission_result()
+    missing_context_payload["entry"].pop("work_context")
+    failed_context_payload = _successful_submission_result()
+    failed_context_payload["entry"]["work_context"]["status"] = "FAIL"
+
+    for payload in (missing_context_payload, failed_context_payload):
+        result = _build_trial_evidence(payload)
+
+        assert result["status"] == "BLOCKED"
+        assert "work context" in str(result["detail"])
+
+
+def test_build_trial_evidence_rejects_invalid_preflight_proof_details() -> None:
+    metadata_mode_payload = _successful_submission_result()
+    metadata_mode_payload["entry"]["request"]["body"]["metadata"]["workflow_mode"] = "closure"
+    normalized_mode_payload = _successful_submission_result()
+    normalized_mode_payload["entry"]["work_context"]["normalized_context"]["workflow_mode"] = "closure"
+    mismatched_id_payload = _successful_submission_result()
+    mismatched_id_payload["entry"]["work_context"]["normalized_context"]["work_item_id"] = "other-work-item"
+
+    for payload in (metadata_mode_payload, normalized_mode_payload, mismatched_id_payload):
+        result = _build_trial_evidence(payload)
+
+        assert result["status"] == "BLOCKED"
+        assert "work context" in str(result["detail"])
+
+
+def test_build_trial_evidence_accepts_casefolded_work_context_proof() -> None:
+    payload = _successful_submission_result()
+    metadata = payload["entry"]["request"]["body"]["metadata"]
+    metadata["work_item_id"] = "MK-2026-Q3-LAUNCH-001"
+    metadata["employee_id"] = "U_MARKET_1"
+    metadata["department_id"] = "DEPT_MARKET"
+    metadata["end_user_principal"] = "U_MARKET_1"
+    metadata["scenario_l1"] = "MARKETING"
+    metadata["scenario_l2"] = "WECHAT_ARTICLE"
+    payload["entry"]["request"]["body"]["user"] = "U_MARKET_1"
+
+    result = _build_trial_evidence(payload)
+
+    assert result["status"] == "PASS"
+    assert result["evidence"]["trial_id"] == "trial-MK-2026-Q3-LAUNCH-001-req-trial-001"
+    assert result["evidence"]["operator"]["employee_id"] == "U_MARKET_1"
+
+
+def _build_trial_evidence(submission_result: dict[str, object]) -> dict[str, object]:
+    return build_trial_evidence(
+        submission_result=submission_result,
+        request_id="req-trial-001",
+        spend="0.13",
+        operator_role="marketing",
+        identity_source="sso",
+        employee_virtual_key_alias="market-trial-key",
+        started_at="2026-06-30T10:00:00+08:00",
+        completed_at="2026-06-30T10:04:00+08:00",
+        observer="ops-manager",
+        captured_at="2026-06-30T10:05:00+08:00",
+        live_ycapi_confirmed=True,
+        brand_safety_confirmed=True,
+        no_secret_echo_confirmed=True,
+        html_escaped_confirmed=True,
+    )
+
+
 def _successful_submission_result() -> dict[str, object]:
     return {
         "status": "PASS",
@@ -398,6 +463,10 @@ def _successful_submission_result() -> dict[str, object]:
             "work_context": {
                 "status": "PASS",
                 "normalized_context": {
+                    "workflow_mode": "preflight",
+                    "work_item_id": "mk-2026-q3-launch-001",
+                    "employee_id": "u_market_1",
+                    "department_id": "dept_market",
                     "scenario_l1": "marketing",
                     "scenario_l2": "wechat_article",
                 },
@@ -421,6 +490,7 @@ def _successful_submission_result() -> dict[str, object]:
                         "pricing_version": "m2-trial-v1",
                         "scenario_l1": "marketing",
                         "scenario_l2": "wechat_article",
+                        "workflow_mode": "preflight",
                         "project_id": "proj_launch_q3",
                     },
                 },

@@ -131,6 +131,8 @@ def build_trial_evidence(
         model = _request_model(submission_result)
     except (TypeError, ValueError, KeyError):
         return _failed("lightweight entry result is missing required safe metadata")
+    if not _has_valid_work_context_proof(submission_result, metadata):
+        return _blocked("validated work context preflight PASS is required before AC-23 evidence can be captured")
 
     evidence = {
         "trial_id": f"trial-{metadata['work_item_id']}-{request_id}",
@@ -241,11 +243,29 @@ def _metadata(submission_result: Mapping[str, Any]) -> dict[str, Any]:
         "cost_center_id",
         "currency",
         "pricing_version",
+        "workflow_mode",
     )
     missing = [field for field in required if not _text(metadata.get(field))]
     if missing:
         raise KeyError(missing[0])
     return metadata
+
+
+def _has_valid_work_context_proof(submission_result: Mapping[str, Any], metadata: Mapping[str, Any]) -> bool:
+    try:
+        entry = _mapping(submission_result.get("entry"))
+        work_context = _mapping(entry.get("work_context"))
+        normalized_context = _mapping(work_context.get("normalized_context"))
+    except (TypeError, ValueError, KeyError):
+        return False
+    if _text(work_context.get("status")) != "PASS":
+        return False
+    if _text(metadata.get("workflow_mode")) != "preflight":
+        return False
+    if _text(normalized_context.get("workflow_mode")) != "preflight":
+        return False
+    matched_fields = ("work_item_id", "employee_id", "department_id", "scenario_l1", "scenario_l2")
+    return all(_text(normalized_context.get(field)).casefold() == _text(metadata.get(field)).casefold() for field in matched_fields)
 
 
 def _endpoint(submission_result: Mapping[str, Any]) -> str:
