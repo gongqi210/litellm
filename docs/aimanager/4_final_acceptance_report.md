@@ -47,7 +47,7 @@ PYTHONPATH="$PWD" uv run --no-project --with pyyaml python -m aimanager.scripts.
   --output-dir /tmp/aimanager-acceptance-gate
 ```
 
-This is the preferred final go/no-go entrypoint. It runs production readiness once, reuses that exact bundle inside business-trial acceptance, writes launch gap, evidence handoff, evidence template pack, coverage, final report, and gate manifest artifacts into one run-scoped directory, and avoids composing stale `/tmp` files from earlier rehearsals. After owners fill evidence templates, run `make evidence-intake` before rerunning the final gate so unchanged templates, header-only CSV files, raw prompt/response/header fields, cookies, Authorization values, and secret-like strings are rejected before they enter readiness bundles.
+This is the preferred final go/no-go entrypoint. It runs production readiness once, reuses that exact bundle inside business-trial acceptance, writes launch gap, evidence handoff, evidence template pack, evidence intake, coverage, final report, and gate manifest artifacts into one run-scoped directory, and avoids composing stale `/tmp` files from earlier rehearsals. After owners fill evidence templates, run `make evidence-intake` before rerunning the final gate so unchanged templates, header-only CSV files, raw prompt/response/header fields, cookies, Authorization values, and secret-like strings are rejected before they enter readiness bundles and final report blockers.
 
 Business trial acceptance gate:
 
@@ -76,11 +76,12 @@ PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.generate_final
   --business-trial-file /tmp/aimanager-business-trial-acceptance.json \
   --launch-gap-plan-file /tmp/aimanager-launch-gap-plan.json \
   --acceptance-coverage-file /tmp/aimanager-acceptance-coverage.json \
+  --evidence-intake-file /tmp/aimanager-evidence-intake.json \
   --output-json-file /tmp/aimanager-final-acceptance-report.json \
   --output-markdown-file /tmp/aimanager-final-acceptance-report.md
 ```
 
-This final report is now the executable go/no-go composition layer. It consumes only existing JSON artifacts, never calls live services, and returns `PASS` only when the business trial bundle is `PASS`, the launch gap plan has no unresolved gaps, and the acceptance coverage matrix is `PASS` with a non-empty list of criteria objects. Missing inputs or production-only evidence keep the report `BLOCKED`; malformed inputs, malformed coverage criteria, or failing inputs return `FAIL`. The generated JSON/Markdown carries owner, required env/files, rerun command, and next action for each unresolved blocker.
+This final report is now the executable go/no-go composition layer. It consumes only existing JSON artifacts, never calls live services, and returns `PASS` only when the business trial bundle is `PASS`, the launch gap plan has no unresolved gaps, the acceptance coverage matrix is `PASS` with a non-empty list of criteria objects, and any supplied evidence intake is `PASS`. Missing inputs or production-only evidence keep the report `BLOCKED`; malformed inputs, malformed coverage criteria, failed evidence-intake checks, or failing inputs return `FAIL`. The generated JSON/Markdown carries owner, required env/files, rerun command, and next action for each unresolved blocker.
 
 ## Stage Scores
 

@@ -15,11 +15,13 @@ _SOURCE_LABELS = {
     "business_trial": "business_trial_acceptance",
     "launch_gap_plan": "launch_gap_plan",
     "acceptance_coverage": "acceptance_coverage",
+    "evidence_intake": "evidence_intake_validation",
 }
 _STAGE_SCORE_LABELS = {
     "business_trial": "business_trial_acceptance",
     "launch_gap_plan": "launch_gap_closure",
     "acceptance_coverage": "acceptance_coverage",
+    "evidence_intake": "evidence_intake_validation",
 }
 
 
@@ -30,6 +32,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--business-trial-file", help="JSON output from business_trial_acceptance_bundle.")
     parser.add_argument("--launch-gap-plan-file", help="JSON output from generate_launch_gap_plan.")
     parser.add_argument("--acceptance-coverage-file", help="JSON output from acceptance_coverage_matrix.")
+    parser.add_argument("--evidence-intake-file", help="Optional JSON output from validate_evidence_intake.")
     parser.add_argument("--output-json-file", required=True)
     parser.add_argument("--output-markdown-file")
     parser.add_argument("--generated-at", help="Override generated_at timestamp for deterministic tests.")
@@ -39,6 +42,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         business_trial_file=Path(args.business_trial_file) if args.business_trial_file else None,
         launch_gap_plan_file=Path(args.launch_gap_plan_file) if args.launch_gap_plan_file else None,
         acceptance_coverage_file=Path(args.acceptance_coverage_file) if args.acceptance_coverage_file else None,
+        evidence_intake_file=Path(args.evidence_intake_file) if args.evidence_intake_file else None,
         generated_at=args.generated_at,
     )
     _write_json(Path(args.output_json_file), result)
@@ -58,6 +62,7 @@ def collect_final_acceptance_report(
     business_trial_file: Path | None = None,
     launch_gap_plan_file: Path | None = None,
     acceptance_coverage_file: Path | None = None,
+    evidence_intake_file: Path | None = None,
     generated_at: str | None = None,
 ) -> dict[str, object]:
     inputs = {
@@ -65,6 +70,8 @@ def collect_final_acceptance_report(
         "launch_gap_plan": _load_input("launch_gap_plan", launch_gap_plan_file),
         "acceptance_coverage": _load_input("acceptance_coverage", acceptance_coverage_file),
     }
+    if evidence_intake_file is not None:
+        inputs["evidence_intake"] = _load_input("evidence_intake", evidence_intake_file)
     blockers = _collect_blockers(inputs)
     statuses = [str(item["load_status"]) for item in inputs.values()]
     statuses.extend(str(item.get("status") or "FAIL") for item in inputs.values() if item["load_status"] == "PASS")
@@ -155,6 +162,9 @@ def _collect_blockers(inputs: Mapping[str, Mapping[str, object]]) -> list[dict[s
     coverage_state = inputs["acceptance_coverage"]
     if coverage_state["load_status"] == "PASS":
         blockers.extend(_coverage_blockers(coverage_state))
+    intake_state = inputs.get("evidence_intake")
+    if intake_state and intake_state["load_status"] == "PASS":
+        blockers.extend(_evidence_intake_blockers(intake_state))
     return blockers
 
 
@@ -318,6 +328,64 @@ def _coverage_blockers(input_state: Mapping[str, object]) -> list[dict[str, obje
     return blockers
 
 
+def _evidence_intake_blockers(input_state: Mapping[str, object]) -> list[dict[str, object]]:
+    data = _mapping(input_state.get("data"))
+    checks = data.get("checks")
+    if not isinstance(checks, list):
+        return [
+            {
+                "id": "evidence_intake:CHECKS",
+                "name": "evidence_intake",
+                "source": "evidence_intake_validation",
+                "status": "FAIL",
+                "owner": "security/ops",
+                "detail": "evidence_intake checks must be a list",
+                "required_env": [],
+                "required_files": ["evidence-intake.json"],
+                "command": _input_command("evidence_intake"),
+                "next_action": "Regenerate evidence intake validation from owner-filled evidence files.",
+            }
+        ]
+    blockers = []
+    for check in checks:
+        if not isinstance(check, Mapping):
+            continue
+        status = _coerce_status(check.get("status"))
+        if status == "PASS":
+            continue
+        path = str(check.get("path") or "UNKNOWN")
+        blockers.append(
+            {
+                "id": f"EVIDENCE-INTAKE:{path}",
+                "name": "evidence_intake_file",
+                "source": "evidence_intake_validation",
+                "status": status,
+                "owner": "evidence_owner/security",
+                "detail": str(check.get("detail") or ""),
+                "required_env": [],
+                "required_files": [path],
+                "command": _input_command("evidence_intake"),
+                "next_action": "Replace unsafe or incomplete owner evidence, rerun evidence intake, then rerun final acceptance.",
+            }
+        )
+    if not blockers and _coerce_status(data.get("status")) != "PASS":
+        blockers.append(
+            {
+                "id": "EVIDENCE-INTAKE",
+                "name": "evidence_intake_validation",
+                "source": "evidence_intake_validation",
+                "status": _coerce_status(data.get("status")),
+                "owner": "evidence_owner/security",
+                "detail": "evidence intake did not pass",
+                "required_env": [],
+                "required_files": ["evidence-intake.json"],
+                "command": _input_command("evidence_intake"),
+                "next_action": "Inspect evidence-intake.json, resolve the failed intake status, and rerun final acceptance.",
+            }
+        )
+    return blockers
+
+
 def _summary(inputs: Mapping[str, Mapping[str, object]], blockers: Sequence[Mapping[str, object]]) -> dict[str, int]:
     summary = {status: 0 for status in ("PASS", "FAIL", "BLOCKED")}
     for input_state in inputs.values():
@@ -407,6 +475,13 @@ def _input_command(source: str) -> str:
             "--business-trial-file /tmp/aimanager-business-trial-acceptance.json "
             "--output-json-file /tmp/aimanager-launch-gap-plan.json "
             "--output-markdown-file /tmp/aimanager-launch-gap-plan.md"
+        )
+    if source == "evidence_intake":
+        return (
+            "PYTHONPATH=\"$PWD\" uv run --no-project python -m aimanager.scripts.validate_evidence_intake "
+            "--input-dir /tmp/aimanager-evidence-template-pack "
+            "--output-json-file /tmp/aimanager-evidence-intake.json "
+            "--output-markdown-file /tmp/aimanager-evidence-intake.md"
         )
     return (
         "PYTHONPATH=\"$PWD\" uv run --no-project python -m aimanager.scripts.acceptance_coverage_matrix "

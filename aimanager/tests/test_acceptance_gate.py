@@ -146,12 +146,15 @@ def test_acceptance_gate_fails_when_env_pointed_evidence_fails_intake(tmp_path: 
 
     intake_step = _step_by_id(result, "evidence_intake")
     intake = json.loads((artifact_dir / "evidence-intake.json").read_text(encoding="utf-8"))
+    final_report = json.loads((artifact_dir / "final-acceptance-report.json").read_text(encoding="utf-8"))
     serialized = json.dumps(result, ensure_ascii=False)
     for path in (path for path in artifact_dir.rglob("*") if path.is_file()):
         serialized += path.read_text(encoding="utf-8")
     assert result["status"] == "FAIL"
     assert intake_step["status"] == "FAIL"
     assert intake["status"] == "FAIL"
+    assert final_report["status"] == "FAIL"
+    assert final_report["blockers"][0]["source"] == "evidence_intake_validation"
     assert "should-not-leak" not in serialized
     assert "Bearer [redacted:secret-like-value]" in serialized
 

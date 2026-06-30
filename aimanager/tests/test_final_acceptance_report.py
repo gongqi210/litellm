@@ -93,6 +93,51 @@ def test_final_acceptance_report_fails_on_failed_inputs_and_redacts_secrets(tmp_
     assert "[redacted:AIMANAGER_WECOM_WEBHOOK_URL]" in serialized
 
 
+def test_final_acceptance_report_fails_when_supplied_evidence_intake_fails(tmp_path) -> None:
+    business_file = tmp_path / "business.json"
+    launch_file = tmp_path / "launch.json"
+    coverage_file = tmp_path / "coverage.json"
+    intake_file = tmp_path / "evidence-intake.json"
+    business_file.write_text(json.dumps(_business_bundle("PASS")), encoding="utf-8")
+    launch_file.write_text(json.dumps(_launch_plan("PASS", gaps=[])), encoding="utf-8")
+    coverage_file.write_text(json.dumps(_coverage_matrix("PASS")), encoding="utf-8")
+    intake_file.write_text(
+        json.dumps(
+            {
+                "status": "FAIL",
+                "generated_at": "2026-06-30T00:00:00Z",
+                "summary": {"PASS": 0, "FAIL": 1, "BLOCKED": 0, "files": 1},
+                "checks": [
+                    {
+                        "path": "owner/policy.json",
+                        "status": "FAIL",
+                        "detail": "found Authorization: Bearer should-not-leak",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = collect_final_acceptance_report(
+        business_trial_file=business_file,
+        launch_gap_plan_file=launch_file,
+        acceptance_coverage_file=coverage_file,
+        evidence_intake_file=intake_file,
+    )
+    serialized = json.dumps(result, ensure_ascii=False)
+
+    assert result["status"] == "FAIL"
+    assert result["conclusion"] == "FAIL"
+    assert result["summary"]["inputs"] == 4
+    assert result["input_statuses"]["evidence_intake_validation"]["status"] == "FAIL"
+    assert result["stage_scores"]["evidence_intake_validation"] == 0
+    assert result["blockers"][0]["id"] == "EVIDENCE-INTAKE:owner/policy.json"
+    assert result["blockers"][0]["source"] == "evidence_intake_validation"
+    assert "should-not-leak" not in serialized
+    assert "Bearer [redacted:secret-like-value]" in serialized
+
+
 def test_final_acceptance_report_blocks_when_launch_gap_plan_has_unresolved_gaps(tmp_path) -> None:
     business_file = tmp_path / "business.json"
     launch_file = tmp_path / "launch.json"

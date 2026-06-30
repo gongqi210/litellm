@@ -165,6 +165,7 @@ def collect_acceptance_gate(
             business_trial_file=paths["business_json"],
             launch_gap_plan_file=paths["launch_json"],
             acceptance_coverage_file=paths["coverage_json"],
+            evidence_intake_file=paths["evidence_intake_json"],
             generated_at=gate_generated_at,
         ),
         redactions,
