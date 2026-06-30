@@ -37,6 +37,18 @@ docker compose -f aimanager/docker-compose.yml config
 docker compose -f aimanager/docker-compose.yml --profile admin config
 ```
 
+One-command acceptance gate:
+
+```bash
+make acceptance-gate
+
+# equivalent explicit form
+PYTHONPATH="$PWD" uv run --no-project --with pyyaml python -m aimanager.scripts.run_acceptance_gate \
+  --output-dir /tmp/aimanager-acceptance-gate
+```
+
+This is the preferred final go/no-go entrypoint. It runs production readiness once, reuses that exact bundle inside business-trial acceptance, writes launch gap, coverage, final report, and gate manifest artifacts into one run-scoped directory, and avoids composing stale `/tmp` files from earlier rehearsals.
+
 Business trial acceptance gate:
 
 ```bash
@@ -88,7 +100,7 @@ This final report is now the executable go/no-go composition layer. It consumes 
 - AC-12/13: provide real AiManager spend export and ycapi monthly bill evidence with nonzero billable amounts.
 - AC-23: run a timed 5-minute nontechnical trial with live ycapi, controlled identity injection, and a governed employee virtual key.
 - AC-26: provide HR/legal-approved policy publication, roster, and latest-version acknowledgment export.
-- Final gate: rerun `business_trial_acceptance_bundle`, `generate_launch_gap_plan`, `acceptance_coverage_matrix`, and `generate_final_acceptance_report`; require every leaf check, launch gap, mapped AC row, and final report blocker to be `PASS` or empty.
+- Final gate: rerun `make acceptance-gate`; require every leaf check, launch gap, mapped AC row, final report blocker, and `acceptance-gate.json` step to be `PASS` or empty.
 
 ## Final Conclusion
 

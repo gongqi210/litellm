@@ -61,3 +61,4 @@ def test_aimanager_cli_entry_emits_machine_readable_status() -> None:
     payload = json.loads(completed.stdout)
     assert payload["status"] == "PASS"
     assert "production_readiness" in payload["commands"]
+    assert "acceptance_gate" in payload["commands"]
