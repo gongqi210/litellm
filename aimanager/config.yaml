@@ -37,3 +37,4 @@ router_settings:
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
   store_model_in_db: false
+  always_include_stream_usage: true

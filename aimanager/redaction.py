@@ -37,6 +37,11 @@ _WECOM_WEBHOOK_PATTERN = re.compile(
 )
 _BEARER_PATTERN = re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]+")
 _SECRET_KEY_PATTERN = re.compile(r"\bsk-[A-Za-z0-9._~-]+")
+_SECRET_ASSIGNMENT_PATTERN = re.compile(
+    r"\b((?:[A-Za-z0-9_-]*(?:TOKEN|API[_-]?KEY|SECRET|WEBHOOK|PASSWORD)[A-Za-z0-9_-]*)"
+    r"\s*[:=]\s*)(?!os\.environ/)[^,\s\"']+",
+    re.IGNORECASE,
+)
 _DSN_PASSWORD_PATTERN = re.compile(
     r"((?:postgres(?:ql)?|mysql|mariadb|redis|mongodb(?:\+srv)?)://[^:\s/@]+:)[^@\s]+(@)",
     re.IGNORECASE,
@@ -46,6 +51,7 @@ _SECRET_PATTERNS = (
     (_WECOM_WEBHOOK_PATTERN, WECOM_WEBHOOK_URL_REDACTION),
     (_BEARER_PATTERN, f"Bearer {SECRET_LIKE_REDACTION}"),
     (_SECRET_KEY_PATTERN, SECRET_LIKE_REDACTION),
+    (_SECRET_ASSIGNMENT_PATTERN, rf"\1{SECRET_LIKE_REDACTION}"),
     (_DSN_PASSWORD_PATTERN, rf"\1{SECRET_LIKE_REDACTION}\2"),
 )
 

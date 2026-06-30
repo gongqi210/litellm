@@ -27,6 +27,16 @@ def build_mock_response(path: str, payload: dict[str, Any]) -> tuple[int, dict[s
         model = _string(payload.get("model"), default="gemini-2.5-flash")
         prompt_tokens = _estimate_prompt_tokens(payload.get("messages"))
         completion_tokens = 7
+        usage = {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": prompt_tokens + completion_tokens,
+        }
+        if payload.get("stream") is True:
+            stream_options = payload.get("stream_options")
+            include_usage = isinstance(stream_options, dict) and stream_options.get("include_usage") is True
+            headers = {"content-type": "text/event-stream"}
+            return 200, headers, _stream_chat_response_bytes(model=model, usage=usage, include_usage=include_usage)
         body = {
             "id": f"chatcmpl-aimanager-mock-{int(time.time())}",
             "object": "chat.completion",
@@ -42,11 +52,7 @@ def build_mock_response(path: str, payload: dict[str, Any]) -> tuple[int, dict[s
                     "finish_reason": "stop",
                 }
             ],
-            "usage": {
-                "prompt_tokens": prompt_tokens,
-                "completion_tokens": completion_tokens,
-                "total_tokens": prompt_tokens + completion_tokens,
-            },
+            "usage": usage,
         }
         return 200, headers, _json_bytes(body)
 
@@ -168,6 +174,43 @@ def _content_length(value: str | None) -> int:
 
 def _json_bytes(payload: dict[str, Any]) -> bytes:
     return json.dumps(payload, separators=(",", ":")).encode("utf-8")
+
+
+def _stream_chat_response_bytes(*, model: str, usage: dict[str, int], include_usage: bool) -> bytes:
+    response_id = f"chatcmpl-aimanager-mock-{int(time.time())}"
+    created = int(time.time())
+    chunks: list[dict[str, Any] | str] = [
+        {
+            "id": response_id,
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": model,
+            "choices": [{"index": 0, "delta": {"role": "assistant", "content": "AiManager "}, "finish_reason": None}],
+        },
+        {
+            "id": response_id,
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": model,
+            "choices": [{"index": 0, "delta": {"content": "ycapi mock response"}, "finish_reason": None}],
+        },
+    ]
+    final_chunk: dict[str, Any] = {
+        "id": response_id,
+        "object": "chat.completion.chunk",
+        "created": created,
+        "model": model,
+        "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+    }
+    if include_usage:
+        final_chunk["usage"] = usage
+    chunks.extend([final_chunk, "[DONE]"])
+    return b"".join(_sse_data(chunk) for chunk in chunks)
+
+
+def _sse_data(payload: dict[str, Any] | str) -> bytes:
+    data = payload if isinstance(payload, str) else json.dumps(payload, separators=(",", ":"))
+    return f"data: {data}\n\n".encode("utf-8")
 
 
 def main(argv: Sequence[str] | None = None) -> int:

@@ -141,6 +141,8 @@ def _validate_general_settings(config: dict[str, Any]) -> None:
         raise ConfigValidationError("general_settings.store_model_in_db must be false for ycapi-only mode")
     if general_settings.get("pass_through_endpoints"):
         raise ConfigValidationError("general_settings.pass_through_endpoints must be empty for ycapi-only mode")
+    if general_settings.get("always_include_stream_usage") is not True:
+        raise ConfigValidationError("general_settings.always_include_stream_usage must be true for billable streams")
 
 
 def _validate_positive_number(params: dict[str, Any], model_name: str, field_name: str) -> None:
@@ -171,8 +173,8 @@ def validate_aimanager_config(config_path: Path | str) -> None:
     config = _load_yaml(path)
     _validate_forbidden_markers(path)
     _validate_env_refs(config)
-    _validate_general_settings(config)
     _validate_model_list(config)
+    _validate_general_settings(config)
 
 
 def main(argv: list[str] | None = None) -> int:

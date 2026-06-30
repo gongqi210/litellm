@@ -452,6 +452,43 @@ def test_allowlist_middleware_passes_success_streaming_chunks_through() -> None:
     ]
 
 
+def test_business_chat_stream_requests_force_usage_in_stream_options() -> None:
+    captured: dict[str, object] = {}
+
+    async def downstream(scope, receive, send) -> None:  # type: ignore[no-untyped-def]
+        message = await receive()
+        captured["scope"] = scope
+        captured["body"] = message["body"]
+        await send({"type": "http.response.start", "status": 204, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+
+    app = YcapiOnlyAllowlistMiddleware(downstream)
+    raw_body = json.dumps(
+        {
+            "model": "gemini-2.5-flash",
+            "stream": True,
+            "stream_options": {"include_usage": False},
+            "messages": [{"role": "user", "content": "hello"}],
+        }
+    ).encode("utf-8")
+
+    messages = asyncio.run(
+        _call_asgi(
+            app,
+            "POST",
+            "/v1/chat/completions",
+            headers=[(b"content-type", b"application/json"), (b"content-length", str(len(raw_body)).encode())],
+            body=raw_body,
+        )
+    )
+
+    forwarded = json.loads(captured["body"])
+    assert messages[0]["status"] == 204
+    assert forwarded["stream_options"]["include_usage"] is True
+    forwarded_headers = dict(captured["scope"]["headers"])
+    assert forwarded_headers[b"content-length"] == str(len(captured["body"])).encode("ascii")
+
+
 def test_allowlist_middleware_redacts_json_error_message_secrets() -> None:
     async def downstream(scope, receive, send) -> None:  # type: ignore[no-untyped-def]
         await send(

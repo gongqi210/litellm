@@ -26,10 +26,12 @@ DatabaseReadyChecker = Callable[[], bool]
 
 LOGGER = logging.getLogger("aimanager.audit")
 KEY_GOVERNANCE_POLICY_CODE = "aimanager_key_governance_invalid"
+REQUEST_BODY_POLICY_CODE = "aimanager_request_body_invalid"
 KEY_LIFECYCLE_POLICY_CODE = "aimanager_key_lifecycle_invalid"
 RBAC_POLICY_CODE = "aimanager_rbac_denied"
 DATABASE_UNAVAILABLE_POLICY_CODE = "aimanager_database_unavailable"
 MAX_KEY_GENERATE_BODY_BYTES = 64 * 1024
+MAX_CHAT_COMPLETION_BODY_BYTES = 32 * 1024 * 1024
 MAX_DOWNSTREAM_AUDIT_BODY_BYTES = 16 * 1024
 MAX_DOWNSTREAM_ERROR_BODY_BYTES = 64 * 1024
 MANAGEMENT_RBAC_ADMIN_ROLES = frozenset(
@@ -182,6 +184,20 @@ class YcapiOnlyAllowlistMiddleware:
                     audit_send,
                 )
                 return
+            if _is_chat_completion_route(method, path):
+                try:
+                    raw_body = await _read_request_body(receive, max_body_bytes=MAX_CHAT_COMPLETION_BODY_BYTES)
+                except KeyGovernanceError as exc:
+                    await _send_request_body_error(metrics_send, str(exc), request_id)
+                    return
+                stream_usage_body = _stream_usage_enforced_body(raw_body)
+                downstream_scope = (
+                    _scope_with_json_body_headers(scope, stream_usage_body)
+                    if stream_usage_body != raw_body
+                    else scope
+                )
+                await self.app(downstream_scope, _receive_once(stream_usage_body), audit_send)
+                return
             await self.app(scope, receive, audit_send)
             return
 
@@ -216,6 +232,11 @@ def _request_id_from_scope(scope: Scope) -> str:
 def _is_key_generate_route(method: str, path: str) -> bool:
     normalized_path = _normalized_request_path(path)
     return method.upper() == "POST" and normalized_path == "/key/generate"
+
+
+def _is_chat_completion_route(method: str, path: str) -> bool:
+    normalized_path = _normalized_request_path(path)
+    return method.upper() == "POST" and normalized_path == "/v1/chat/completions"
 
 
 def _is_key_lifecycle_route(method: str, path: str) -> bool:
@@ -318,7 +339,7 @@ def _normalized_request_path(path: str) -> str:
     return normalized_path
 
 
-async def _read_request_body(receive: Receive) -> bytes:
+async def _read_request_body(receive: Receive, *, max_body_bytes: int | None = MAX_KEY_GENERATE_BODY_BYTES) -> bytes:
     chunks: list[bytes] = []
     total_size = 0
     while True:
@@ -333,11 +354,11 @@ async def _read_request_body(receive: Receive) -> bytes:
         if isinstance(chunk, str):
             chunk = chunk.encode("utf-8")
         if not isinstance(chunk, bytes):
-            raise KeyGovernanceError("request body must be bytes for AiManager key creation")
+            raise KeyGovernanceError("request body must be bytes for AiManager request processing")
 
         total_size += len(chunk)
-        if total_size > MAX_KEY_GENERATE_BODY_BYTES:
-            raise KeyGovernanceError("request body is too large for AiManager key creation")
+        if max_body_bytes is not None and total_size > max_body_bytes:
+            raise KeyGovernanceError("request body is too large for AiManager request processing")
         chunks.append(chunk)
 
         if not bool(message.get("more_body", False)):
@@ -357,6 +378,23 @@ def _parse_json_object_body(raw_body: bytes) -> dict[str, Any]:
 
 def _normalized_key_generate_body(payload: dict[str, Any]) -> bytes:
     normalized = normalize_key_request(payload, shared_key=_is_shared_key_request(payload))
+    return json.dumps(normalized, separators=(",", ":")).encode("utf-8")
+
+
+def _stream_usage_enforced_body(raw_body: bytes) -> bytes:
+    try:
+        payload = json.loads(raw_body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return raw_body
+    if not isinstance(payload, dict) or payload.get("stream") is not True:
+        return raw_body
+    stream_options = payload.get("stream_options")
+    normalized_stream_options = dict(stream_options) if isinstance(stream_options, dict) else {}
+    if normalized_stream_options.get("include_usage") is True:
+        return raw_body
+    normalized = dict(payload)
+    normalized_stream_options["include_usage"] = True
+    normalized["stream_options"] = normalized_stream_options
     return json.dumps(normalized, separators=(",", ":")).encode("utf-8")
 
 
@@ -413,6 +451,27 @@ async def _send_key_governance_error(send: Send, message: str, request_id: str) 
         (b"content-length", str(len(body)).encode("ascii")),
         (b"x-litellm-call-id", request_id.encode("utf-8")),
         (b"x-aimanager-policy-code", KEY_GOVERNANCE_POLICY_CODE.encode("utf-8")),
+    ]
+    await send({"type": "http.response.start", "status": 400, "headers": headers})
+    await send({"type": "http.response.body", "body": body})
+
+
+async def _send_request_body_error(send: Send, message: str, request_id: str) -> None:
+    response = {
+        "error": {
+            "message": f"AiManager request processing rejects request body: {message}",
+            "type": "invalid_request_error",
+            "param": None,
+            "code": REQUEST_BODY_POLICY_CODE,
+        },
+        "request_id": request_id,
+    }
+    body = json.dumps(response).encode("utf-8")
+    headers = [
+        (b"content-type", b"application/json"),
+        (b"content-length", str(len(body)).encode("ascii")),
+        (b"x-litellm-call-id", request_id.encode("utf-8")),
+        (b"x-aimanager-policy-code", REQUEST_BODY_POLICY_CODE.encode("ascii")),
     ]
     await send({"type": "http.response.start", "status": 400, "headers": headers})
     await send({"type": "http.response.body", "body": body})
