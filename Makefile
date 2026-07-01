@@ -1,7 +1,7 @@
 # LiteLLM Makefile
 # Simple Makefile for running tests and basic development tasks
 
-.PHONY: help policy-check key-inventory-export admin-boundary-smoke finance-export wecom-alert-route acceptance-gate evidence-handoff evidence-template-pack evidence-intake test test-unit test-unit-llms test-unit-proxy-guardrails test-unit-proxy-core test-unit-proxy-misc \
+.PHONY: help policy-check key-inventory-export admin-boundary-smoke finance-export wecom-alert-route live-ycapi-preflight production-policy-readiness employee-monitoring-validate lightweight-trial-evidence-capture acceptance-gate evidence-handoff evidence-template-pack evidence-intake test test-unit test-unit-llms test-unit-proxy-guardrails test-unit-proxy-core test-unit-proxy-misc \
 	test-unit-integrations test-unit-core-utils test-unit-other test-unit-root \
 	test-proxy-unit-a test-proxy-unit-b test-integration test-unit-helm \
 	info lint lint-dev format \
@@ -18,6 +18,10 @@ help:
 	@echo "  make admin-boundary-smoke - Probe production business/admin exposure boundaries for AC-15"
 	@echo "  make finance-export     - Export AiManager finance CSVs from LiteLLM spend and ycapi bill evidence"
 	@echo "  make wecom-alert-route  - Route AiManager observability alerts to WeCom for AC-16"
+	@echo "  make live-ycapi-preflight - Run read-only live ycapi /models preflight for AC-19"
+	@echo "  make production-policy-readiness - Rerun production readiness with AC-POLICY attestation"
+	@echo "  make employee-monitoring-validate - Validate AC-26 employee monitoring notice and acknowledgment evidence"
+	@echo "  make lightweight-trial-evidence-capture - Capture AC-23 non-SDK trial evidence from a successful entry result"
 	@echo "  make acceptance-gate    - Run AiManager one-command acceptance gate into /tmp or AIMANAGER_ACCEPTANCE_GATE_OUTPUT_DIR"
 	@echo "  make evidence-handoff   - Generate owner-specific evidence requests from the latest acceptance gate"
 	@echo "  make evidence-template-pack - Generate safe external evidence input templates from the latest acceptance gate"
@@ -74,6 +78,27 @@ finance-export:
 
 wecom-alert-route:
 	PYTHONPATH="$$(pwd)" uv run --no-project python -m aimanager.scripts.route_observability_alerts --report-file "$${AIMANAGER_OBSERVABILITY_REPORT_FILE}" --webhook-url "$${AIMANAGER_WECOM_WEBHOOK_URL}" --min-severity "$${AIMANAGER_WECOM_MIN_SEVERITY:-warning}" --title "AiManager production readiness alerts" --output-payload-file /tmp/aimanager-wecom-alert-payload.json
+
+live-ycapi-preflight:
+	PYTHONPATH="$$(pwd)" uv run --no-project python -m aimanager.scripts.smoke_live_ycapi --expect-model gemini-2.5-flash --expect-model deepseek-chat --expect-model ycapi-image-1
+
+production-policy-readiness:
+	AIMANAGER_PRODUCTION_POLICY_ATTESTATION_FILE="$${AIMANAGER_PRODUCTION_POLICY_ATTESTATION_FILE}" PYTHONPATH="$$(pwd)" uv run --no-project --with pyyaml python -m aimanager.scripts.production_readiness_bundle --output-json-file "$${AIMANAGER_PRODUCTION_READINESS_OUTPUT_FILE:-/tmp/aimanager-production-readiness.json}"
+
+employee-monitoring-validate:
+	PYTHONPATH="$$(pwd)" uv run --no-project --with pyyaml python -m aimanager.scripts.validate_employee_monitoring_policy --policy-file "$${AIMANAGER_EMPLOYEE_MONITORING_POLICY_FILE:-docs/aimanager/aimanager-employee-monitoring-policy.json}" --employee-roster-file "$${AIMANAGER_EMPLOYEE_ROSTER_FILE}" --acknowledgment-file "$${AIMANAGER_EMPLOYEE_ACKNOWLEDGMENT_FILE}" --output-json-file "$${AIMANAGER_EMPLOYEE_MONITORING_RESULT_FILE:-/tmp/aimanager-employee-monitoring.json}" --output-markdown-file "$${AIMANAGER_EMPLOYEE_MONITORING_MARKDOWN_FILE:-/tmp/aimanager-employee-monitoring.md}"
+
+lightweight-trial-evidence-capture:
+	@if [ "$${AIMANAGER_LIGHTWEIGHT_TRIAL_LIVE_YCAPI_CONFIRMED}" != "true" ]; then echo "BLOCKED AC-23: set AIMANAGER_LIGHTWEIGHT_TRIAL_LIVE_YCAPI_CONFIRMED=true after live ycapi evidence is captured." >&2; exit 2; fi
+	@if [ "$${AIMANAGER_LIGHTWEIGHT_TRIAL_BRAND_SAFETY_CONFIRMED}" != "true" ]; then echo "BLOCKED AC-23: set AIMANAGER_LIGHTWEIGHT_TRIAL_BRAND_SAFETY_CONFIRMED=true after brand-safety evidence is captured." >&2; exit 2; fi
+	@if [ "$${AIMANAGER_LIGHTWEIGHT_TRIAL_NO_SECRET_ECHO_CONFIRMED}" != "true" ]; then echo "BLOCKED AC-23: set AIMANAGER_LIGHTWEIGHT_TRIAL_NO_SECRET_ECHO_CONFIRMED=true after secret redaction evidence is captured." >&2; exit 2; fi
+	@if [ "$${AIMANAGER_LIGHTWEIGHT_TRIAL_HTML_ESCAPED_CONFIRMED}" != "true" ]; then echo "BLOCKED AC-23: set AIMANAGER_LIGHTWEIGHT_TRIAL_HTML_ESCAPED_CONFIRMED=true after HTML escaping evidence is captured." >&2; exit 2; fi
+	@confirm_args=""; \
+	if [ "$${AIMANAGER_LIGHTWEIGHT_TRIAL_LIVE_YCAPI_CONFIRMED}" = "true" ]; then confirm_args="$$confirm_args --live-ycapi-confirmed"; fi; \
+	if [ "$${AIMANAGER_LIGHTWEIGHT_TRIAL_BRAND_SAFETY_CONFIRMED}" = "true" ]; then confirm_args="$$confirm_args --brand-safety-confirmed"; fi; \
+	if [ "$${AIMANAGER_LIGHTWEIGHT_TRIAL_NO_SECRET_ECHO_CONFIRMED}" = "true" ]; then confirm_args="$$confirm_args --no-secret-echo-confirmed"; fi; \
+	if [ "$${AIMANAGER_LIGHTWEIGHT_TRIAL_HTML_ESCAPED_CONFIRMED}" = "true" ]; then confirm_args="$$confirm_args --html-escaped-confirmed"; fi; \
+	PYTHONPATH="$$(pwd)" uv run --no-project --with pyyaml python -m aimanager.scripts.capture_lightweight_trial_evidence --lightweight-entry-result-file "$${AIMANAGER_LIGHTWEIGHT_ENTRY_RESULT_FILE:-/tmp/aimanager-lightweight-entry-submit.json}" --request-id "$${AIMANAGER_LIGHTWEIGHT_TRIAL_REQUEST_ID}" --spend "$${AIMANAGER_LIGHTWEIGHT_TRIAL_SPEND}" --operator-role "$${AIMANAGER_LIGHTWEIGHT_TRIAL_OPERATOR_ROLE:-marketing}" --identity-source "$${AIMANAGER_LIGHTWEIGHT_TRIAL_IDENTITY_SOURCE:-sso}" --employee-virtual-key-alias "$${AIMANAGER_LIGHTWEIGHT_TRIAL_KEY_ALIAS}" --started-at "$${AIMANAGER_LIGHTWEIGHT_TRIAL_STARTED_AT}" --completed-at "$${AIMANAGER_LIGHTWEIGHT_TRIAL_COMPLETED_AT}" --observer "$${AIMANAGER_LIGHTWEIGHT_TRIAL_OBSERVER}" --captured-at "$${AIMANAGER_LIGHTWEIGHT_TRIAL_CAPTURED_AT}" $$confirm_args --output-json-file "$${AIMANAGER_LIGHTWEIGHT_TRIAL_EVIDENCE_FILE:-/tmp/aimanager-ac23-trial-evidence.json}"
 
 acceptance-gate:
 	PYTHONPATH="$$(pwd)" uv run --no-project --with pyyaml python -m aimanager.scripts.run_acceptance_gate --output-dir "$${AIMANAGER_ACCEPTANCE_GATE_OUTPUT_DIR:-/tmp/aimanager-acceptance-gate}"

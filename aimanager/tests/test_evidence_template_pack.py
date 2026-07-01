@@ -54,7 +54,23 @@ def test_evidence_template_pack_writes_safe_templates_without_secret_echo(tmp_pa
                         "AC-23",
                         "nontechnical_lightweight_trial",
                         "business_owner/market/ops",
-                        required_env=["AIMANAGER_LIGHTWEIGHT_TRIAL_EVIDENCE_FILE"],
+                        required_env=[
+                            "AIMANAGER_LIGHTWEIGHT_TRIAL_EVIDENCE_FILE",
+                            "AIMANAGER_LIGHTWEIGHT_ENTRY_RESULT_FILE",
+                            "AIMANAGER_LIGHTWEIGHT_TRIAL_REQUEST_ID",
+                            "AIMANAGER_LIGHTWEIGHT_TRIAL_SPEND",
+                            "AIMANAGER_LIGHTWEIGHT_TRIAL_OPERATOR_ROLE",
+                            "AIMANAGER_LIGHTWEIGHT_TRIAL_IDENTITY_SOURCE",
+                            "AIMANAGER_LIGHTWEIGHT_TRIAL_KEY_ALIAS",
+                            "AIMANAGER_LIGHTWEIGHT_TRIAL_STARTED_AT",
+                            "AIMANAGER_LIGHTWEIGHT_TRIAL_COMPLETED_AT",
+                            "AIMANAGER_LIGHTWEIGHT_TRIAL_OBSERVER",
+                            "AIMANAGER_LIGHTWEIGHT_TRIAL_CAPTURED_AT",
+                            "AIMANAGER_LIGHTWEIGHT_TRIAL_LIVE_YCAPI_CONFIRMED",
+                            "AIMANAGER_LIGHTWEIGHT_TRIAL_BRAND_SAFETY_CONFIRMED",
+                            "AIMANAGER_LIGHTWEIGHT_TRIAL_NO_SECRET_ECHO_CONFIRMED",
+                            "AIMANAGER_LIGHTWEIGHT_TRIAL_HTML_ESCAPED_CONFIRMED",
+                        ],
                     ),
                     _gap(
                         "AC-26",
@@ -107,6 +123,8 @@ def test_evidence_template_pack_writes_safe_templates_without_secret_echo(tmp_pa
     assert "export AIMANAGER_ALLOWED_SSO_REDIRECT_HOSTS=\"\"" in env_template
     assert "export AIMANAGER_KEY_INVENTORY_FILE=" in env_template
     assert "export AIMANAGER_WECOM_WEBHOOK_URL=\"\"" in env_template
+    assert "export AIMANAGER_LIGHTWEIGHT_TRIAL_OPERATOR_ROLE=\"marketing\"" in env_template
+    assert "export AIMANAGER_LIGHTWEIGHT_TRIAL_IDENTITY_SOURCE=\"sso\"" in env_template
     assert "# YCAPI_API_TOKEN must be injected by a secret manager or secure shell" in env_template
     assert "export YCAPI_API_TOKEN" not in env_template
     assert "do-not-leak-token" not in env_template

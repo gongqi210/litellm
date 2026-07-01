@@ -91,35 +91,36 @@ _GAP_CATALOG: dict[str, dict[str, object]] = {
     "AC-19": {
         "owner": "architecture/ops",
         "required_env": ["YCAPI_API_TOKEN"],
-        "command": (
-            "PYTHONPATH=\"$PWD\" uv run --no-project python -m aimanager.scripts.smoke_live_ycapi "
-            "--expect-model gemini-2.5-flash --expect-model deepseek-chat --expect-model ycapi-image-1"
-        ),
+        "command": "make live-ycapi-preflight",
         "next_action": "在生产侧注入真实 ycapi token，跑只读 /models preflight；输出不得包含 token、请求 URL 或响应 body。",
     },
     "AC-POLICY": {
         "owner": "general_manager/finance/security/legal",
         "required_env": ["AIMANAGER_PRODUCTION_POLICY_ATTESTATION_FILE"],
         "required_files": ["docs/aimanager/production_policy_attestation.example.json"],
-        "command": (
-            "AIMANAGER_PRODUCTION_POLICY_ATTESTATION_FILE=<policy.json> PYTHONPATH=\"$PWD\" "
-            "uv run --no-project --with pyyaml python -m aimanager.scripts.production_readiness_bundle "
-            "--output-json-file /tmp/aimanager-production-readiness.json"
-        ),
+        "command": "make production-policy-readiness",
         "next_action": "基于示例文件填写真实 showback/chargeback、价格审批、ycapi 限额、数据边界和 finance/security/legal 三方独立审批记录。",
     },
     "AC-23": {
         "owner": "business_owner/market/ops",
-        "required_env": ["AIMANAGER_LIGHTWEIGHT_TRIAL_EVIDENCE_FILE"],
-        "command": (
-            "PYTHONPATH=\"$PWD\" uv run --no-project --with pyyaml python -m "
-            "aimanager.scripts.capture_lightweight_trial_evidence --lightweight-entry-result-file "
-            "/tmp/aimanager-lightweight-entry-submit.json --request-id <request-id> --spend <nonzero-spend> "
-            "--operator-role marketing --identity-source sso --employee-virtual-key-alias <alias> "
-            "--started-at <iso8601> --completed-at <iso8601> --observer <observer> --captured-at <iso8601> "
-            "--live-ycapi-confirmed --brand-safety-confirmed --no-secret-echo-confirmed --html-escaped-confirmed "
-            "--output-json-file /tmp/aimanager-ac23-trial-evidence.json"
-        ),
+        "required_env": [
+            "AIMANAGER_LIGHTWEIGHT_TRIAL_EVIDENCE_FILE",
+            "AIMANAGER_LIGHTWEIGHT_ENTRY_RESULT_FILE",
+            "AIMANAGER_LIGHTWEIGHT_TRIAL_REQUEST_ID",
+            "AIMANAGER_LIGHTWEIGHT_TRIAL_SPEND",
+            "AIMANAGER_LIGHTWEIGHT_TRIAL_OPERATOR_ROLE",
+            "AIMANAGER_LIGHTWEIGHT_TRIAL_IDENTITY_SOURCE",
+            "AIMANAGER_LIGHTWEIGHT_TRIAL_KEY_ALIAS",
+            "AIMANAGER_LIGHTWEIGHT_TRIAL_STARTED_AT",
+            "AIMANAGER_LIGHTWEIGHT_TRIAL_COMPLETED_AT",
+            "AIMANAGER_LIGHTWEIGHT_TRIAL_OBSERVER",
+            "AIMANAGER_LIGHTWEIGHT_TRIAL_CAPTURED_AT",
+            "AIMANAGER_LIGHTWEIGHT_TRIAL_LIVE_YCAPI_CONFIRMED",
+            "AIMANAGER_LIGHTWEIGHT_TRIAL_BRAND_SAFETY_CONFIRMED",
+            "AIMANAGER_LIGHTWEIGHT_TRIAL_NO_SECRET_ECHO_CONFIRMED",
+            "AIMANAGER_LIGHTWEIGHT_TRIAL_HTML_ESCAPED_CONFIRMED",
+        ],
+        "command": "make lightweight-trial-evidence-capture",
         "next_action": "安排市场或业务人员通过非 SDK 入口完成 0-300 秒真人试用，并从真实 request/spend log 采集 evidence。",
     },
     "AC-26": {
@@ -129,13 +130,7 @@ _GAP_CATALOG: dict[str, dict[str, object]] = {
             "AIMANAGER_EMPLOYEE_ROSTER_FILE",
             "AIMANAGER_EMPLOYEE_ACKNOWLEDGMENT_FILE",
         ],
-        "command": (
-            "PYTHONPATH=\"$PWD\" uv run --no-project --with pyyaml python -m "
-            "aimanager.scripts.validate_employee_monitoring_policy --policy-file <policy.json> "
-            "--employee-roster-file <roster.csv> --acknowledgment-file <ack.csv> "
-            "--output-json-file /tmp/aimanager-employee-monitoring.json --output-markdown-file "
-            "/tmp/aimanager-employee-monitoring.md"
-        ),
+        "command": "make employee-monitoring-validate",
         "next_action": "发布 metadata-only 员工监控制度，补齐 HR/法务边界、员工名册和最新版本全员确认导出。",
     },
 }

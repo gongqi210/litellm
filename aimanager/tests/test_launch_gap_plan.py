@@ -244,6 +244,105 @@ def test_launch_gap_plan_assigns_admin_boundary_gap_to_smoke_before_readiness(tm
     assert "AIMANAGER_ALLOWED_SSO_REDIRECT_HOSTS" in gap["next_action"]
 
 
+def test_launch_gap_plan_assigns_live_ycapi_gap_to_make_target(tmp_path) -> None:
+    production_file = tmp_path / "production-readiness.json"
+    production_file.write_text(
+        json.dumps(_bundle(checks=[_check("AC-19", "live_ycapi_preflight", "BLOCKED", "missing ycapi token")])),
+        encoding="utf-8",
+    )
+
+    result = collect_launch_gap_plan(production_readiness_file=production_file)
+
+    gap = result["gaps"][0]
+    assert gap["id"] == "AC-19"
+    assert gap["owner"] == "architecture/ops"
+    assert gap["required_env"] == ["YCAPI_API_TOKEN"]
+    assert gap["command"] == "make live-ycapi-preflight"
+    assert "<" not in gap["command"]
+    assert "只读 /models preflight" in gap["next_action"]
+
+
+def test_launch_gap_plan_assigns_policy_gap_to_env_driven_make_target(tmp_path) -> None:
+    production_file = tmp_path / "production-readiness.json"
+    production_file.write_text(
+        json.dumps(
+            _bundle(
+                checks=[
+                    _check(
+                        "AC-POLICY",
+                        "production_policy_attestation",
+                        "BLOCKED",
+                        "missing production policy attestation",
+                    )
+                ]
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    result = collect_launch_gap_plan(production_readiness_file=production_file)
+
+    gap = result["gaps"][0]
+    assert gap["id"] == "AC-POLICY"
+    assert gap["owner"] == "general_manager/finance/security/legal"
+    assert gap["required_env"] == ["AIMANAGER_PRODUCTION_POLICY_ATTESTATION_FILE"]
+    assert gap["command"] == "make production-policy-readiness"
+    assert "<policy.json>" not in gap["command"]
+    assert gap["required_files"] == ["docs/aimanager/production_policy_attestation.example.json"]
+
+
+def test_launch_gap_plan_assigns_lightweight_trial_gap_to_env_driven_capture_target(tmp_path) -> None:
+    business_file = tmp_path / "business-trial.json"
+    business_file.write_text(
+        json.dumps(_bundle(checks=[_check("AC-23", "nontechnical_lightweight_trial", "BLOCKED", "missing trial")])),
+        encoding="utf-8",
+    )
+
+    result = collect_launch_gap_plan(business_trial_file=business_file)
+
+    gap = result["gaps"][0]
+    assert gap["id"] == "AC-23"
+    assert gap["owner"] == "business_owner/market/ops"
+    assert gap["command"] == "make lightweight-trial-evidence-capture"
+    assert "<" not in gap["command"]
+    assert "AIMANAGER_LIGHTWEIGHT_TRIAL_EVIDENCE_FILE" in gap["required_env"]
+    assert "AIMANAGER_LIGHTWEIGHT_ENTRY_RESULT_FILE" in gap["required_env"]
+    assert "AIMANAGER_LIGHTWEIGHT_TRIAL_REQUEST_ID" in gap["required_env"]
+    assert "AIMANAGER_LIGHTWEIGHT_TRIAL_SPEND" in gap["required_env"]
+    assert "AIMANAGER_LIGHTWEIGHT_TRIAL_OPERATOR_ROLE" in gap["required_env"]
+    assert "AIMANAGER_LIGHTWEIGHT_TRIAL_IDENTITY_SOURCE" in gap["required_env"]
+    assert "AIMANAGER_LIGHTWEIGHT_TRIAL_KEY_ALIAS" in gap["required_env"]
+    assert "AIMANAGER_LIGHTWEIGHT_TRIAL_LIVE_YCAPI_CONFIRMED" in gap["required_env"]
+    assert "真人试用" in gap["next_action"]
+
+
+def test_launch_gap_plan_assigns_employee_monitoring_gap_to_env_driven_make_target(tmp_path) -> None:
+    business_file = tmp_path / "business-trial.json"
+    business_file.write_text(
+        json.dumps(
+            _bundle(
+                checks=[_check("AC-26", "employee_monitoring_policy_evidence", "BLOCKED", "missing roster")]
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    result = collect_launch_gap_plan(business_trial_file=business_file)
+
+    gap = result["gaps"][0]
+    assert gap["id"] == "AC-26"
+    assert gap["owner"] == "HR/legal/security"
+    assert gap["required_env"] == [
+        "AIMANAGER_EMPLOYEE_MONITORING_POLICY_FILE",
+        "AIMANAGER_EMPLOYEE_ROSTER_FILE",
+        "AIMANAGER_EMPLOYEE_ACKNOWLEDGMENT_FILE",
+    ]
+    assert gap["command"] == "make employee-monitoring-validate"
+    assert "<policy.json>" not in gap["command"]
+    assert "<roster.csv>" not in gap["command"]
+    assert "<ack.csv>" not in gap["command"]
+
+
 def test_launch_gap_plan_keeps_worst_duplicate_status_and_preserves_existing_evidence(tmp_path) -> None:
     production_file = tmp_path / "production-readiness.json"
     business_file = tmp_path / "business-trial.json"

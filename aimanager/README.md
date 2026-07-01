@@ -532,6 +532,9 @@ Expected production result: every line is `PASS`. The business URL checks call m
 Live ycapi token preflight:
 
 ```bash
+make live-ycapi-preflight
+
+# equivalent explicit form
 PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.smoke_live_ycapi \
   --expect-model gemini-2.5-flash \
   --expect-model deepseek-chat \
@@ -591,34 +594,30 @@ Keep `--business-base-url` pointed at the controlled AiManager business gateway.
 M2 lightweight trial evidence capture:
 
 ```bash
-PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.capture_lightweight_trial_evidence \
-  --lightweight-entry-result-file /tmp/aimanager-lightweight-entry-submit.json \
-  --request-id <request-id-from-live-request-or-spend-log> \
-  --spend <nonzero-spend-from-litellm-spend-log> \
-  --operator-role marketing \
-  --identity-source sso \
-  --employee-virtual-key-alias <employee-key-alias-not-raw-key> \
-  --started-at <iso8601-started-at> \
-  --completed-at <iso8601-completed-at> \
-  --observer <observer-name> \
-  --captured-at <iso8601-captured-at> \
-  --live-ycapi-confirmed \
-  --brand-safety-confirmed \
-  --no-secret-echo-confirmed \
-  --html-escaped-confirmed \
-  --output-json-file /tmp/aimanager-ac23-trial-evidence.json
+export AIMANAGER_LIGHTWEIGHT_ENTRY_RESULT_FILE=/tmp/aimanager-lightweight-entry-submit.json
+export AIMANAGER_LIGHTWEIGHT_TRIAL_EVIDENCE_FILE=/tmp/aimanager-ac23-trial-evidence.json
+export AIMANAGER_LIGHTWEIGHT_TRIAL_REQUEST_ID=...
+export AIMANAGER_LIGHTWEIGHT_TRIAL_SPEND=...
+export AIMANAGER_LIGHTWEIGHT_TRIAL_KEY_ALIAS=...
+export AIMANAGER_LIGHTWEIGHT_TRIAL_STARTED_AT=...
+export AIMANAGER_LIGHTWEIGHT_TRIAL_COMPLETED_AT=...
+export AIMANAGER_LIGHTWEIGHT_TRIAL_OBSERVER=...
+export AIMANAGER_LIGHTWEIGHT_TRIAL_CAPTURED_AT=...
+export AIMANAGER_LIGHTWEIGHT_TRIAL_LIVE_YCAPI_CONFIRMED=true
+export AIMANAGER_LIGHTWEIGHT_TRIAL_BRAND_SAFETY_CONFIRMED=true
+export AIMANAGER_LIGHTWEIGHT_TRIAL_NO_SECRET_ECHO_CONFIRMED=true
+export AIMANAGER_LIGHTWEIGHT_TRIAL_HTML_ESCAPED_CONFIRMED=true
+make lightweight-trial-evidence-capture
 ```
 
 This command converts a successful `submit_lightweight_entry` result into the AC-23 evidence file consumed by `business_trial_acceptance_bundle`. It is intentionally a capture step, not an evidence generator: `request_id`, nonzero `spend`, and timestamps must come from the live request/spend log and the human observer for that trial. The output keeps only safe attestation fields and allow-listed request metadata, including either a project or customer identifier. The submission result must carry `entry.work_context.status=PASS`, `workflow_mode=preflight`, and matching normalized work-context identifiers, which blocks trimmed or status-only submission results from declaring `work_context_status=PASS` and reduces fully hand-written JSON risk. The output does not serialize prompt text, assistant text, headers, Authorization, cookies, employee keys, or ycapi tokens. A non-PASS submission, missing validated work-context proof, secret-bearing field, secret-like output value, secret-like assistant echo, or raw-key-looking key alias returns `BLOCKED` or `FAIL` and does not write an evidence file.
 
 M2 employee monitoring notice and boundary validation:
 ```bash
-PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.validate_employee_monitoring_policy \
-  --policy-file docs/aimanager/aimanager-employee-monitoring-policy.json \
-  --employee-roster-file /path/to/employee-roster.csv \
-  --acknowledgment-file /path/to/employee-monitoring-acknowledgments.csv \
-  --output-json-file /tmp/aimanager-employee-monitoring.json \
-  --output-markdown-file /tmp/aimanager-employee-monitoring.md
+export AIMANAGER_EMPLOYEE_MONITORING_POLICY_FILE=docs/aimanager/aimanager-employee-monitoring-policy.json
+export AIMANAGER_EMPLOYEE_ROSTER_FILE=/path/to/employee-roster.csv
+export AIMANAGER_EMPLOYEE_ACKNOWLEDGMENT_FILE=/path/to/employee-monitoring-acknowledgments.csv
+make employee-monitoring-validate
 ```
 
 The policy validator is the AC-26 machine-readable contract for non-covert employee monitoring. The committed `docs/aimanager/aimanager-employee-monitoring-policy.json` is the canonical policy register for the local contract: metadata-only monitoring, explicit prohibitions on prompt/response/raw IP/customer-content inspection, bounded retention, enabled off-hours and suspected key-sharing rules, restricted reviewer roles, no direct-manager review access, HR/legal guardrails for discipline, and an employee appeal channel. It still requires real active-employee roster and latest-version acknowledgment exports before production AC-26 can pass. Missing evidence files return `BLOCKED`; contradictory policy or missing active employee acknowledgment returns `FAIL`; `PASS` means the supplied notice, acknowledgment, and permission-boundary evidence is internally consistent. Local tests prove the contract, not production HR/legal publication or all-employee acknowledgment.
@@ -649,7 +648,7 @@ The bundle is the pre-business-trial gate for the remaining production-only evid
 - AC-08 production virtual-key inventory governance from `AIMANAGER_KEY_INVENTORY_FILE`; use `aimanager.scripts.export_key_inventory` or an equivalent metadata-only full export from the production management surface, then validate that it declares trusted fresh full-inventory provenance and matching total count, and every active LiteLLM key is employee/team-bound, model-scoped, budgeted, rate-limited, duration-bound, and governed.
 - AC-16 live WeCom alert routing from `AIMANAGER_OBSERVABILITY_REPORT_FILE`, `AIMANAGER_WECOM_WEBHOOK_URL`, and `AIMANAGER_WECOM_MIN_SEVERITY`.
 - AC-12/AC-13 finance export and ycapi bill reconciliation from `AIMANAGER_SPEND_FILE`, `AIMANAGER_YCAPI_BILL_FILE`, and `AIMANAGER_FINANCE_OUTPUT_DIR`.
-- AC-POLICY production policy attestation from `AIMANAGER_PRODUCTION_POLICY_ATTESTATION_FILE`; start from `docs/aimanager/production_policy_attestation.example.json` and replace every approval reference with the real finance, security, and legal records for the pilot. Finance, security, and legal must be three distinct approver identities after whitespace/case normalization, and ycapi monthly budget/RPM limits must be finite positive numbers.
+- AC-POLICY production policy attestation from `AIMANAGER_PRODUCTION_POLICY_ATTESTATION_FILE`; start from `docs/aimanager/production_policy_attestation.example.json` and replace every approval reference with the real finance, security, and legal records for the pilot, then run `make production-policy-readiness`. Finance, security, and legal must be three distinct approver identities after whitespace/case normalization, and ycapi monthly budget/RPM limits must be finite positive numbers.
 
 Exit code `0` means all checks are `PASS`; `1` means at least one `FAIL`; `2` means no failed checks but at least one required production input is still `BLOCKED`. The JSON bundle never writes `YCAPI_API_TOKEN`, raw LiteLLM key values, or the WeCom webhook URL; if a downstream error includes those values, they are replaced with a `[redacted:...]` marker. Without production inputs, the expected local result is `BLOCKED` with six blocked checks, not `PASS`. Key-inventory evidence is `BLOCKED` without `AIMANAGER_KEY_INVENTORY_FILE`, without trusted full-export metadata, with stale export metadata, or when the export has zero active keys, and `FAIL` if the declared total count does not match the exported records, export scope is not `all_virtual_keys`, or any active key is legacy, wildcard, unbounded, missing duration, missing governance metadata, has a non-boolean shared-key marker, or contains raw secret-like values. WeCom evidence is `BLOCKED` when no alert is actually delivered, finance evidence is `BLOCKED` when either spend rows or ycapi bill rows are empty or lack non-zero billable amounts on either side of the reconciliation, and production policy evidence is `FAIL` if showback/chargeback, pricing approval, ycapi token limit, employee-virtual-key-only distribution, data boundary, or independent finance/security/legal approver records are incomplete.
 
