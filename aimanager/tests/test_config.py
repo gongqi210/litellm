@@ -67,6 +67,7 @@ def test_compose_uses_aimanager_litellm_entrypoint() -> None:
     assert service["environment"]["YCAPI_API_TOKEN"] is None
     assert service["environment"].get("AIMANAGER_ROUTE_SURFACE", "business") == "business"
     assert service["environment"]["AIMANAGER_DATABASE_READY_CHECK_ENABLED"] == "True"
+    assert service["environment"]["AIMANAGER_WORK_CONTEXT_ENFORCEMENT_ENABLED"] == "True"
     assert service["environment"]["LITELLM_LOCAL_MODEL_COST_MAP"] == "True"
 
 
@@ -86,6 +87,7 @@ def test_compose_exposes_management_surface_only_on_localhost_profile() -> None:
     assert service["environment"]["AIMANAGER_ROUTE_SURFACE"] == "management"
     assert service["environment"]["AIMANAGER_RBAC_ENABLED"] == "True"
     assert service["environment"]["AIMANAGER_DATABASE_READY_CHECK_ENABLED"] == "True"
+    assert "AIMANAGER_WORK_CONTEXT_ENFORCEMENT_ENABLED" not in service["environment"]
     assert service["environment"]["LITELLM_LOCAL_MODEL_COST_MAP"] == "True"
     assert service["ports"] == ["127.0.0.1:4001:4000"]
     assert service["entrypoint"] == ["python", "-m", "aimanager.litellm_entrypoint"]
@@ -106,6 +108,7 @@ def test_runtime_dockerfile_copies_aimanager_package() -> None:
 def test_env_example_uses_non_secret_placeholders() -> None:
     env_example = ENV_EXAMPLE_PATH.read_text(encoding="utf-8")
 
+    assert "AIMANAGER_WORK_CONTEXT_ENFORCEMENT_ENABLED=True" in env_example
     assert "sk-" not in env_example
     assert "AKIA" not in env_example
     assert "AIza" not in env_example

@@ -70,6 +70,23 @@ def test_lightweight_entry_prepares_governed_chat_request_from_flat_form() -> No
     assert metadata["end_user_principal"] == "u_market_1"
     assert metadata["requires_external_approval"] is True
     assert metadata["approval_required"] is True
+    assert metadata["workflow"] == {
+        "brief_ref": "brief://mk-2026-q3-launch-001",
+        "human_reviewer": "u_marketing_lead",
+        "approval_policy_ref": "policy://brand-external-content-v1",
+    }
+    assert metadata["brand_safety"] == {
+        "policy_ref": "policy://brand-safety-v1",
+        "brand_voice_checked": True,
+        "forbidden_commitments_checked": True,
+        "price_or_effect_claims_checked": True,
+        "competitor_comparison_checked": True,
+        "customer_case_checked": True,
+        "copyright_checked": True,
+        "portrait_rights_checked": True,
+        "fact_check_required": True,
+        "external_approval_required": True,
+    }
     assert "YCAPI_API_TOKEN" not in json.dumps(result.to_dict())
     assert "Authorization" not in json.dumps(result.to_dict())
 

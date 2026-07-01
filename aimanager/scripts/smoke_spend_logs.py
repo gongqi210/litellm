@@ -49,10 +49,12 @@ def build_governed_key_payload(
     shared_key: bool = True,
     max_budget: float = 1.0,
     key_alias_prefix: str = "aimanager-smoke",
-    scenario_l2: str = "runtime-spend-smoke",
+    scenario_l2: str = "code_assist",
 ) -> dict[str, Any]:
     metadata: dict[str, Any] = {
         "owner": "aimanager-smoke",
+        "work_item_id": request_marker,
+        "employee_id": "employee-smoke-001",
         "department_id": "dept_smoke",
         "project_id": "proj_aimanager_runtime_smoke",
         "cost_center_id": "cc_smoke",
@@ -60,6 +62,9 @@ def build_governed_key_payload(
         "scenario_l2": scenario_l2,
         "approver": "aimanager-ci",
         "internal_or_external": "internal",
+        "channel": "sdk",
+        "sensitivity_level": "internal",
+        "approval_required": False,
         "end_user_principal": "employee-smoke-001",
         "aimanager_smoke_id": request_marker,
     }
@@ -330,9 +335,11 @@ def _delete_virtual_key(
 
 
 def _request_metadata(
-    marker: str, *, scenario_l2: str = "runtime-spend-smoke", image_count: int = 0
+    marker: str, *, scenario_l2: str = "code_assist", image_count: int = 0
 ) -> dict[str, str | int]:
     return {
+        "work_item_id": marker,
+        "employee_id": "employee-smoke-001",
         "department_id": "dept_smoke",
         "project_id": "proj_aimanager_runtime_smoke",
         "cost_center_id": "cc_smoke",
@@ -340,6 +347,10 @@ def _request_metadata(
         "currency": "CNY",
         "scenario_l1": "engineering",
         "scenario_l2": scenario_l2,
+        "internal_or_external": "internal",
+        "channel": "sdk",
+        "sensitivity_level": "internal",
+        "approval_required": False,
         "end_user_principal": "employee-smoke-001",
         "aimanager_smoke_id": marker,
         "image_count": image_count,

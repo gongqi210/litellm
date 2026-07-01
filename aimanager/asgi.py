@@ -15,6 +15,7 @@ from aimanager.audit import build_audit_event
 from aimanager.governance import KeyGovernanceError, normalize_key_request
 from aimanager.policy import ALLOWED_BUSINESS_ROUTES, RouteDecision, build_policy_error_body, evaluate_route
 from aimanager.runtime_metrics import DEFAULT_AIMANAGER_METRICS, AiManagerMetrics
+from aimanager.work_context import validate_work_context
 
 Scope = dict[str, Any]
 Message = dict[str, Any]
@@ -33,6 +34,7 @@ KEY_LIFECYCLE_POLICY_CODE = "aimanager_key_lifecycle_invalid"
 KEY_BLOCKED_POLICY_CODE = "aimanager_key_blocked"
 KEY_REVOKED_POLICY_CODE = "aimanager_key_revoked"
 BUSINESS_TOKEN_POLICY_CODE = "aimanager_business_token_forbidden"
+WORK_CONTEXT_POLICY_CODE = "aimanager_work_context_invalid"
 RBAC_POLICY_CODE = "aimanager_rbac_denied"
 DATABASE_UNAVAILABLE_POLICY_CODE = "aimanager_database_unavailable"
 MAX_KEY_GENERATE_BODY_BYTES = 64 * 1024
@@ -99,6 +101,7 @@ class YcapiOnlyAllowlistMiddleware:
         metrics_sink: MetricsSink | None = None,
         surface: str = "business",
         rbac_enabled: bool | None = None,
+        work_context_enforcement_enabled: bool | None = None,
         database_ready_check_enabled: bool | None = None,
         database_ready_checker: DatabaseReadyChecker | None = None,
         key_disposition_checker: KeyDispositionChecker | None = None,
@@ -109,6 +112,11 @@ class YcapiOnlyAllowlistMiddleware:
         self.surface = "management" if surface == "management" else "business"
         self.rbac_enabled = (
             _env_flag("AIMANAGER_RBAC_ENABLED", default=False) if rbac_enabled is None else rbac_enabled
+        )
+        self.work_context_enforcement_enabled = (
+            _env_flag("AIMANAGER_WORK_CONTEXT_ENFORCEMENT_ENABLED", default=False)
+            if work_context_enforcement_enabled is None
+            else work_context_enforcement_enabled
         )
         self.database_ready_check_enabled = (
             _env_flag("AIMANAGER_DATABASE_READY_CHECK_ENABLED", default=False)
@@ -218,6 +226,33 @@ class YcapiOnlyAllowlistMiddleware:
                     audit_send,
                 )
                 return
+            if (
+                self.surface == "business"
+                and self.work_context_enforcement_enabled
+                and _requires_business_work_context(method, path)
+            ):
+                try:
+                    raw_body = await _read_request_body(receive, max_body_bytes=MAX_CHAT_COMPLETION_BODY_BYTES)
+                    payload = _parse_json_object_body(raw_body, purpose="work context enforcement")
+                except KeyGovernanceError as exc:
+                    await _send_request_body_error(metrics_send, str(exc), request_id)
+                    return
+
+                work_context_error = _business_work_context_error(payload)
+                if work_context_error:
+                    decision = _work_context_invalid_decision(method, path, work_context_error)
+                    _emit_policy_audit_event(self.audit_sink, scope, decision, request_id)
+                    await _send_work_context_error(metrics_send, work_context_error, request_id)
+                    return
+
+                downstream_body = _stream_usage_enforced_body(raw_body) if _is_chat_completion_route(method, path) else raw_body
+                downstream_scope = (
+                    _scope_with_json_body_headers(scope, downstream_body)
+                    if downstream_body != raw_body
+                    else scope
+                )
+                await self.app(downstream_scope, _receive_once(downstream_body), audit_send)
+                return
             if _is_chat_completion_route(method, path):
                 try:
                     raw_body = await _read_request_body(receive, max_body_bytes=MAX_CHAT_COMPLETION_BODY_BYTES)
@@ -275,6 +310,15 @@ def _is_key_generate_route(method: str, path: str) -> bool:
 def _is_chat_completion_route(method: str, path: str) -> bool:
     normalized_path = _normalized_request_path(path)
     return method.upper() == "POST" and normalized_path == "/v1/chat/completions"
+
+
+def _is_image_generation_route(method: str, path: str) -> bool:
+    normalized_path = _normalized_request_path(path)
+    return method.upper() == "POST" and normalized_path == "/v1/images/generations"
+
+
+def _requires_business_work_context(method: str, path: str) -> bool:
+    return _is_chat_completion_route(method, path) or _is_image_generation_route(method, path)
 
 
 def _is_key_lifecycle_route(method: str, path: str) -> bool:
@@ -517,13 +561,13 @@ async def _read_request_body(receive: Receive, *, max_body_bytes: int | None = M
     return b"".join(chunks)
 
 
-def _parse_json_object_body(raw_body: bytes) -> dict[str, Any]:
+def _parse_json_object_body(raw_body: bytes, *, purpose: str = "key creation") -> dict[str, Any]:
     try:
         payload = json.loads(raw_body.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise KeyGovernanceError("JSON object body is required for AiManager key creation") from exc
+        raise KeyGovernanceError(f"JSON object body is required for AiManager {purpose}") from exc
     if not isinstance(payload, dict):
-        raise KeyGovernanceError("JSON object body is required for AiManager key creation")
+        raise KeyGovernanceError(f"JSON object body is required for AiManager {purpose}")
     return payload
 
 
@@ -552,6 +596,62 @@ def _stream_usage_enforced_body(raw_body: bytes) -> bytes:
 def _is_shared_key_request(payload: dict[str, Any]) -> bool:
     metadata = payload.get("metadata")
     return isinstance(metadata, dict) and metadata.get("shared_key") is True
+
+
+def _business_work_context_error(payload: dict[str, Any]) -> str:
+    metadata = payload.get("metadata")
+    if not isinstance(metadata, Mapping):
+        return "missing metadata work context object"
+
+    user = _payload_text(payload, "user")
+    context = _work_context_from_metadata(metadata)
+    validation = validate_work_context(context, mode="preflight")
+    errors = set(validation.errors)
+    if not user:
+        errors.add("user")
+    end_user_principal = _text_from_value(metadata.get("end_user_principal"))
+    if user and end_user_principal and user != end_user_principal:
+        errors.add("user")
+
+    if not errors:
+        return ""
+    return f"missing or invalid work context fields: {', '.join(sorted(errors))}"
+
+
+def _work_context_from_metadata(metadata: Mapping[str, Any]) -> dict[str, Any]:
+    context_fields = (
+        "work_item_id",
+        "employee_id",
+        "department_id",
+        "end_user_principal",
+        "scenario_l1",
+        "scenario_l2",
+        "internal_or_external",
+        "channel",
+        "project_id",
+        "customer_id",
+        "sensitivity_level",
+        "approval_required",
+    )
+    context = {field_name: metadata.get(field_name) for field_name in context_fields if field_name in metadata}
+    workflow = metadata.get("workflow")
+    if isinstance(workflow, Mapping):
+        context["workflow"] = dict(workflow)
+    brand_safety = metadata.get("brand_safety")
+    if isinstance(brand_safety, Mapping):
+        context["brand_safety"] = dict(brand_safety)
+    return context
+
+
+def _work_context_invalid_decision(method: str, path: str, message: str) -> RouteDecision:
+    normalized_method = method.upper()
+    normalized_path = _normalized_request_path(path)
+    return RouteDecision(
+        allowed=False,
+        code=WORK_CONTEXT_POLICY_CODE,
+        message=f"AiManager work context rejects {normalized_method} {normalized_path}: {message}",
+        status_code=400,
+    )
 
 
 def _scope_with_json_body_headers(scope: Scope, body: bytes) -> Scope:
@@ -623,6 +723,27 @@ async def _send_request_body_error(send: Send, message: str, request_id: str) ->
         (b"content-length", str(len(body)).encode("ascii")),
         (b"x-litellm-call-id", request_id.encode("utf-8")),
         (b"x-aimanager-policy-code", REQUEST_BODY_POLICY_CODE.encode("ascii")),
+    ]
+    await send({"type": "http.response.start", "status": 400, "headers": headers})
+    await send({"type": "http.response.body", "body": body})
+
+
+async def _send_work_context_error(send: Send, message: str, request_id: str) -> None:
+    response = {
+        "error": {
+            "message": f"AiManager work context rejects request: {message}",
+            "type": "invalid_request_error",
+            "param": None,
+            "code": WORK_CONTEXT_POLICY_CODE,
+        },
+        "request_id": request_id,
+    }
+    body = json.dumps(response).encode("utf-8")
+    headers = [
+        (b"content-type", b"application/json"),
+        (b"content-length", str(len(body)).encode("ascii")),
+        (b"x-litellm-call-id", request_id.encode("utf-8")),
+        (b"x-aimanager-policy-code", WORK_CONTEXT_POLICY_CODE.encode("ascii")),
     ]
     await send({"type": "http.response.start", "status": 400, "headers": headers})
     await send({"type": "http.response.body", "body": body})

@@ -51,6 +51,7 @@ M1 blocks provider passthrough, Google native `:generateContent` routes, `/pass-
 Route surfaces:
 
 - `AIMANAGER_ROUTE_SURFACE=business` is the default data-plane surface. It allows only the M1 business API allowlist plus health checks. LiteLLM Admin UI, key, team, user, budget, and spend routes are blocked on this surface.
+- `AIMANAGER_WORK_CONTEXT_ENFORCEMENT_ENABLED=True` makes the business surface fail closed before LiteLLM for `POST /v1/chat/completions` and `POST /v1/images/generations` unless the request body includes a valid work-context metadata object and a `user` matching `metadata.end_user_principal`. Rejections return HTTP 400 `aimanager_work_context_invalid` without echoing prompt or response content.
 - `AIMANAGER_ROUTE_SURFACE=management` is the controlled admin surface. It allows LiteLLM UI/key/team/user/budget/spend management routes, while still blocking provider passthrough, Google native routes, runtime config mutation, pass-through endpoint mutation, cache/reload mutation, and model writes.
 - The local compose admin surface is behind the `admin` profile, binds only `127.0.0.1:4001`, and enables `AIMANAGER_RBAC_ENABLED=True`.
 
@@ -273,7 +274,7 @@ export AIMANAGER_BASE_URL=http://localhost:4000
 export AIMANAGER_EMPLOYEE_VIRTUAL_KEY=<employee-virtual-key>
 ```
 
-Every work request must include a `user` plus metadata for department, project, cost center, scenario, end-user principal, currency, and pricing version. The examples below use the M1 contract only: chat through `gemini-2.5-flash` and `deepseek-chat`, image generation through `ycapi-image-1`, and vision through a base64 `data:` URL on `gemini-2.5-flash`.
+Every generation request must include `user` plus work-context metadata: `work_item_id`, `employee_id`, `department_id`, `end_user_principal`, `scenario_l1`, `scenario_l2`, `internal_or_external`, `channel`, either `project_id` or `customer_id`, `sensitivity_level`, and boolean `approval_required`, plus finance metadata such as `cost_center_id`, `currency`, and `pricing_version`. The examples below use the M1 contract only: chat through `gemini-2.5-flash` and `deepseek-chat`, image generation through `ycapi-image-1`, and vision through a base64 `data:` URL on `gemini-2.5-flash`.
 
 curl chat:
 
@@ -286,12 +287,18 @@ curl -s "$AIMANAGER_BASE_URL/v1/chat/completions" \
     "messages": [{"role": "user", "content": "Reply with exactly: ok"}],
     "user": "employee-001",
     "metadata": {
+      "work_item_id": "work-sdk-chat-001",
+      "employee_id": "employee-001",
       "department_id": "dept_engineering",
-      "project_id": "proj_aimanager",
-      "cost_center_id": "cc_platform",
-      "scenario_l1": "engineering",
-      "scenario_l2": "sdk-example",
       "end_user_principal": "employee-001",
+      "scenario_l1": "engineering",
+      "scenario_l2": "code_assist",
+      "internal_or_external": "internal",
+      "channel": "sdk",
+      "project_id": "proj_aimanager",
+      "sensitivity_level": "internal",
+      "approval_required": false,
+      "cost_center_id": "cc_platform",
       "currency": "CNY",
       "pricing_version": "m1"
     }
@@ -317,12 +324,18 @@ response = client.chat.completions.create(
     user="employee-001",
     extra_body={
         "metadata": {
+            "work_item_id": "work-sdk-chat-002",
+            "employee_id": "employee-001",
             "department_id": "dept_engineering",
-            "project_id": "proj_aimanager",
-            "cost_center_id": "cc_platform",
-            "scenario_l1": "engineering",
-            "scenario_l2": "sdk-example",
             "end_user_principal": "employee-001",
+            "scenario_l1": "engineering",
+            "scenario_l2": "code_assist",
+            "internal_or_external": "internal",
+            "channel": "sdk",
+            "project_id": "proj_aimanager",
+            "sensitivity_level": "internal",
+            "approval_required": False,
+            "cost_center_id": "cc_platform",
             "currency": "CNY",
             "pricing_version": "m1",
         }
@@ -351,12 +364,18 @@ const image = await client.post("/images/generations", {
     response_format: "b64_json",
     user: "employee-001",
     metadata: {
+      work_item_id: "work-sdk-image-001",
+      employee_id: "employee-001",
       department_id: "dept_marketing",
-      project_id: "proj_aimanager",
-      cost_center_id: "cc_platform",
-      scenario_l1: "marketing",
-      scenario_l2: "sdk-example",
       end_user_principal: "employee-001",
+      scenario_l1: "marketing",
+      scenario_l2: "image_asset",
+      internal_or_external: "internal",
+      channel: "sdk",
+      project_id: "proj_aimanager",
+      sensitivity_level: "internal",
+      approval_required: false,
+      cost_center_id: "cc_platform",
       currency: "CNY",
       pricing_version: "m1",
       image_count: 1,
@@ -383,12 +402,18 @@ curl -s "$AIMANAGER_BASE_URL/v1/chat/completions" \
     }],
     "user": "employee-001",
     "metadata": {
+      "work_item_id": "work-sdk-vision-001",
+      "employee_id": "employee-001",
       "department_id": "dept_engineering",
-      "project_id": "proj_aimanager",
-      "cost_center_id": "cc_platform",
-      "scenario_l1": "engineering",
-      "scenario_l2": "sdk-vision-example",
       "end_user_principal": "employee-001",
+      "scenario_l1": "engineering",
+      "scenario_l2": "code_assist",
+      "internal_or_external": "internal",
+      "channel": "sdk",
+      "project_id": "proj_aimanager",
+      "sensitivity_level": "internal",
+      "approval_required": false,
+      "cost_center_id": "cc_platform",
       "currency": "CNY",
       "pricing_version": "m1",
       "image_count": 1
@@ -750,36 +775,12 @@ The last command must return an AiManager 403 policy error and must not reach yc
 
 Latest local runtime smoke evidence:
 
-- `docker compose -f aimanager/docker-compose.yml up -d --build aimanager` rebuilt the runtime image, then started Postgres and AiManager with local placeholder credentials.
-- LiteLLM Prisma migrations and post-migration sanity check completed; application startup reached `Application startup complete`.
-- AiManager forces LiteLLM's local model cost map before import; `docker run ... -e LITELLM_LOCAL_MODEL_COST_MAP=True ... import litellm` completed in about 3.1s after reproducing the remote cost-map TLS startup hang without that setting.
-- `GET /health/liveliness` returned 200.
-- `GET /v1/models` returned only `gemini-2.5-flash`, `deepseek-chat`, and `ycapi-image-1`.
-- `POST /anthropic/messages` returned 403 with `x-aimanager-policy-code: aimanager_passthrough_blocked`.
-- `POST /config/update` returned 403 with `x-aimanager-policy-code: aimanager_config_immutable`.
-- `python -m aimanager.scripts.smoke_blocked_routes` verified 35 provider/native/config/cache/reload/model-write/uncommitted/business-token routes as AiManager 403 policy blocks, including master-key attempts against `/v1/models` and `/v1/chat/completions`; key-lifecycle smoke also verifies non-Bearer LiteLLM credential headers after freeze/revoke.
-- Container logs emitted 34 structured `aimanager_audit_event` entries for those blocked requests plus the business-surface `/ui` block, with no Authorization, Bearer token, or local placeholder token content in the audit log tail.
-- Runtime surface split was verified locally: business port `4000` blocks `/ui` with AiManager 403, admin port `127.0.0.1:4001` returns LiteLLM UI redirect for `/ui`, and admin port still blocks `/config/field/update` with `aimanager_config_immutable`.
-- Local tests split surfaces: business surface blocks LiteLLM management routes, while management surface allows UI/key/team/user/budget/spend routes and still blocks provider/config/cache/reload/model-write routes. Compose renders `aimanager-admin` only under the `admin` profile on `127.0.0.1:4001`.
-- Local RBAC tests prove management-surface high-risk writes are blocked for `finance`, `ceo`, `audit`, `proxy_admin_viewer`, unknown roles, and missing roles with `aimanager_rbac_denied`; `proxy_admin` can continue to LiteLLM admin routes; read-only roles can fetch spend/activity report routes; and `x-aimanager-role` cannot unlock management routes on the business surface.
-- Local tests also prove management `POST /key/generate` rejects missing governance metadata with `aimanager_key_governance_invalid`, forwards normalized valid payloads, injects `enforced_params` for `metadata.shared_key=true`, and enforces those fields at inference time through AiManager's OSS LiteLLM pre-call guard.
-- Runtime admin-surface smoke with rebuilt `aimanager-litellm:local` proved `POST /key/generate` without governance metadata returns HTTP 400, `x-aimanager-policy-code: aimanager_key_governance_invalid`, preserves `x-litellm-call-id`, and emits a matching `policy_blocked` audit event without Authorization/Bearer leakage.
-- Runtime valid shared-key smoke proved `POST /key/generate` returns the required employee/team/model/budget/rate-limit/expiry fields plus department/project/cost-center/scenario/approver metadata and `metadata.enforced_params`; the local smoke key was deleted immediately after verification.
-- Admin UI governed key-creation smoke proved a UI-originated `/key/generate` request without metadata fails closed with HTTP 400 `aimanager_key_governance_invalid`, then succeeds after filling governance metadata, budget, rate limits, duration, team, model, and key alias. The smoke also verified Admin UI numeric string values are normalized by AiManager governance before reaching LiteLLM, and the disposable key was deleted after verification.
-- Admin boundary preflight is available as `aimanager.scripts.smoke_admin_boundary`; it verifies that the business URL does not expose management/UI/key/config routes even with spoofed trusted role headers, and that any public admin URL is unreachable, edge-blocked, or redirected to an allowlisted SSO host. This is an executable production preflight; AC-15 remains blocked until it is run against the real production URLs.
-- Mock ycapi runtime spend smoke proved `POST /v1/chat/completions` and `POST /v1/images/generations` through AiManager write nonzero `LiteLLM_SpendLogs.spend`: chat `3.3e-06`, image `0.01`. Rows were recorded as `openai/gemini-2.5-flash` and `openai/ycapi-image-1`.
-- Mock ycapi runtime budget-block smoke proved a disposable governed key with `max_budget=0.005` can spend `0.01` on a successful image request, then receive HTTP 429 `budget_exceeded` on the next business request. The response and LiteLLM container log both recorded `Budget has been exceeded! ... Current cost: 0.01, Max budget: 0.005`; AiManager also emitted a structured `aimanager_audit_event` with `event_type=budget_blocked`, `severity=high`, and `reason=budget_exceeded`.
-- Mock ycapi runtime key-lifecycle smoke proved admin `POST /key/block` freezes a governed key, subsequent business chat returns HTTP 401 with `Key is blocked`, admin `POST /key/delete` revokes a second governed key, subsequent business chat returns HTTP 401 with `error.code=aimanager_key_revoked`, and the admin container logs contain `key_frozen` and `key_revoked` `aimanager_audit_event` records with actor `aimanager-ci`, disposition reasons, request ids, key aliases, and governance dimensions.
-- Mock ycapi runtime SDK compatibility smoke proved `smoke_runtime_sdk_compat` can create a disposable governed employee LiteLLM virtual key through the local management surface, run business-surface `/v1/models`, chat for `gemini-2.5-flash` and `deepseek-chat`, image `ycapi-image-1` with `response_format=b64_json`, and vision chat with a base64 `data:` URL through the local business surface, then delete the disposable key with `cleanup=PASS`. This is SDK/interface compatibility evidence with a mock upstream; production live ycapi chat/image evidence remains part of the pre-business-trial production checks.
-- Postgres-down runtime smoke with isolated compose project `aimanager_postgres_down` proved that after stopping `db`, AiManager returns readiness 503, still blocks provider passthrough with 403 before downstream LiteLLM, and returns sanitized 503 `aimanager_database_unavailable` for an employee virtual-key business chat.
-- Local observability tests prove management `GET /metrics` is served by AiManager without reaching downstream LiteLLM, business `/metrics` remains blocked, audit events including `enforced_params_blocked` increment `aimanager_audit_events_total`, downstream 429/5xx increment `aimanager_http_responses_total`, and `export_observability` emits JSON metrics plus alert records from audit logs and request-status rows.
-- Local alert-routing tests prove `route_observability_alerts` can render WeCom markdown payloads from exported alert JSON, dry-run without a webhook, return `BLOCKED` when live alerts have no webhook, filter by severity, and validate WeCom `errcode=0` without printing the webhook URL.
-- Local live-ycapi preflight tests prove `smoke_live_ycapi` returns `BLOCKED` without `YCAPI_API_TOKEN`, validates ycapi `/models` with expected model ids when a token is present, and masks token/URL values on transport failures.
-- Local production-readiness bundle tests prove `production_readiness_bundle` aggregates AC-15 admin boundary with per-probe evidence, AC-19 live ycapi, AC-08 production key inventory governance, AC-16 WeCom alert routing, AC-12/AC-13 finance reconciliation, and AC-POLICY production policy attestation into one JSON artifact; missing production inputs return exit code `2`/`BLOCKED`, failures take priority over blockers, legacy/unbounded active key inventory returns `FAIL`, raw key-like inventory values are redacted, WeCom 0-delivery runs stay `BLOCKED`, empty spend/bill files and non-billable placeholder finance rows stay `BLOCKED`, missing or incomplete policy approval evidence returns `BLOCKED`/`FAIL`, finance/security/legal approval roles must use distinct approvers, and ycapi token, WeCom webhook, or secret-like attestation values are redacted from details and evidence.
-- Local business-trial acceptance bundle tests prove `business_trial_acceptance_bundle` composes production readiness with AC-23 and AC-26 into one JSON gate; AC-23 rejects SDK use, ycapi token exposure, missing employee virtual key use, unapproved models, zero spend, invalid work-context status, malformed JSON, token/raw-content fields, and trial durations over 5 minutes; AC-23 `PASS` is blocked unless same-run AC-19 is `PASS`; AC-26 status propagates; env/file-only secrets are redacted.
-- Local acceptance coverage matrix tests prove `acceptance_coverage_matrix` covers every documented AC-01 through AC-26 plus AC-POLICY, keeps merged bundle ids such as `AC-12-13-FINANCE` mapped to the documented AC rows, detects missing local scripts/tests, detects supplied bundle schema drift, folds `FAIL` before `BLOCKED`, and redacts Bearer, `sk-*`, and WeCom webhook values in JSON/Markdown output.
-- Local final acceptance report tests prove `generate_final_acceptance_report` is a pure composition gate over the business-trial bundle, launch gap plan, acceptance coverage matrix, and supplied evidence intake; missing inputs remain `BLOCKED`, malformed inputs return `FAIL`, unresolved launch gaps and failed intake checks stay visible with owner/command/required evidence plus source-level and unique blocker counts, all-green inputs are required for `PASS`, hand-authored `PASS` coverage JSON without a non-empty list of criteria objects is rejected, and Bearer, `sk-*`, DSN passwords, and WeCom webhook values are redacted.
-- Local acceptance-gate and evidence-intake tests prove `run_acceptance_gate` writes all gate artifacts plus evidence handoff/template pack/intake files into a run-scoped directory, validates env-pointed evidence files including `AIMANAGER_KEY_INVENTORY_FILE` before folding gate status, and `validate_evidence_intake` blocks empty env-pointed evidence input, unchanged templates/header-only CSV evidence, and empty evidence directories while failing raw prompt/response/header/secret-like submissions without echoing secrets; the gate executes production readiness exactly once, reuses that same readiness result inside business-trial acceptance, overwrites stale artifacts from prior runs, and now has a committed synthetic `aimanager/tests/fixtures/acceptance_golden/` fixture set that drives the real production-readiness and business-trial collectors to a full `PASS` with only external network runners injected. The same tests verify that governance fields such as `raw_prompt_access=prohibited` are accepted as policy evidence rather than mistaken for raw prompt content. Empty local envs still return `BLOCKED`, and the gate redacts secret-valued env vars, Bearer, `sk-*`, common DSN passwords, and WeCom webhook values across written JSON/Markdown artifacts.
+- Local compose rebuilt the runtime image, ran LiteLLM migrations, reached `Application startup complete`, and served health/model checks with only `gemini-2.5-flash`, `deepseek-chat`, and `ycapi-image-1` exposed.
+- Surface and route smokes verify business port `4000` blocks UI, provider passthrough, config/cache/reload/model-write, business-token misuse, and uncommitted routes with AiManager policy errors before ycapi, while admin `127.0.0.1:4001` keeps LiteLLM management available under RBAC.
+- Key-governance smokes verify `/key/generate` fails closed without metadata, normalizes valid UI/API payloads, injects shared-key `enforced_params`, and logs governance/audit events without leaking Authorization, Bearer, placeholder token, or key material.
+- Mock ycapi runtime smokes verify nonzero spend logging for chat/image, budget-exceeded 429 after max-budget burn, freeze/revoke lifecycle blocks, SDK-compatible models/chat/image/vision through employee virtual keys, and sanitized Postgres-down behavior.
+- Observability and alert tests verify management-only `/metrics`, exported JSON metrics/alerts, WeCom markdown rendering, severity filtering, webhook success handling, and `BLOCKED` status when live alert delivery has no webhook.
+- Readiness gates verify production bundle, business-trial bundle, acceptance coverage matrix, final acceptance report, evidence intake, and golden fixtures; empty local production inputs still return `BLOCKED`, and secret-like env/header/DSN/WeCom values are redacted.
 - Local streaming usage tests prove `aimanager/config.yaml` requires `always_include_stream_usage=true`, `validate_config` rejects missing or disabled stream usage accounting, the ASGI business chat boundary rewrites `stream_options.include_usage=false` to `true`, caps chat body buffering, fails closed on invalid body chunks, preserves non-stream request bytes, and mock ycapi can return OpenAI-compatible SSE chunks with a final `usage` event when usage is requested. This closes the local body-level bypass path for streaming spend attribution; production nonzero spend evidence still comes from the governed runtime smokes and live ycapi/finance bundles.
 - Local lightweight trial evidence capture tests prove `capture_lightweight_trial_evidence` can safely convert a successful lightweight-entry submission result into AC-23 evidence for the business-trial gate while omitting prompt text, assistant text, request headers, Authorization, employee key values, ycapi token values, and WeCom webhook values; it supports project/customer context, blocks non-PASS submissions, requires `entry.work_context.status=PASS` with preflight normalized-context proof, rejects non-preflight or mismatched normalized proof, preserves the intended casefold match behavior, requires live-ycapi/brand-safety/no-secret-echo/html-escaped confirmations, rejects secret-like output values, secret-like assistant echo, and raw-key-looking aliases, and writes no output on `FAIL` or `BLOCKED`.
 - Project policy gate evidence proves `make policy-check` returns PASS for `PROJECT_TYPE=software-cli`, required scaffold files, CLI help/json contract, AiManager-owned file length limits, documented overlay imports, ycapi-only config text, and `.env.example` secret-placeholder safety.
@@ -788,7 +789,7 @@ Latest local runtime smoke evidence:
 - Local business-overview tests prove `generate_business_overview` can combine monthly finance CSV, budget rows, and observability JSON into a CEO-readable JSON/Markdown report with monthly spend, budget utilization, anomaly events, TOP departments, TOP projects, and TOP keys; missing budget input returns `BLOCKED` and mixed currencies return `FAIL`. This is local report evidence for AC-24, not a production executive portal.
 - Local monthly-close tests prove `generate_monthly_close_package` can combine `aimanager_finance_monthly.csv`, `aimanager_reconciliation.csv`, and a finance adjustment ledger into JSON/CSV/Markdown close evidence; the contract covers supplemental entries, reversals, attribution adjustments, reconciliation difference resolutions, residual `unassigned` blocking, duplicate adjustment failure, unsupported resolution failure, stable composite row keys when `entry_id` is absent, and no serialization of token-like extra fields. This is local close-package evidence for AC-25, not production ERP posting or general-ledger writeback.
 - Local employee-monitoring tests prove `validate_employee_monitoring_policy` can validate AC-26 notice and permission-boundary evidence: metadata-only monitoring fields, prompt/response/raw IP/customer-content prohibitions, off-hours and suspected key-sharing rules, retention cap, reviewer role restrictions, HR/legal disciplinary guardrails, employee appeal channel, latest-version active-employee acknowledgment coverage, missing evidence `BLOCKED`, and token-like extras excluded from output. This is local policy/evidence contract, not proof that HR/legal has published the policy or that all real employees have acknowledged it.
-- Local SDK compatibility tests prove `smoke_sdk_compat` uses an employee LiteLLM virtual key instead of `YCAPI_API_TOKEN`, rejects `YCAPI_API_TOKEN` as the employee-key env or value, checks `/v1/models`, chat models `gemini-2.5-flash` and `deepseek-chat`, image `ycapi-image-1` with `response_format=b64_json`, a vision chat request with a base64 `data:` URL, required work metadata, OpenAI-compatible response shape, and sanitized failure details. `smoke_runtime_sdk_compat` now has local runtime PASS evidence against running business/admin surfaces with mock ycapi and fails if key cleanup fails.
+- Local SDK compatibility tests prove `smoke_sdk_compat` uses an employee LiteLLM virtual key instead of `YCAPI_API_TOKEN`, rejects `YCAPI_API_TOKEN` as the employee-key env or value, checks `/v1/models`, chat models `gemini-2.5-flash` and `deepseek-chat`, image `ycapi-image-1` with `response_format=b64_json`, a vision chat request with a base64 `data:` URL, required work metadata, OpenAI-compatible response shape, and sanitized failure details. Business-surface work-context tests prove `AIMANAGER_WORK_CONTEXT_ENFORCEMENT_ENABLED=True` fails closed with 400 `aimanager_work_context_invalid` before LiteLLM for chat/image requests missing valid `user` + metadata, rejects `user`/`end_user_principal` mismatch, and does not echo prompt text in the error. `smoke_runtime_sdk_compat` now has local runtime PASS evidence against running business/admin surfaces with mock ycapi and fails if key cleanup fails.
 - Local error-contract tests prove allowed downstream LiteLLM/ycapi 429 JSON errors preserve the upstream `error` object, inject top-level `request_id` aligned with `x-litellm-call-id`, keep 401/403/404 fallback types stable, pass successful streaming chunks through unchanged, normalize/redact SSE error events including split secrets, and convert non-JSON downstream 5xx errors to OpenAI-compatible JSON without leaking Bearer, `sk-*`, ycapi token text, or DSN passwords.
 
 Remaining before business trial: run `make acceptance-gate` with real production URLs, a metadata-only production LiteLLM key inventory, production ycapi token policy, a live WeCom webhook plus alert report, real ycapi monthly bill evidence, AC-23 human trial evidence, and AC-26 HR/legal acknowledgment evidence until the final report in `/tmp/aimanager-acceptance-gate/final-acceptance-report.json` is `PASS`.

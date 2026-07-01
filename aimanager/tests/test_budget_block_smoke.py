@@ -23,12 +23,17 @@ def test_budget_block_smoke_passes_when_second_request_is_rejected() -> None:
             assert payload["key_alias"] == "aimanager-budget-smoke-budget-123"
             assert payload["max_budget"] == 0.005
             assert "shared_key" not in payload["metadata"]  # type: ignore[operator]
-            assert payload["metadata"]["scenario_l2"] == "runtime-budget-block-smoke"  # type: ignore[index]
+            assert payload["metadata"]["scenario_l2"] == "code_assist"  # type: ignore[index]
+            assert payload["metadata"]["aimanager_smoke_id"] == "budget-123"  # type: ignore[index]
             return _json_response({"key": "sk-budget-smoke"})
         if url.endswith("/v1/images/generations"):
             assert headers["Authorization"] == "Bearer sk-budget-smoke"
             assert payload is not None
-            assert payload["metadata"]["scenario_l2"] == "runtime-budget-block-smoke"  # type: ignore[index]
+            assert payload["metadata"]["scenario_l2"] == "code_assist"  # type: ignore[index]
+            assert payload["metadata"]["work_item_id"] == "budget-123"  # type: ignore[index]
+            assert payload["metadata"]["employee_id"] == "employee-smoke-001"  # type: ignore[index]
+            assert payload["metadata"]["channel"] == "sdk"  # type: ignore[index]
+            assert payload["metadata"]["approval_required"] is False  # type: ignore[index]
             return _json_response({"created": 1, "data": [{"url": "https://example.invalid/smoke.png"}]})
         if url.endswith("/v1/chat/completions"):
             assert headers["Authorization"] == "Bearer sk-budget-smoke"

@@ -51,7 +51,7 @@ class KeyLifecycleSmokeResult:
 
 PollAuditEvents = Callable[[str], list[AuditLogEvent]]
 
-_SCENARIO_L2 = "runtime-key-lifecycle-smoke"
+_SCENARIO_L2 = "code_assist"
 _FREEZE_ALIAS_PREFIX = "aimanager-lifecycle-freeze"
 _REVOKE_ALIAS_PREFIX = "aimanager-lifecycle-revoke"
 _ACTOR = "aimanager-ci"

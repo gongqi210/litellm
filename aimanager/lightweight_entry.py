@@ -296,7 +296,7 @@ def _request_metadata(form_payload: Mapping[str, Any], normalized_context: Mappi
         for field_name in ("project_id", "customer_id")
         if _is_non_empty_text(form_payload.get(field_name))
     }
-    return {
+    metadata: dict[str, Any] = {
         "entry_type": "lightweight_non_sdk",
         "work_item_id": _original_text(form_payload, "work_item_id"),
         "employee_id": _original_text(form_payload, "employee_id"),
@@ -315,6 +315,13 @@ def _request_metadata(form_payload: Mapping[str, Any], normalized_context: Mappi
         "workflow_mode": normalized_context["workflow_mode"],
         **optional_fields,
     }
+    workflow = _workflow_from_form(form_payload)
+    if workflow:
+        metadata["workflow"] = workflow
+    brand_safety = _brand_safety_from_form(form_payload)
+    if brand_safety:
+        metadata["brand_safety"] = brand_safety
+    return metadata
 
 
 def _forbidden_form_field_errors(form_payload: Mapping[str, Any]) -> list[str]:

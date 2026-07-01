@@ -263,7 +263,7 @@ def build_runtime_sdk_key_payload(
             "project_id": "proj_aimanager_runtime_smoke",
             "cost_center_id": "cc_smoke",
             "scenario_l1": "engineering",
-            "scenario_l2": "sdk-compat-runtime-smoke",
+            "scenario_l2": "code_assist",
             "approver": "aimanager-ci",
             "internal_or_external": "internal",
             "end_user_principal": "employee-smoke-001",

@@ -55,7 +55,7 @@ class BudgetBlockSmokeResult:
 PollKeyBudget = Callable[[str], list[KeyBudgetRow]]
 
 _KEY_ALIAS_PREFIX = "aimanager-budget-smoke"
-_SCENARIO_L2 = "runtime-budget-block-smoke"
+_SCENARIO_L2 = "code_assist"
 
 
 def run_budget_block_smoke(

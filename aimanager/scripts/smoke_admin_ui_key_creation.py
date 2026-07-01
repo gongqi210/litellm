@@ -49,13 +49,18 @@ def build_governance_metadata(request_marker: str) -> dict[str, str]:
     _validate_marker(request_marker)
     return {
         "owner": "aimanager-ui-smoke",
+        "work_item_id": request_marker,
+        "employee_id": DEFAULT_END_USER,
         "department_id": "dept_smoke",
         "project_id": "proj_aimanager_admin_ui_smoke",
         "cost_center_id": "cc_smoke",
         "scenario_l1": "engineering",
-        "scenario_l2": "admin-ui-key-creation-smoke",
+        "scenario_l2": "code_assist",
         "approver": "aimanager-ci",
         "internal_or_external": "internal",
+        "channel": "admin_ui",
+        "sensitivity_level": "internal",
+        "approval_required": False,
         "end_user_principal": DEFAULT_END_USER,
         "aimanager_smoke_id": request_marker,
     }

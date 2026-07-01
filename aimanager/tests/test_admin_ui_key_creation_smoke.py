@@ -14,13 +14,18 @@ def test_build_governance_metadata_contains_required_aimanager_fields() -> None:
 
     assert metadata == {
         "owner": "aimanager-ui-smoke",
+        "work_item_id": "ui-smoke-123",
+        "employee_id": "employee-ui-smoke-001",
         "department_id": "dept_smoke",
         "project_id": "proj_aimanager_admin_ui_smoke",
         "cost_center_id": "cc_smoke",
         "scenario_l1": "engineering",
-        "scenario_l2": "admin-ui-key-creation-smoke",
+        "scenario_l2": "code_assist",
         "approver": "aimanager-ci",
         "internal_or_external": "internal",
+        "channel": "admin_ui",
+        "sensitivity_level": "internal",
+        "approval_required": False,
         "end_user_principal": "employee-ui-smoke-001",
         "aimanager_smoke_id": "ui-smoke-123",
     }

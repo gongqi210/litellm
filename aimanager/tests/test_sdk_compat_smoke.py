@@ -58,11 +58,18 @@ def test_sdk_compat_smoke_calls_models_chat_and_image_with_work_metadata() -> No
             assert payload["user"] == "employee-smoke-001"
             metadata = payload["metadata"]  # type: ignore[index]
             assert metadata["scenario_l1"] == "engineering"  # type: ignore[index]
-            assert metadata["scenario_l2"] == "sdk-compat-smoke"  # type: ignore[index]
+            assert metadata["scenario_l2"] == "code_assist"  # type: ignore[index]
+            assert metadata["work_item_id"] == "sdk-smoke-123"  # type: ignore[index]
+            assert metadata["employee_id"] == "employee-smoke-001"  # type: ignore[index]
             assert metadata["department_id"] == "dept_smoke"  # type: ignore[index]
             assert metadata["project_id"] == "proj_aimanager_runtime_smoke"  # type: ignore[index]
             assert metadata["cost_center_id"] == "cc_smoke"  # type: ignore[index]
             assert metadata["end_user_principal"] == "employee-smoke-001"  # type: ignore[index]
+            assert metadata["internal_or_external"] == "internal"  # type: ignore[index]
+            assert metadata["channel"] == "sdk"  # type: ignore[index]
+            assert metadata["sensitivity_level"] == "internal"  # type: ignore[index]
+            assert metadata["approval_required"] is False  # type: ignore[index]
+            assert metadata["aimanager_smoke_id"] == "sdk-smoke-123"  # type: ignore[index]
             messages = payload["messages"]  # type: ignore[index]
             first_content = messages[0]["content"]  # type: ignore[index]
             if isinstance(first_content, list):
@@ -84,7 +91,10 @@ def test_sdk_compat_smoke_calls_models_chat_and_image_with_work_metadata() -> No
             assert payload["response_format"] == "b64_json"
             assert payload["user"] == "employee-smoke-001"
             metadata = payload["metadata"]  # type: ignore[index]
-            assert metadata["scenario_l2"] == "sdk-compat-smoke"  # type: ignore[index]
+            assert metadata["scenario_l2"] == "code_assist"  # type: ignore[index]
+            assert metadata["work_item_id"] == "sdk-smoke-123"  # type: ignore[index]
+            assert metadata["employee_id"] == "employee-smoke-001"  # type: ignore[index]
+            assert metadata["channel"] == "sdk"  # type: ignore[index]
             assert metadata["image_count"] == 1  # type: ignore[index]
             return _json_response({"created": 1, "data": [{"b64_json": "aW1hZ2U="}]})
         raise AssertionError(f"unexpected URL {url}")

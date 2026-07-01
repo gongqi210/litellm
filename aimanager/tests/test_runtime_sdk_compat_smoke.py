@@ -25,7 +25,7 @@ def test_runtime_sdk_compat_smoke_creates_key_runs_sdk_and_deletes_without_ycapi
             assert payload["team_id"] == "team_aimanager_sdk_smoke"
             assert payload["models"] == ["gemini-2.5-flash", "deepseek-chat", "ycapi-image-1"]
             metadata = payload["metadata"]  # type: ignore[index]
-            assert metadata["scenario_l2"] == "sdk-compat-runtime-smoke"  # type: ignore[index]
+            assert metadata["scenario_l2"] == "code_assist"  # type: ignore[index]
             assert metadata["aimanager_smoke_id"] == "sdk-runtime-123"  # type: ignore[index]
             assert "shared_key" not in metadata  # type: ignore[operator]
             return _json_response({"key": "evk-secret"})

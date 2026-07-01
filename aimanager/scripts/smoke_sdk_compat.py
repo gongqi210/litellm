@@ -269,13 +269,19 @@ def _request_headers(employee_key: str, *, request_id: str, has_body: bool) -> d
 
 def _request_metadata(marker: str, *, image_count: int) -> dict[str, str | int]:
     return {
+        "work_item_id": marker,
+        "employee_id": "employee-smoke-001",
         "department_id": "dept_smoke",
         "project_id": "proj_aimanager_runtime_smoke",
         "cost_center_id": "cc_smoke",
         "pricing_version": "m1-runtime-smoke",
         "currency": "CNY",
         "scenario_l1": "engineering",
-        "scenario_l2": "sdk-compat-smoke",
+        "scenario_l2": "code_assist",
+        "internal_or_external": "internal",
+        "channel": "sdk",
+        "sensitivity_level": "internal",
+        "approval_required": False,
         "end_user_principal": "employee-smoke-001",
         "aimanager_smoke_id": marker,
         "image_count": image_count,

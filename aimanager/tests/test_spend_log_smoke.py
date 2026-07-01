@@ -30,9 +30,14 @@ def test_build_governed_key_payload_covers_aimanager_metadata_and_shared_key_enf
     assert payload["metadata"]["project_id"] == "proj_aimanager_runtime_smoke"
     assert payload["metadata"]["cost_center_id"] == "cc_smoke"
     assert payload["metadata"]["scenario_l1"] == "engineering"
-    assert payload["metadata"]["scenario_l2"] == "runtime-spend-smoke"
+    assert payload["metadata"]["scenario_l2"] == "code_assist"
     assert payload["metadata"]["approver"] == "aimanager-ci"
     assert payload["metadata"]["internal_or_external"] == "internal"
+    assert payload["metadata"]["work_item_id"] == "smoke-123"
+    assert payload["metadata"]["employee_id"] == "employee-smoke-001"
+    assert payload["metadata"]["channel"] == "sdk"
+    assert payload["metadata"]["sensitivity_level"] == "internal"
+    assert payload["metadata"]["approval_required"] is False
     assert payload["metadata"]["shared_key"] is True
     assert payload["metadata"]["end_user_principal"] == "employee-smoke-001"
     assert payload["metadata"]["aimanager_smoke_id"] == "smoke-123"
@@ -56,12 +61,12 @@ def test_build_governed_key_payload_accepts_budget_alias_and_scenario_overrides(
         shared_key=False,
         max_budget=0.005,
         key_alias_prefix="aimanager-budget-smoke",
-        scenario_l2="runtime-budget-block-smoke",
+        scenario_l2="code_assist",
     )
 
     assert payload["key_alias"] == "aimanager-budget-smoke-budget-123"
     assert payload["max_budget"] == 0.005
-    assert payload["metadata"]["scenario_l2"] == "runtime-budget-block-smoke"
+    assert payload["metadata"]["scenario_l2"] == "code_assist"
 
 
 def test_spend_log_smoke_passes_when_chat_and_image_spend_rows_are_nonzero() -> None:
@@ -81,9 +86,15 @@ def test_spend_log_smoke_passes_when_chat_and_image_spend_rows_are_nonzero() -> 
             assert payload is not None
             assert payload["user"] == "employee-smoke-001"
             assert payload["metadata"]["scenario_l1"] == "engineering"  # type: ignore[index]
+            assert payload["metadata"]["scenario_l2"] == "code_assist"  # type: ignore[index]
+            assert payload["metadata"]["work_item_id"] == "smoke-123"  # type: ignore[index]
+            assert payload["metadata"]["employee_id"] == "employee-smoke-001"  # type: ignore[index]
             assert payload["metadata"]["department_id"] == "dept_smoke"  # type: ignore[index]
             assert payload["metadata"]["project_id"] == "proj_aimanager_runtime_smoke"  # type: ignore[index]
             assert payload["metadata"]["cost_center_id"] == "cc_smoke"  # type: ignore[index]
+            assert payload["metadata"]["channel"] == "sdk"  # type: ignore[index]
+            assert payload["metadata"]["sensitivity_level"] == "internal"  # type: ignore[index]
+            assert payload["metadata"]["approval_required"] is False  # type: ignore[index]
             assert payload["metadata"]["currency"] == "CNY"  # type: ignore[index]
             assert payload["metadata"]["pricing_version"] == "m1-runtime-smoke"  # type: ignore[index]
             assert payload["metadata"]["image_count"] == 0  # type: ignore[index]
@@ -93,9 +104,15 @@ def test_spend_log_smoke_passes_when_chat_and_image_spend_rows_are_nonzero() -> 
             assert payload is not None
             assert payload["user"] == "employee-smoke-001"
             assert payload["metadata"]["scenario_l1"] == "engineering"  # type: ignore[index]
+            assert payload["metadata"]["scenario_l2"] == "code_assist"  # type: ignore[index]
+            assert payload["metadata"]["work_item_id"] == "smoke-123"  # type: ignore[index]
+            assert payload["metadata"]["employee_id"] == "employee-smoke-001"  # type: ignore[index]
             assert payload["metadata"]["department_id"] == "dept_smoke"  # type: ignore[index]
             assert payload["metadata"]["project_id"] == "proj_aimanager_runtime_smoke"  # type: ignore[index]
             assert payload["metadata"]["cost_center_id"] == "cc_smoke"  # type: ignore[index]
+            assert payload["metadata"]["channel"] == "sdk"  # type: ignore[index]
+            assert payload["metadata"]["sensitivity_level"] == "internal"  # type: ignore[index]
+            assert payload["metadata"]["approval_required"] is False  # type: ignore[index]
             assert payload["metadata"]["currency"] == "CNY"  # type: ignore[index]
             assert payload["metadata"]["pricing_version"] == "m1-runtime-smoke"  # type: ignore[index]
             assert payload["metadata"]["image_count"] == 1  # type: ignore[index]
