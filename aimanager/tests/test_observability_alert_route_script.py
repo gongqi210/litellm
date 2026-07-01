@@ -52,6 +52,32 @@ def test_route_observability_alerts_dry_run_renders_payload_without_webhook() ->
     assert "aimanager_http_429_seen" in result.payload["markdown"]["content"]
 
 
+def test_route_observability_alerts_fails_when_alerts_do_not_match_metrics() -> None:
+    result = route_observability_alerts(
+        report={
+            "metrics": {
+                "request_count": 1,
+                "failed_requests": 0,
+                "failure_rate": "0.000000",
+                "http_429_count": 0,
+                "http_5xx_count": 0,
+                "budget_blocked_count": 0,
+                "passthrough_blocked_count": 0,
+                "enforced_params_blocked_count": 0,
+                "missing_request_id_count": 0,
+            },
+            "alerts": [{"code": "aimanager_failure_rate_high", "severity": "high"}],
+        },
+        webhook_url="",
+        dry_run=True,
+    )
+
+    assert result.status == "FAIL"
+    assert result.alert_count == 1
+    assert result.delivered_count == 0
+    assert "metrics-derived alerts" in result.detail
+
+
 def test_route_observability_alerts_blocks_when_webhook_missing() -> None:
     result = route_observability_alerts(
         report=_report_with_alerts(),

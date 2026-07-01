@@ -38,7 +38,7 @@ After the LiteLLM proxy app is loaded, `aimanager.asgi` registers image-generati
 
 Streaming chat requests are also normalized at the AiManager ASGI boundary. If an employee or SDK sends `stream=true`, AiManager forces `stream_options.include_usage=true` before the request reaches LiteLLM/ycapi, even when the caller tries to set it to `false`. Chat request buffering is capped at 32 MiB and invalid ASGI body chunks fail closed with `aimanager_request_body_invalid`. `aimanager/config.yaml` keeps LiteLLM's `general_settings.always_include_stream_usage=true` as the config-level invariant, while the ASGI rewrite closes the caller-supplied body bypass path so stream usage can still be recorded for spend attribution.
 
-`docker-compose.yml` explicitly passes these variables into the container from either the shell or `aimanager/.env`; this keeps local `docker compose -f aimanager/docker-compose.yml up` checks aligned with production startup behavior.
+`docker-compose.yml` explicitly passes these variables into the container from either the shell or `aimanager/.env`; this keeps WSL-local `docker compose -f aimanager/docker-compose.yml up` checks aligned with production startup behavior. Development Docker runs from `/home/yca-admin/projects/AI-projects/01-yca-AiManager`, not macOS `/Volumes/...`.
 
 M1 business API allowlist:
 
@@ -188,7 +188,7 @@ PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.export_observa
   --output-file /tmp/aimanager-observability.json
 ```
 
-The report contains request count, failed requests, failure rate, 429/5xx counts, latency/token/spend totals, observed request ids, audit event counts, bounded key/model buckets, and machine-readable alerts for high failure rate, 429, 5xx, missing request id, budget blocks, and passthrough blocks. Request ids stay in the JSON report for correlation, not in Prometheus labels.
+The report contains request count, failed requests, failure rate, 429/5xx counts, latency/token/spend totals, observed request ids, audit event counts, bounded key/model buckets, `alert_policy.failure_rate_alert_threshold`, and machine-readable alerts for high failure rate, 429, 5xx, missing request id, budget blocks, and passthrough blocks. Request ids stay in the JSON report for correlation, not in Prometheus labels.
 
 WeCom alert routing from an exported report:
 
@@ -202,7 +202,7 @@ PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.route_observab
 make wecom-alert-route
 ```
 
-The dry-run command renders the exact WeCom markdown payload without sending it. `make wecom-alert-route` reads `AIMANAGER_OBSERVABILITY_REPORT_FILE`, `AIMANAGER_WECOM_WEBHOOK_URL`, and optional `AIMANAGER_WECOM_MIN_SEVERITY`; the AC-16 launch gap command dry-runs this payload first, then lets production readiness perform the single live delivery. It returns `BLOCKED` when alerts exist but no webhook is configured. The script never prints the webhook URL.
+The dry-run command renders the exact WeCom markdown payload without sending it. `make wecom-alert-route` reads `AIMANAGER_OBSERVABILITY_REPORT_FILE`, `AIMANAGER_WECOM_WEBHOOK_URL`, and optional `AIMANAGER_WECOM_MIN_SEVERITY`; the AC-16 launch gap command dry-runs this payload first, then lets production readiness perform the single live delivery. Before rendering or sending, the router recomputes alerts from `metrics` and the report's alert policy and returns `FAIL` if the submitted `alerts` array is not metrics-derived. It returns `BLOCKED` when alerts exist but no webhook is configured. The script never prints the webhook URL.
 
 ## Business Overview
 
@@ -245,10 +245,10 @@ python3 cli/main.py --json
 ## Run
 
 ```bash
-cd /Volumes/AI-projects/01-yca-AiManager/aimanager
-cp .env.example .env
-# Fill LITELLM_MASTER_KEY, YCAPI_API_TOKEN, and POSTGRES_PASSWORD in .env.
-docker compose up --build
+/Volumes/AI-projects/00-agent-brain/scripts/wsl_dev_docker_sync_project.sh /Volumes/AI-projects/01-yca-AiManager
+/Volumes/AI-projects/00-agent-brain/scripts/wsl_dev_docker_ssh.sh 'cd /home/yca-admin/projects/AI-projects/01-yca-AiManager/aimanager && cp -n .env.example .env'
+# Fill LITELLM_MASTER_KEY, YCAPI_API_TOKEN, and POSTGRES_PASSWORD in the WSL aimanager/.env.
+/Volumes/AI-projects/00-agent-brain/scripts/wsl_dev_docker_ssh.sh 'cd /home/yca-admin/projects/AI-projects/01-yca-AiManager/aimanager && docker compose up --build'
 ```
 
 Business API: <http://localhost:4000/v1/models>
@@ -256,7 +256,7 @@ Business API: <http://localhost:4000/v1/models>
 To run the local management surface:
 
 ```bash
-docker compose --profile admin up --build
+/Volumes/AI-projects/00-agent-brain/scripts/wsl_dev_docker_ssh.sh 'cd /home/yca-admin/projects/AI-projects/01-yca-AiManager/aimanager && docker compose --profile admin up --build'
 ```
 
 Admin UI: <http://127.0.0.1:4001/ui>
@@ -431,8 +431,8 @@ PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.generate_busin
 PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.generate_monthly_close_package --finance-monthly-file /tmp/aimanager-finance-export/aimanager_finance_monthly.csv --reconciliation-file /tmp/aimanager-finance-export/aimanager_reconciliation.csv --adjustment-file /path/to/aimanager-monthly-adjustments.csv --month 2026-06 --output-json-file /tmp/aimanager-monthly-close.json --output-adjusted-csv-file /tmp/aimanager-monthly-close-adjusted.csv --output-markdown-file /tmp/aimanager-monthly-close.md
 PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.validate_employee_monitoring_policy --policy-file docs/aimanager/aimanager-employee-monitoring-policy.json --employee-roster-file /path/to/employee-roster.csv --acknowledgment-file /path/to/employee-monitoring-acknowledgments.csv --output-json-file /tmp/aimanager-employee-monitoring.json --output-markdown-file /tmp/aimanager-employee-monitoring.md
 PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.generate_launch_gap_plan --production-readiness-file /tmp/aimanager-production-readiness.json --business-trial-file /tmp/aimanager-business-trial-acceptance.json --output-json-file /tmp/aimanager-launch-gap-plan.json --output-markdown-file /tmp/aimanager-launch-gap-plan.md
-docker compose -f aimanager/docker-compose.yml config
-docker compose -f aimanager/docker-compose.yml --profile admin config
+/Volumes/AI-projects/00-agent-brain/scripts/wsl_dev_docker_ssh.sh 'cd /home/yca-admin/projects/AI-projects/01-yca-AiManager && docker compose -f aimanager/docker-compose.yml config'
+/Volumes/AI-projects/00-agent-brain/scripts/wsl_dev_docker_ssh.sh 'cd /home/yca-admin/projects/AI-projects/01-yca-AiManager && docker compose -f aimanager/docker-compose.yml --profile admin config'
 ```
 
 Employee SDK compatibility smoke:
@@ -473,7 +473,7 @@ PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.mock_ycapi \
 LITELLM_MASTER_KEY=aimanager-local-master-key \
 YCAPI_API_TOKEN=mock-ycapi-token \
 YCAPI_BASE_URL=http://host.docker.internal:18080/v1 \
-docker compose -f aimanager/docker-compose.yml --profile admin up -d --build db aimanager aimanager-admin
+/Volumes/AI-projects/00-agent-brain/scripts/wsl_dev_docker_ssh.sh 'cd /home/yca-admin/projects/AI-projects/01-yca-AiManager && LITELLM_MASTER_KEY=aimanager-local-master-key YCAPI_API_TOKEN=mock-ycapi-token YCAPI_BASE_URL=http://host.docker.internal:18080/v1 docker compose -f aimanager/docker-compose.yml --profile admin up -d --build db aimanager aimanager-admin'
 
 LITELLM_MASTER_KEY=aimanager-local-master-key \
 PYTHONPATH="$PWD" uv run --no-project --with pyyaml python -m aimanager.scripts.smoke_spend_logs \
@@ -667,13 +667,13 @@ The bundle is the pre-business-trial gate for the remaining production-only evid
 - AC-15 production admin boundary checks from `AIMANAGER_BUSINESS_BASE_URL`, `AIMANAGER_PUBLIC_ADMIN_URL`, and `AIMANAGER_ALLOWED_SSO_REDIRECT_HOSTS`, including per-probe method/path/status/policy evidence.
 - AC-19 live ycapi `/models` preflight from `YCAPI_BASE_URL` and `YCAPI_API_TOKEN`.
 - AC-08 production virtual-key inventory governance from `AIMANAGER_KEY_INVENTORY_FILE`; use `aimanager.scripts.export_key_inventory` or an equivalent metadata-only full export from the production management surface, then validate that it declares trusted fresh full-inventory provenance and matching total count, and every active LiteLLM key is employee/team-bound, model-scoped, budgeted, rate-limited, duration-bound, and governed.
-- AC-16 live WeCom alert routing from `AIMANAGER_OBSERVABILITY_REPORT_FILE`, `AIMANAGER_WECOM_WEBHOOK_URL`, and `AIMANAGER_WECOM_MIN_SEVERITY`.
+- AC-16 live WeCom alert routing from `AIMANAGER_OBSERVABILITY_REPORT_FILE`, `AIMANAGER_WECOM_WEBHOOK_URL`, and `AIMANAGER_WECOM_MIN_SEVERITY`; the report must contain alerts that match the metrics-derived alert set.
 - AC-12/AC-13 finance export and ycapi bill reconciliation from `AIMANAGER_SPEND_FILE`, `AIMANAGER_YCAPI_BILL_FILE`, and `AIMANAGER_FINANCE_OUTPUT_DIR`.
 - AC-POLICY production policy attestation from `AIMANAGER_PRODUCTION_POLICY_ATTESTATION_FILE`; start from `docs/aimanager/production_policy_attestation.example.json` and replace every approval reference with the real finance, security, and legal records for the pilot, then run `make production-policy-readiness`. `approved_at` must be an ISO-8601 timestamp no more than 90 days before the gate reference time and no more than 5 minutes in the future. Finance, security, and legal must be three distinct approver identities after whitespace/case normalization, and ycapi monthly budget/RPM limits must be finite positive numbers.
 
 For operator handoff, the remaining production evidence commands are intentionally short: `make key-inventory-readiness`, `make admin-boundary-readiness`, `make finance-readiness`, `make wecom-alert-readiness`, `make live-ycapi-preflight`, and `make production-policy-readiness`. The readiness targets perform the local preview or export step where applicable, then rerun the shared production-readiness bundle so the final status comes from one machine-readable gate.
 
-Exit code `0` means all checks are `PASS`; `1` means at least one `FAIL`; `2` means no failed checks but at least one required production input is still `BLOCKED`. The JSON bundle never writes `YCAPI_API_TOKEN`, raw LiteLLM key values, or the WeCom webhook URL; if a downstream error includes those values, they are replaced with a `[redacted:...]` marker. Without production inputs, the expected local result is `BLOCKED` with six blocked checks, not `PASS`. Key-inventory evidence is `BLOCKED` without `AIMANAGER_KEY_INVENTORY_FILE`, without trusted full-export metadata, with stale export metadata, or when the export has zero active keys, and `FAIL` if the declared total count does not match the exported records, export scope is not `all_virtual_keys`, or any active key is legacy, wildcard, unbounded, missing duration, missing governance metadata, has a non-boolean shared-key marker, or contains raw secret-like values. WeCom evidence is `BLOCKED` when no alert is actually delivered, finance evidence is `BLOCKED` when either spend rows or ycapi bill rows are empty or lack non-zero billable amounts on either side of the reconciliation, and production policy evidence is `FAIL` if `approved_at` is missing, malformed, stale, future-skewed, or if showback/chargeback, pricing approval, ycapi token limit, employee-virtual-key-only distribution, data boundary, or independent finance/security/legal approver records are incomplete.
+Exit code `0` means all checks are `PASS`; `1` means at least one `FAIL`; `2` means no failed checks but at least one required production input is still `BLOCKED`. The JSON bundle never writes `YCAPI_API_TOKEN`, raw LiteLLM key values, or the WeCom webhook URL; if a downstream error includes those values, they are replaced with a `[redacted:...]` marker. Without production inputs, the expected local result is `BLOCKED` with six blocked checks, not `PASS`. Key-inventory evidence is `BLOCKED` without `AIMANAGER_KEY_INVENTORY_FILE`, without trusted full-export metadata, with stale export metadata, or when the export has zero active keys, and `FAIL` if the declared total count does not match the exported records, export scope is not `all_virtual_keys`, or any active key is legacy, wildcard, unbounded, missing duration, missing governance metadata, has a non-boolean shared-key marker, or contains raw secret-like values. WeCom evidence is `FAIL` when the report's `alerts` array cannot be recomputed from `metrics` and `alert_policy`, `BLOCKED` when no alert is actually delivered, finance evidence is `BLOCKED` when either spend rows or ycapi bill rows are empty or lack non-zero billable amounts on either side of the reconciliation, and production policy evidence is `FAIL` if `approved_at` is missing, malformed, stale, future-skewed, or if showback/chargeback, pricing approval, ycapi token limit, employee-virtual-key-only distribution, data boundary, or independent finance/security/legal approver records are incomplete.
 
 Business trial acceptance gate:
 

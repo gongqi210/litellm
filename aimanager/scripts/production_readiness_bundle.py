@@ -18,7 +18,10 @@ from aimanager.redaction import (
     sanitize_value as sanitize_secret_value,
 )
 from aimanager.scripts.export_finance import export_finance_csvs
-from aimanager.scripts.route_observability_alerts import route_observability_alerts
+from aimanager.scripts.route_observability_alerts import (
+    route_observability_alerts,
+    validate_observability_report_alerts,
+)
 from aimanager.scripts.smoke_admin_boundary import run_admin_boundary_smoke
 from aimanager.scripts.smoke_live_ycapi import DEFAULT_YCAPI_BASE_URL, run_live_ycapi_smoke
 from aimanager.scripts.smoke_work_context_enforcement import run_work_context_enforcement_smoke
@@ -339,6 +342,15 @@ def _wecom_routing_check(env: Mapping[str, str], *, wecom_router: WeComRouter) -
             name="wecom_alert_routing",
             status="FAIL",
             detail="observability report alerts must be a list",
+        )
+    validation_detail = validate_observability_report_alerts(report)
+    if validation_detail:
+        return CheckResult(
+            id="AC-16-WECOM",
+            name="wecom_alert_routing",
+            status="FAIL",
+            detail=validation_detail,
+            evidence={"alert_count": len(alerts)},
         )
     if not alerts:
         return CheckResult(

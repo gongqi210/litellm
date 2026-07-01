@@ -3,12 +3,13 @@ from __future__ import annotations
 from collections import Counter
 from decimal import Decimal, InvalidOperation
 import json
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 
 UNASSIGNED = "unassigned"
 _OPENAI_PREFIX = "openai/"
 _SIX_PLACES = Decimal("0.000001")
+DEFAULT_FAILURE_RATE_ALERT_THRESHOLD = Decimal("0.05")
 _SUCCESS_STATUSES = {"success", "succeeded", "ok", "completed"}
 _FAILED_STATUSES = {"failed", "failure", "error", "errored", "timeout", "cancelled"}
 _AUDIT_MARKER = "aimanager_audit_event="
@@ -58,7 +59,7 @@ def build_observability_report(
     *,
     audit_log_lines: Iterable[str] = (),
     request_rows: Iterable[dict[str, Any]] = (),
-    failure_rate_alert_threshold: Decimal = Decimal("0.05"),
+    failure_rate_alert_threshold: Decimal = DEFAULT_FAILURE_RATE_ALERT_THRESHOLD,
 ) -> dict[str, Any]:
     audit_events = parse_audit_events_from_log_lines(audit_log_lines)
     requests = [_normalize_request_record(row) for row in request_rows]
@@ -101,8 +102,13 @@ def build_observability_report(
 
     return {
         "metrics": metrics,
+        "alert_policy": {
+            "failure_rate_alert_threshold": _quantize_six(
+                _decimal(failure_rate_alert_threshold, "failure_rate_alert_threshold")
+            ),
+        },
         "by_key_model": _aggregate_by_key_model(requests),
-        "alerts": _build_alerts(metrics, failure_rate_alert_threshold),
+        "alerts": derive_observability_alerts(metrics, failure_rate_alert_threshold=failure_rate_alert_threshold),
     }
 
 
@@ -154,6 +160,45 @@ def _aggregate_by_key_model(requests: Iterable[dict[str, Any]]) -> list[dict[str
         bucket["image_count"] += row["image_count"]
         bucket["spend"] += row["spend"]
     return [buckets[key] for key in sorted(buckets)]
+
+
+def derive_observability_alerts(
+    metrics: Mapping[str, Any],
+    *,
+    failure_rate_alert_threshold: Any = DEFAULT_FAILURE_RATE_ALERT_THRESHOLD,
+) -> list[dict[str, Any]]:
+    normalized_metrics = _alert_metric_values(metrics)
+    threshold = _decimal(failure_rate_alert_threshold, "failure_rate_alert_threshold")
+    return _build_alerts(normalized_metrics, threshold)
+
+
+def _alert_metric_values(metrics: Mapping[str, Any]) -> dict[str, Any]:
+    request_count = _non_negative_int(metrics.get("request_count"), "metrics.request_count")
+    failed_requests = _non_negative_int(metrics.get("failed_requests"), "metrics.failed_requests")
+    failure_rate_value = metrics.get("failure_rate")
+    if failure_rate_value in (None, ""):
+        failure_rate = _rate(failed_requests, request_count)
+    else:
+        failure_rate = _quantize_six(_decimal(failure_rate_value, "metrics.failure_rate"))
+    return {
+        "request_count": request_count,
+        "failure_rate": failure_rate,
+        "http_429_count": _non_negative_int(metrics.get("http_429_count"), "metrics.http_429_count"),
+        "http_5xx_count": _non_negative_int(metrics.get("http_5xx_count"), "metrics.http_5xx_count"),
+        "budget_blocked_count": _non_negative_int(metrics.get("budget_blocked_count"), "metrics.budget_blocked_count"),
+        "passthrough_blocked_count": _non_negative_int(
+            metrics.get("passthrough_blocked_count"),
+            "metrics.passthrough_blocked_count",
+        ),
+        "enforced_params_blocked_count": _non_negative_int(
+            metrics.get("enforced_params_blocked_count"),
+            "metrics.enforced_params_blocked_count",
+        ),
+        "missing_request_id_count": _non_negative_int(
+            metrics.get("missing_request_id_count"),
+            "metrics.missing_request_id_count",
+        ),
+    }
 
 
 def _build_alerts(metrics: dict[str, Any], failure_rate_alert_threshold: Decimal) -> list[dict[str, Any]]:

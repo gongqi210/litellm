@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from aimanager.observability import build_observability_report, parse_audit_events_from_log_lines
+from aimanager.observability import (
+    build_observability_report,
+    derive_observability_alerts,
+    parse_audit_events_from_log_lines,
+)
 
 
 def test_observability_report_counts_request_failures_and_audit_events() -> None:
@@ -100,6 +104,7 @@ def test_observability_report_emits_machine_readable_alerts() -> None:
     )
 
     alerts = {alert["code"]: alert for alert in report["alerts"]}
+    assert report["alert_policy"]["failure_rate_alert_threshold"] == Decimal("0.100000")
     assert alerts["aimanager_failure_rate_high"]["severity"] == "high"
     assert alerts["aimanager_failure_rate_high"]["value"] == Decimal("0.500000")
     assert alerts["aimanager_http_429_seen"]["count"] == 1
@@ -107,6 +112,33 @@ def test_observability_report_emits_machine_readable_alerts() -> None:
     assert alerts["aimanager_budget_blocked_seen"]["severity"] == "high"
     assert alerts["aimanager_passthrough_blocked_seen"]["severity"] == "warning"
     assert alerts["aimanager_request_id_missing"]["count"] == 1
+
+
+def test_derive_observability_alerts_normalizes_json_ready_metric_values() -> None:
+    alerts = derive_observability_alerts(
+        {
+            "request_count": "4",
+            "failed_requests": "2",
+            "failure_rate": "0.500000",
+            "http_429_count": "1",
+            "http_5xx_count": "0",
+            "budget_blocked_count": "1",
+            "passthrough_blocked_count": "0",
+            "enforced_params_blocked_count": "0",
+            "missing_request_id_count": "0",
+        },
+        failure_rate_alert_threshold="0.100000",
+    )
+
+    alerts_by_code = {alert["code"]: alert for alert in alerts}
+    assert set(alerts_by_code) == {
+        "aimanager_failure_rate_high",
+        "aimanager_http_429_seen",
+        "aimanager_budget_blocked_seen",
+    }
+    assert alerts_by_code["aimanager_failure_rate_high"]["value"] == Decimal("0.500000")
+    assert alerts_by_code["aimanager_failure_rate_high"]["threshold"] == Decimal("0.100000")
+    assert alerts_by_code["aimanager_http_429_seen"]["count"] == 1
 
 
 def test_parse_audit_events_from_log_lines_ignores_malformed_and_non_audit_lines() -> None:

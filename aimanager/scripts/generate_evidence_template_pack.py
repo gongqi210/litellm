@@ -191,7 +191,10 @@ def _ops_templates(gaps: Sequence[Mapping[str, object]], *, output_dir: Path) ->
             "template_marker": "TEMPLATE_DO_NOT_SUBMIT",
             "status": "TEMPLATE",
             "alerts": [],
-            "note": "Replace with a real export_observability report containing at least one real alert.",
+            "note": (
+                "Replace with a real export_observability report whose alerts are derived "
+                "from metrics and alert_policy, containing at least one real alert."
+            ),
         },
     )
     return [_file_record(output_dir, report_file, "observability_report_template", "ops")]

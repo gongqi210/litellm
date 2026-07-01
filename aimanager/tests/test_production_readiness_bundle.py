@@ -554,8 +554,25 @@ def test_production_readiness_redacts_token_and_webhook_values(tmp_path) -> None
     report_file.write_text(
         json.dumps(
             {
-                "metrics": {"request_count": 1},
-                "alerts": [{"code": "aimanager_failure_rate_high", "severity": "high"}],
+                "metrics": {
+                    "request_count": 1,
+                    "failed_requests": 1,
+                    "failure_rate": "1.000000",
+                    "http_429_count": 0,
+                    "http_5xx_count": 0,
+                    "budget_blocked_count": 0,
+                    "passthrough_blocked_count": 0,
+                    "enforced_params_blocked_count": 0,
+                    "missing_request_id_count": 0,
+                },
+                "alerts": [
+                    {
+                        "code": "aimanager_failure_rate_high",
+                        "severity": "high",
+                        "value": "1.000000",
+                        "threshold": "0.050000",
+                    }
+                ],
             }
         ),
         encoding="utf-8",
@@ -596,6 +613,53 @@ def test_production_readiness_redacts_token_and_webhook_values(tmp_path) -> None
     assert "[redacted:AIMANAGER_WECOM_WEBHOOK_URL]" in payload
 
 
+def test_wecom_readiness_fails_when_report_alerts_do_not_match_metrics(tmp_path) -> None:
+    report_file = tmp_path / "observability.json"
+    report_file.write_text(
+        json.dumps(
+            {
+                "metrics": {
+                    "request_count": 1,
+                    "failed_requests": 0,
+                    "failure_rate": "0.000000",
+                    "http_429_count": 0,
+                    "http_5xx_count": 0,
+                    "budget_blocked_count": 0,
+                    "passthrough_blocked_count": 0,
+                    "enforced_params_blocked_count": 0,
+                    "missing_request_id_count": 0,
+                },
+                "alerts": [{"code": "aimanager_failure_rate_high", "severity": "high"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    bundle = collect_production_readiness(
+        env={
+            "AIMANAGER_OBSERVABILITY_REPORT_FILE": str(report_file),
+            "AIMANAGER_WECOM_WEBHOOK_URL": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=redaction",
+        },
+        admin_boundary_runner=lambda **kwargs: [
+            _script_result(status="PASS", detail="business/admin edge checks passed")
+        ],
+        live_ycapi_runner=lambda **kwargs: _script_result(status="PASS", detail="ycapi /models returned 3 models"),
+        wecom_router=lambda **kwargs: _script_result(status="PASS", detail="sent 1 alert to WeCom webhook"),
+        finance_runner=lambda **kwargs: CheckResult(
+            id="AC-12-13-FINANCE",
+            name="finance_export_reconciliation",
+            status="PASS",
+            detail="finance files exported",
+            evidence={"output_files": ["aimanager_usage_daily.csv"]},
+        ),
+    )
+
+    wecom_check = next(check for check in bundle["checks"] if check["id"] == "AC-16-WECOM")
+    assert bundle["status"] == "FAIL"
+    assert wecom_check["status"] == "FAIL"
+    assert "metrics-derived alerts" in wecom_check["detail"]
+
+
 def test_production_readiness_cli_writes_json_and_returns_blocked(monkeypatch, tmp_path, capsys) -> None:
     output_file = tmp_path / "readiness.json"
     monkeypatch.delenv("YCAPI_API_TOKEN", raising=False)
@@ -632,8 +696,18 @@ def test_wecom_readiness_blocks_when_webhook_missing_even_if_alerts_are_below_th
     report_file.write_text(
         json.dumps(
             {
-                "metrics": {"request_count": 1},
-                "alerts": [{"code": "aimanager_info_only", "severity": "info"}],
+                "metrics": {
+                    "request_count": 0,
+                    "failed_requests": 0,
+                    "failure_rate": "0.000000",
+                    "http_429_count": 0,
+                    "http_5xx_count": 0,
+                    "budget_blocked_count": 0,
+                    "passthrough_blocked_count": 1,
+                    "enforced_params_blocked_count": 0,
+                    "missing_request_id_count": 0,
+                },
+                "alerts": [{"code": "aimanager_passthrough_blocked_seen", "severity": "warning", "count": 1}],
             }
         ),
         encoding="utf-8",
@@ -642,7 +716,7 @@ def test_wecom_readiness_blocks_when_webhook_missing_even_if_alerts_are_below_th
     bundle = collect_production_readiness(
         env={
             "AIMANAGER_OBSERVABILITY_REPORT_FILE": str(report_file),
-            "AIMANAGER_WECOM_MIN_SEVERITY": "warning",
+            "AIMANAGER_WECOM_MIN_SEVERITY": "high",
         },
         admin_boundary_runner=lambda **kwargs: [
             _script_result(status="PASS", detail="business/admin edge checks passed")
@@ -668,8 +742,18 @@ def test_wecom_readiness_blocks_when_no_alert_was_delivered(tmp_path) -> None:
     report_file.write_text(
         json.dumps(
             {
-                "metrics": {"request_count": 1},
-                "alerts": [{"code": "aimanager_info_only", "severity": "info"}],
+                "metrics": {
+                    "request_count": 0,
+                    "failed_requests": 0,
+                    "failure_rate": "0.000000",
+                    "http_429_count": 0,
+                    "http_5xx_count": 0,
+                    "budget_blocked_count": 0,
+                    "passthrough_blocked_count": 1,
+                    "enforced_params_blocked_count": 0,
+                    "missing_request_id_count": 0,
+                },
+                "alerts": [{"code": "aimanager_passthrough_blocked_seen", "severity": "warning", "count": 1}],
             }
         ),
         encoding="utf-8",
@@ -679,7 +763,7 @@ def test_wecom_readiness_blocks_when_no_alert_was_delivered(tmp_path) -> None:
         env={
             "AIMANAGER_OBSERVABILITY_REPORT_FILE": str(report_file),
             "AIMANAGER_WECOM_WEBHOOK_URL": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=redaction",
-            "AIMANAGER_WECOM_MIN_SEVERITY": "warning",
+            "AIMANAGER_WECOM_MIN_SEVERITY": "high",
         },
         admin_boundary_runner=lambda **kwargs: [
             _script_result(status="PASS", detail="business/admin edge checks passed")
@@ -1322,8 +1406,26 @@ def _valid_policy_attestation() -> dict[str, object]:
 
 def _observability_report_with_alert() -> dict[str, object]:
     return {
-        "metrics": {"request_count": 1},
-        "alerts": [{"code": "aimanager_failure_rate_high", "severity": "high"}],
+        "metrics": {
+            "request_count": 1,
+            "failed_requests": 1,
+            "failure_rate": "1.000000",
+            "http_429_count": 0,
+            "http_5xx_count": 0,
+            "budget_blocked_count": 0,
+            "passthrough_blocked_count": 0,
+            "enforced_params_blocked_count": 0,
+            "missing_request_id_count": 0,
+        },
+        "alert_policy": {"failure_rate_alert_threshold": "0.050000"},
+        "alerts": [
+            {
+                "code": "aimanager_failure_rate_high",
+                "severity": "high",
+                "value": "1.000000",
+                "threshold": "0.050000",
+            }
+        ],
     }
 
 

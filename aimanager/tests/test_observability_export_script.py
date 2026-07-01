@@ -84,6 +84,7 @@ def test_observability_export_script_writes_json_report(tmp_path) -> None:
     assert payload["metrics"]["http_5xx_count"] == 1
     assert payload["metrics"]["audit_events"]["passthrough_blocked"] == 1
     assert payload["metrics"]["budget_blocked_count"] == 1
+    assert payload["alert_policy"]["failure_rate_alert_threshold"] == "0.100000"
     assert {alert["code"] for alert in payload["alerts"]} >= {
         "aimanager_failure_rate_high",
         "aimanager_http_5xx_seen",

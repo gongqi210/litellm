@@ -9,8 +9,14 @@ import urllib.error
 import urllib.request
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Literal
+
+from aimanager.observability import (
+    DEFAULT_FAILURE_RATE_ALERT_THRESHOLD,
+    derive_observability_alerts,
+)
 
 
 RouteStatus = Literal["PASS", "FAIL", "BLOCKED"]
@@ -21,6 +27,7 @@ SEVERITY_RANK: dict[str, int] = {
     "high": 2,
     "critical": 3,
 }
+_SIX_PLACES = Decimal("0.000001")
 METRIC_KEYS = (
     "request_count",
     "failed_requests",
@@ -62,6 +69,15 @@ def route_observability_alerts(
     post: PostWebhook | None = None,
     timeout_seconds: float = 10,
 ) -> AlertRouteResult:
+    validation_detail = validate_observability_report_alerts(report)
+    if validation_detail:
+        return AlertRouteResult(
+            status="FAIL",
+            alert_count=_safe_alert_count(report),
+            delivered_count=0,
+            detail=validation_detail,
+        )
+
     alerts = _selected_alerts(report, min_severity=min_severity)
     if not alerts:
         return AlertRouteResult(
@@ -176,6 +192,91 @@ def _metrics(report: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(metrics, dict):
         raise ValueError("observability report metrics must be an object")
     return metrics
+
+
+def validate_observability_report_alerts(report: dict[str, Any]) -> str:
+    try:
+        provided_alerts = _alerts(report)
+        expected_alerts = derive_observability_alerts(
+            _metrics(report),
+            failure_rate_alert_threshold=_failure_rate_alert_threshold(report),
+        )
+        alerts_match = _canonical_alerts(provided_alerts) == _canonical_alerts(expected_alerts)
+    except ValueError as exc:
+        return f"observability report alerts could not be validated: {type(exc).__name__}"
+    if alerts_match:
+        return ""
+    return (
+        "observability report alerts do not match metrics-derived alerts; "
+        f"provided_codes={_alert_codes(provided_alerts)} expected_codes={_alert_codes(expected_alerts)}"
+    )
+
+
+def _failure_rate_alert_threshold(report: dict[str, Any]) -> Any:
+    policy = report.get("alert_policy")
+    if isinstance(policy, dict):
+        threshold = policy.get("failure_rate_alert_threshold")
+        if threshold not in (None, ""):
+            return threshold
+    for alert in _alerts(report):
+        if _text(alert.get("code"), default="") == "aimanager_failure_rate_high":
+            threshold = alert.get("threshold")
+            if threshold not in (None, ""):
+                return threshold
+    return DEFAULT_FAILURE_RATE_ALERT_THRESHOLD
+
+
+def _canonical_alerts(alerts: list[dict[str, Any]]) -> list[dict[str, str]]:
+    return sorted(
+        (_canonical_alert(alert) for alert in alerts),
+        key=lambda alert: alert.get("code", ""),
+    )
+
+
+def _canonical_alert(alert: dict[str, Any]) -> dict[str, str]:
+    canonical = {
+        "code": _text(alert.get("code"), default=""),
+        "severity": _text(alert.get("severity"), default="warning").lower(),
+    }
+    if "count" in alert:
+        canonical["count"] = _canonical_count(alert["count"])
+    for field_name in ("value", "threshold"):
+        if field_name in alert:
+            canonical[field_name] = _canonical_decimal(alert[field_name], field_name)
+    return canonical
+
+
+def _canonical_count(value: Any) -> str:
+    if isinstance(value, bool):
+        raise ValueError("alert count must be an integer")
+    try:
+        count = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("alert count must be an integer") from exc
+    if count < 0:
+        raise ValueError("alert count must be a non-negative integer")
+    return str(count)
+
+
+def _canonical_decimal(value: Any, field_name: str) -> str:
+    if value in (None, "") or isinstance(value, bool):
+        raise ValueError(f"alert {field_name} must be a decimal number")
+    try:
+        number = Decimal(str(value))
+    except (InvalidOperation, ValueError) as exc:
+        raise ValueError(f"alert {field_name} must be a decimal number") from exc
+    if not number.is_finite():
+        raise ValueError(f"alert {field_name} must be a finite decimal number")
+    return format(number.quantize(_SIX_PLACES), "f")
+
+
+def _alert_codes(alerts: list[dict[str, Any]]) -> list[str]:
+    return sorted(_text(alert.get("code"), default="unknown_alert") for alert in alerts)
+
+
+def _safe_alert_count(report: dict[str, Any]) -> int:
+    alerts = report.get("alerts", [])
+    return len(alerts) if isinstance(alerts, list) else 0
 
 
 def _alert_detail(alert: dict[str, Any]) -> str:
