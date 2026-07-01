@@ -34,7 +34,12 @@ DEFAULT_GATE_REGISTRY: tuple[AcceptanceGate, ...] = (
         "AC-02",
         "architecture/security",
         "runtime_smoke",
-        ("aimanager/scripts/smoke_blocked_routes.py", "aimanager/tests/test_policy.py", "aimanager/tests/test_blocked_route_smoke.py"),
+        (
+            "aimanager/scripts/smoke_blocked_routes.py",
+            "aimanager/tests/test_policy.py",
+            "aimanager/tests/test_key_disposition_guard.py",
+            "aimanager/tests/test_blocked_route_smoke.py",
+        ),
     ),
     AcceptanceGate("AC-03", "engineering", "runtime_smoke", ("aimanager/scripts/mock_ycapi.py", "aimanager/tests/test_mock_ycapi.py", "aimanager/tests/test_config.py")),
     AcceptanceGate("AC-04", "engineering/finance", "runtime_smoke", ("aimanager/scripts/mock_ycapi.py", "aimanager/scripts/smoke_spend_logs.py", "aimanager/tests/test_spend_log_smoke.py")),
@@ -67,7 +72,17 @@ DEFAULT_GATE_REGISTRY: tuple[AcceptanceGate, ...] = (
     ),
     AcceptanceGate("AC-09", "finance/architecture", "runtime_smoke", ("aimanager/scripts/validate_config.py", "aimanager/tests/test_config.py", "aimanager/tests/test_spend_log_smoke.py")),
     AcceptanceGate("AC-10", "finance/engineering", "runtime_smoke", ("aimanager/scripts/smoke_budget_block.py", "aimanager/tests/test_budget_block_smoke.py")),
-    AcceptanceGate("AC-11", "security/engineering", "runtime_smoke", ("aimanager/scripts/smoke_key_lifecycle.py", "aimanager/tests/test_key_lifecycle_smoke.py", "aimanager/tests/test_audit.py")),
+    AcceptanceGate(
+        "AC-11",
+        "security/engineering",
+        "runtime_smoke",
+        (
+            "aimanager/scripts/smoke_key_lifecycle.py",
+            "aimanager/tests/test_key_lifecycle_smoke.py",
+            "aimanager/tests/test_key_disposition_guard.py",
+            "aimanager/tests/test_audit.py",
+        ),
+    ),
     AcceptanceGate(
         "AC-12",
         "finance",

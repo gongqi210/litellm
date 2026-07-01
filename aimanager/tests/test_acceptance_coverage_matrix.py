@@ -4,6 +4,7 @@ import json
 
 from aimanager.scripts.acceptance_coverage_matrix import (
     AcceptanceGate,
+    DEFAULT_GATE_REGISTRY,
     collect_acceptance_coverage_matrix,
     main,
 )
@@ -23,6 +24,18 @@ def test_acceptance_coverage_matrix_covers_real_acceptance_doc() -> None:
     assert result["status"] == "BLOCKED"
     assert result["summary"]["FAIL"] == 0
     assert result["summary"]["BLOCKED"] == 9
+
+
+def test_ac11_acceptance_gate_includes_key_disposition_guard_contract() -> None:
+    ac11 = next(gate for gate in DEFAULT_GATE_REGISTRY if gate.criterion_id == "AC-11")
+
+    assert "aimanager/tests/test_key_disposition_guard.py" in ac11.local_artifacts
+
+
+def test_ac02_acceptance_gate_matches_documented_key_disposition_guard_evidence() -> None:
+    ac02 = next(gate for gate in DEFAULT_GATE_REGISTRY if gate.criterion_id == "AC-02")
+
+    assert "aimanager/tests/test_key_disposition_guard.py" in ac02.local_artifacts
 
 
 def test_acceptance_coverage_matrix_overlays_bundle_checks_and_merged_ids(tmp_path) -> None:
