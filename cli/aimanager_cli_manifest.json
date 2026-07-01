@@ -31,6 +31,7 @@
     "capture_lightweight_trial_evidence": "make lightweight-trial-evidence-capture",
     "lightweight_trial_evidence_capture": "make lightweight-trial-evidence-capture",
     "employee_monitoring_validate": "make employee-monitoring-validate",
+    "work_context_enforcement_smoke": "make work-context-enforcement-smoke",
     "lightweight_web": "PYTHONPATH=\"$PWD\" uv run --no-project --with uvicorn python -m aimanager.scripts.run_lightweight_web --host 127.0.0.1 --port 4002 --business-base-url http://localhost:4000"
   }
 }

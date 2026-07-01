@@ -97,6 +97,7 @@ def test_aimanager_cli_entry_emits_machine_readable_status() -> None:
     assert payload["commands"]["admin_boundary_readiness"] == "make admin-boundary-readiness"
     assert payload["commands"]["wecom_alert_readiness"] == "make wecom-alert-readiness"
     assert payload["commands"]["live_ycapi_preflight"] == "make live-ycapi-preflight"
+    assert payload["commands"]["work_context_enforcement_smoke"] == "make work-context-enforcement-smoke"
     assert payload["commands"]["production_policy_readiness"] == "make production-policy-readiness"
     assert payload["commands"]["employee_monitoring_validate"] == "make employee-monitoring-validate"
     assert payload["commands"]["lightweight_trial_evidence_capture"] == "make lightweight-trial-evidence-capture"
@@ -168,6 +169,11 @@ def test_makefile_exposes_remaining_external_evidence_operator_targets() -> None
     assert "--expect-model gemini-2.5-flash" in makefile
     assert "--expect-model deepseek-chat" in makefile
     assert "--expect-model ycapi-image-1" in makefile
+
+    assert "work-context-enforcement-smoke:" in makefile
+    assert "aimanager.scripts.smoke_work_context_enforcement" in makefile
+    assert "--base-url \"$${AIMANAGER_BUSINESS_BASE_URL:-http://localhost:4000}\"" in makefile
+    assert "--employee-key \"$${AIMANAGER_EMPLOYEE_VIRTUAL_KEY}\"" not in makefile
 
     assert "production-policy-readiness:" in makefile
     assert "AIMANAGER_PRODUCTION_POLICY_ATTESTATION_FILE" in makefile
