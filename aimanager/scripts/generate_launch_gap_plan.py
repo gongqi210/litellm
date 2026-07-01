@@ -54,10 +54,16 @@ _GAP_CATALOG: dict[str, dict[str, object]] = {
         "owner": "finance",
         "required_env": ["AIMANAGER_SPEND_FILE", "AIMANAGER_YCAPI_BILL_FILE"],
         "command": (
+            "PYTHONPATH=\"$PWD\" uv run --no-project python -m aimanager.scripts.export_finance "
+            "--spend-file \"$AIMANAGER_SPEND_FILE\" --ycapi-bill-file \"$AIMANAGER_YCAPI_BILL_FILE\" "
+            "--output-dir \"${AIMANAGER_FINANCE_OUTPUT_DIR:-/tmp/aimanager-finance-export}\" && "
             "PYTHONPATH=\"$PWD\" uv run --no-project --with pyyaml python -m "
             "aimanager.scripts.production_readiness_bundle --output-json-file /tmp/aimanager-production-readiness.json"
         ),
-        "next_action": "提供真实 LiteLLM spend 导出和 ycapi 月账单文件；两侧都必须有非零计费金额，空表头或占位行不能解除 BLOCKED。",
+        "next_action": (
+            "用 export_finance 从真实 LiteLLM spend 导出和 ycapi 月账单生成 usage/monthly/reconciliation CSV；"
+            "两侧都必须有非零计费金额，空表头或占位行不能解除 BLOCKED。"
+        ),
     },
     "AC-19": {
         "owner": "architecture/ops",

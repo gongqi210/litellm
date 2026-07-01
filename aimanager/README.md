@@ -118,13 +118,10 @@ Money values use `Decimal`. Missing ownership dimensions are kept visible as `un
 Local export command:
 
 ```bash
-PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.export_finance \
-  --spend-file /path/to/litellm-spendlogs.json \
-  --ycapi-bill-file /path/to/ycapi-monthly-bill.csv \
-  --output-dir /tmp/aimanager-finance-export
+make finance-export
 ```
 
-`--spend-file` and `--ycapi-bill-file` accept JSON arrays or CSV files. Real production ycapi bill files or API output still need to be supplied during monthly close; the local importer and export schema are covered by tests.
+`make finance-export` reads `AIMANAGER_SPEND_FILE`, `AIMANAGER_YCAPI_BILL_FILE`, and optional `AIMANAGER_FINANCE_OUTPUT_DIR`; the same export step is now included in the AC-12/13 launch gap command before rerunning production readiness. The spend and ycapi bill inputs accept JSON arrays or CSV files. Real production ycapi bill files or API output still need to be supplied during monthly close; the local importer and export schema are covered by tests.
 
 ## Monthly Close Package
 

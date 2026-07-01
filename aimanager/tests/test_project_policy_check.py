@@ -10,6 +10,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 POLICY_SCRIPT = PROJECT_ROOT / "scripts" / "project_policy_check.py"
 CLI_MAIN = PROJECT_ROOT / "cli" / "main.py"
+MAKEFILE = PROJECT_ROOT / "Makefile"
 
 
 def _load_policy_module():
@@ -60,5 +61,21 @@ def test_aimanager_cli_entry_emits_machine_readable_status() -> None:
     assert completed.returncode == 0
     payload = json.loads(completed.stdout)
     assert payload["status"] == "PASS"
+    assert "finance_export" in payload["commands"]
+    finance_export = payload["commands"]["finance_export"]
+    assert "aimanager.scripts.export_finance" in finance_export
+    assert "--spend-file \"$AIMANAGER_SPEND_FILE\"" in finance_export
+    assert "--ycapi-bill-file \"$AIMANAGER_YCAPI_BILL_FILE\"" in finance_export
+    assert "--output-dir \"${AIMANAGER_FINANCE_OUTPUT_DIR:-/tmp/aimanager-finance-export}\"" in finance_export
     assert "production_readiness" in payload["commands"]
     assert "acceptance_gate" in payload["commands"]
+
+
+def test_makefile_exposes_finance_export_operator_target() -> None:
+    makefile = MAKEFILE.read_text(encoding="utf-8")
+
+    assert "finance-export:" in makefile
+    assert "aimanager.scripts.export_finance" in makefile
+    assert "--spend-file \"$${AIMANAGER_SPEND_FILE}\"" in makefile
+    assert "--ycapi-bill-file \"$${AIMANAGER_YCAPI_BILL_FILE}\"" in makefile
+    assert "--output-dir \"$${AIMANAGER_FINANCE_OUTPUT_DIR:-/tmp/aimanager-finance-export}\"" in makefile

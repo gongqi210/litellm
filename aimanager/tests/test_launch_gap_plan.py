@@ -121,6 +121,42 @@ def test_launch_gap_plan_assigns_key_inventory_gap_to_security_ops(tmp_path) -> 
     assert "expected_total_key_count" in gap["next_action"]
 
 
+def test_launch_gap_plan_assigns_finance_gap_to_export_before_readiness(tmp_path) -> None:
+    production_file = tmp_path / "production-readiness.json"
+    production_file.write_text(
+        json.dumps(
+            _bundle(
+                checks=[
+                    _check(
+                        "AC-12-13-FINANCE",
+                        "finance_evidence",
+                        "BLOCKED",
+                        "missing spend and ycapi bill files",
+                        {"required_env": ["AIMANAGER_SPEND_FILE", "AIMANAGER_YCAPI_BILL_FILE"]},
+                    )
+                ]
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    result = collect_launch_gap_plan(production_readiness_file=production_file)
+
+    assert result["status"] == "BLOCKED"
+    gap = result["gaps"][0]
+    assert gap["id"] == "AC-12-13-FINANCE"
+    assert gap["owner"] == "finance"
+    assert gap["required_env"] == ["AIMANAGER_SPEND_FILE", "AIMANAGER_YCAPI_BILL_FILE"]
+    assert "aimanager.scripts.export_finance" in gap["command"]
+    assert "--spend-file \"$AIMANAGER_SPEND_FILE\"" in gap["command"]
+    assert "--ycapi-bill-file \"$AIMANAGER_YCAPI_BILL_FILE\"" in gap["command"]
+    assert "--output-dir \"${AIMANAGER_FINANCE_OUTPUT_DIR:-/tmp/aimanager-finance-export}\"" in gap["command"]
+    assert "aimanager.scripts.production_readiness_bundle" in gap["command"]
+    assert gap["command"].index("export_finance") < gap["command"].index("production_readiness_bundle")
+    assert "export_finance" in gap["next_action"]
+    assert "非零计费金额" in gap["next_action"]
+
+
 def test_launch_gap_plan_keeps_worst_duplicate_status_and_preserves_existing_evidence(tmp_path) -> None:
     production_file = tmp_path / "production-readiness.json"
     business_file = tmp_path / "business-trial.json"
