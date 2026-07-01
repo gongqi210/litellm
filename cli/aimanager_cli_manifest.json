@@ -6,6 +6,7 @@
     "config_validation": "PYTHONPATH=\"$PWD\" uv run --no-project --with pyyaml python -m aimanager.scripts.validate_config aimanager/config.yaml",
     "test_suite": "PYTHONPATH=\"$PWD\" uv run --no-project --with pytest --with pyyaml pytest aimanager/tests -q",
     "production_readiness": "PYTHONPATH=\"$PWD\" uv run --no-project --with pyyaml python -m aimanager.scripts.production_readiness_bundle --output-json-file /tmp/aimanager-production-readiness.json",
+    "key_inventory_export": "LITELLM_MASTER_KEY=\"$LITELLM_MASTER_KEY\" PYTHONPATH=\"$PWD\" uv run --no-project python -m aimanager.scripts.export_key_inventory --admin-base-url \"${AIMANAGER_ADMIN_BASE_URL:-http://127.0.0.1:4001}\" --output-inventory-file \"$AIMANAGER_KEY_INVENTORY_FILE\" --output-json-file /tmp/aimanager-key-inventory-export.json",
     "key_inventory_validation": "PYTHONPATH=\"$PWD\" uv run --no-project python -m aimanager.scripts.validate_key_inventory --inventory-file \"$AIMANAGER_KEY_INVENTORY_FILE\" --output-json-file /tmp/aimanager-key-inventory.json",
     "production_policy_attestation_example": "PYTHONPATH=\"$PWD\" uv run --no-project --with pytest --with pyyaml pytest aimanager/tests/test_production_readiness_bundle.py::test_production_policy_attestation_example_file_is_valid -q",
     "business_trial_acceptance": "PYTHONPATH=\"$PWD\" uv run --no-project --with pyyaml python -m aimanager.scripts.business_trial_acceptance_bundle --output-json-file /tmp/aimanager-business-trial-acceptance.json",

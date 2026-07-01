@@ -17,11 +17,16 @@ _GAP_CATALOG: dict[str, dict[str, object]] = {
         "owner": "security/ops",
         "required_env": ["AIMANAGER_KEY_INVENTORY_FILE"],
         "command": (
+            "LITELLM_MASTER_KEY=\"$LITELLM_MASTER_KEY\" PYTHONPATH=\"$PWD\" uv run --no-project "
+            "python -m aimanager.scripts.export_key_inventory "
+            "--admin-base-url \"${AIMANAGER_ADMIN_BASE_URL:-http://127.0.0.1:4001}\" "
+            "--output-inventory-file \"$AIMANAGER_KEY_INVENTORY_FILE\" "
+            "--output-json-file /tmp/aimanager-key-inventory-export.json && "
             "PYTHONPATH=\"$PWD\" uv run --no-project python -m aimanager.scripts.validate_key_inventory "
             "--inventory-file \"$AIMANAGER_KEY_INVENTORY_FILE\" --output-json-file /tmp/aimanager-key-inventory.json"
         ),
         "next_action": (
-            "导出 24 小时内的生产 LiteLLM virtual key metadata-only 全量 inventory，并提供 exported_at、export_source、"
+            "用 export_key_inventory 导出 24 小时内的生产 LiteLLM virtual key metadata-only 全量 inventory，并提供 exported_at、export_source、"
             "export_scope=all_virtual_keys、exported_by、expected_total_key_count；确认所有 active key 都有员工/团队、"
             "模型、预算、限流、duration 和治理 metadata；shared virtual key 必须带 enforced_params。"
         ),

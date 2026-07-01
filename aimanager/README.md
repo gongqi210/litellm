@@ -89,13 +89,12 @@ Runtime inference enforcement for LiteLLM `metadata.enforced_params` is handled 
 
 ## Production Key Inventory Validation
 
-The governed creation path is not enough for production if legacy or imported LiteLLM virtual keys already exist. Before launch, export a metadata-only virtual key inventory from the production LiteLLM admin store and validate it:
-
+The governed creation path is not enough for production if legacy or imported LiteLLM virtual keys already exist. Before launch, export a metadata-only inventory from the production LiteLLM management surface, then validate it:
 ```bash
-PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.validate_key_inventory \
-  --inventory-file "$AIMANAGER_KEY_INVENTORY_FILE" \
-  --output-json-file /tmp/aimanager-key-inventory.json
+PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.export_key_inventory --admin-base-url "$AIMANAGER_ADMIN_BASE_URL" --output-inventory-file "$AIMANAGER_KEY_INVENTORY_FILE" --output-json-file /tmp/aimanager-key-inventory-export.json
+PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.validate_key_inventory --inventory-file "$AIMANAGER_KEY_INVENTORY_FILE" --output-json-file /tmp/aimanager-key-inventory.json
 ```
+The exporter reads the LiteLLM management key from `LITELLM_MASTER_KEY`, walks `GET /key/list?page=<n>&size=100&include_team_keys=true&return_full_object=true`, writes only allow-listed governance fields, drops raw key/token/hash/masked `key_name`/header/prompt/response fields, and returns `FAIL` without writing if the response is incomplete, lacks a trusted total count, or the metadata-only output still contains secret-like values.
 
 The inventory JSON must be an object with `keys` or `data` plus trusted export metadata: `exported_at`, `export_source`, `export_scope`, `exported_by`, and `expected_total_key_count`. `export_scope` must be `all_virtual_keys`, `expected_total_key_count` must match the number of exported key records, and `exported_at` must be fresh within 24 hours of the validation run and no more than 5 minutes in the future so a stale, clock-skewed, or partial hand-written sample cannot pass as production evidence. It must not contain raw key values, tokens, headers, prompts, or responses. Blocked, revoked, or deleted keys are counted but skipped for active-key governance.
 
@@ -648,7 +647,7 @@ The bundle is the pre-business-trial gate for the remaining production-only evid
 
 - AC-15 production admin boundary checks from `AIMANAGER_BUSINESS_BASE_URL`, `AIMANAGER_PUBLIC_ADMIN_URL`, and `AIMANAGER_ALLOWED_SSO_REDIRECT_HOSTS`, including per-probe method/path/status/policy evidence.
 - AC-19 live ycapi `/models` preflight from `YCAPI_BASE_URL` and `YCAPI_API_TOKEN`.
-- AC-08 production virtual-key inventory governance from `AIMANAGER_KEY_INVENTORY_FILE`; the export must declare trusted fresh full-inventory provenance and matching total count, and every active LiteLLM key must be metadata-only, employee/team-bound, model-scoped, budgeted, rate-limited, duration-bound, and governed.
+- AC-08 production virtual-key inventory governance from `AIMANAGER_KEY_INVENTORY_FILE`; use `aimanager.scripts.export_key_inventory` or an equivalent metadata-only full export from the production management surface, then validate that it declares trusted fresh full-inventory provenance and matching total count, and every active LiteLLM key is employee/team-bound, model-scoped, budgeted, rate-limited, duration-bound, and governed.
 - AC-16 live WeCom alert routing from `AIMANAGER_OBSERVABILITY_REPORT_FILE`, `AIMANAGER_WECOM_WEBHOOK_URL`, and `AIMANAGER_WECOM_MIN_SEVERITY`.
 - AC-12/AC-13 finance export and ycapi bill reconciliation from `AIMANAGER_SPEND_FILE`, `AIMANAGER_YCAPI_BILL_FILE`, and `AIMANAGER_FINANCE_OUTPUT_DIR`.
 - AC-POLICY production policy attestation from `AIMANAGER_PRODUCTION_POLICY_ATTESTATION_FILE`; start from `docs/aimanager/production_policy_attestation.example.json` and replace every approval reference with the real finance, security, and legal records for the pilot. Finance, security, and legal must be three distinct approver identities after whitespace/case normalization, and ycapi monthly budget/RPM limits must be finite positive numbers.

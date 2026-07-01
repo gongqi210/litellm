@@ -113,7 +113,10 @@ def test_launch_gap_plan_assigns_key_inventory_gap_to_security_ops(tmp_path) -> 
     assert gap["id"] == "AC-08-KEY-INVENTORY"
     assert gap["owner"] == "security/ops"
     assert gap["required_env"] == ["AIMANAGER_KEY_INVENTORY_FILE"]
+    assert "export_key_inventory" in gap["command"]
     assert "validate_key_inventory" in gap["command"]
+    assert gap["command"].index("export_key_inventory") < gap["command"].index("validate_key_inventory")
+    assert "export_key_inventory" in gap["next_action"]
     assert "virtual key" in gap["next_action"]
     assert "expected_total_key_count" in gap["next_action"]
 
