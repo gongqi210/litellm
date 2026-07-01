@@ -57,9 +57,10 @@ def collect_evidence_template_pack(
         generated_at=generated,
     )
     gaps = _gaps(handoff)
+    bindings = _gap_template_bindings(gaps, output_dir=output_dir)
     files: list[dict[str, object]] = []
 
-    _write_text(output_dir / "README.md", _readme(gaps=gaps, source=launch_gap_plan_file))
+    _write_text(output_dir / "README.md", _readme(gaps=gaps, bindings=bindings, source=launch_gap_plan_file))
     files.append(_file_record(output_dir, output_dir / "README.md", "operator_readme", "all"))
 
     env_file = output_dir / "evidence-env.template"
@@ -83,6 +84,7 @@ def collect_evidence_template_pack(
         "summary": _summary(files=files, gaps=gaps),
         "files": files,
         "gaps": gaps,
+        "gap_template_bindings": bindings,
     }
     result["markdown"] = _manifest_markdown(result)
     sanitized = sanitize_secret_value(result)
@@ -321,7 +323,144 @@ def _env_template(gaps: Sequence[Mapping[str, object]], *, output_dir: Path) -> 
         "# Do not paste raw prompts, raw responses, employee virtual keys, ycapi tokens, cookies, or customer content.",
         "",
     ]
-    file_defaults = {
+    file_defaults = _env_defaults(output_dir)
+    for name in env_names:
+        if name in _TOKEN_ENV_NAMES:
+            lines.append(f"# {name} must be injected by a secret manager or secure shell, not written to this file.")
+            continue
+        value = str(file_defaults.get(name, ""))
+        lines.append(f"export {name}=\"{value}\"")
+    return sanitize_secret_text("\n".join(lines) + "\n")
+
+
+def _readme(*, gaps: Sequence[Mapping[str, object]], bindings: Sequence[Mapping[str, object]], source: Path) -> str:
+    lines = [
+        "# AiManager Evidence Template Pack",
+        "",
+        "These files are templates only. They are not acceptance evidence and must not be submitted unchanged.",
+        "",
+        f"- Source: `{source}`",
+        f"- Open Gaps: {len(gaps)}",
+        "",
+        "Rules:",
+        "",
+        "- Replace every `TEMPLATE_DO_NOT_SUBMIT` and placeholder with real evidence.",
+        "- Do not paste secrets, raw prompts, raw responses, employee keys, ycapi tokens, cookies, or customer content.",
+        "- Re-run `make acceptance-gate` after filling real evidence paths and secure environment values.",
+        "",
+    ]
+    if gaps:
+        lines.extend(["Open gap ids:", ""])
+        lines.extend(f"- {gap.get('id')} ({gap.get('owner')})" for gap in gaps)
+        lines.append("")
+    if bindings:
+        lines.extend(
+            [
+                "Gap template map:",
+                "",
+                "| Gap | Owner | Command | Template Files | Secret Env | Manual Env | Preset Env |",
+                "| --- | --- | --- | --- | --- | --- | --- |",
+            ]
+        )
+        for binding in bindings:
+            lines.append(
+                "| "
+                f"{binding.get('gap_id')} | "
+                f"{binding.get('owner')} | "
+                f"`{binding.get('command')}` | "
+                f"{_format_list(_string_list(binding.get('template_files')))} | "
+                f"{_format_list(_string_list(binding.get('secret_env')))} | "
+                f"{_format_list(_string_list(binding.get('manual_env')))} | "
+                f"{_format_list(_string_list(binding.get('preset_env')))} |"
+            )
+        lines.append("")
+    return sanitize_secret_text("\n".join(lines))
+
+
+def _manifest_markdown(result: Mapping[str, object]) -> str:
+    summary = _mapping(result.get("summary"))
+    lines = [
+        "# AiManager Evidence Template Pack",
+        "",
+        "Template pack only; this is not a PASS artifact.",
+        "",
+        f"- Status: {result.get('status')}",
+        f"- Generated At: {result.get('generated_at')}",
+        f"- Files: {summary.get('templates', 0)}",
+        "",
+        "| Kind | Owner | Path |",
+        "| --- | --- | --- |",
+    ]
+    for item in _mapping_list(result.get("files")):
+        lines.append(f"| {item.get('kind')} | {item.get('owner')} | `{item.get('path')}` |")
+    bindings = _mapping_list(result.get("gap_template_bindings"))
+    if bindings:
+        lines.extend(
+            [
+                "",
+                "## Gap template bindings",
+                "",
+                "| Gap | Owner | Command | Template Files | Secret Env | Manual Env | Preset Env |",
+                "| --- | --- | --- | --- | --- | --- | --- |",
+            ]
+        )
+        for binding in bindings:
+            lines.append(
+                "| "
+                f"{binding.get('gap_id')} | "
+                f"{binding.get('owner')} | "
+                f"`{binding.get('command')}` | "
+                f"{_format_list(_string_list(binding.get('template_files')))} | "
+                f"{_format_list(_string_list(binding.get('secret_env')))} | "
+                f"{_format_list(_string_list(binding.get('manual_env')))} | "
+                f"{_format_list(_string_list(binding.get('preset_env')))} |"
+            )
+    return sanitize_secret_text("\n".join(lines) + "\n")
+
+
+def _gap_template_bindings(
+    gaps: Sequence[Mapping[str, object]], *, output_dir: Path
+) -> list[dict[str, object]]:
+    defaults = _env_defaults(output_dir)
+    bindings: list[dict[str, object]] = []
+    for gap in gaps:
+        required_env = _string_list(gap.get("required_env"))
+        template_files: list[str] = []
+        secret_env: list[str] = []
+        manual_env: list[str] = []
+        preset_env: list[str] = []
+        for env_name in required_env:
+            if env_name in _TOKEN_ENV_NAMES:
+                secret_env.append(env_name)
+                continue
+            value = str(defaults.get(env_name, ""))
+            if not value:
+                manual_env.append(env_name)
+                continue
+            relative_template = _relative_output_path(value, output_dir=output_dir)
+            if relative_template:
+                template_files.append(relative_template)
+            else:
+                preset_env.append(f"{env_name}={value}")
+        bindings.append(
+            {
+                "gap_id": str(gap.get("id") or "UNKNOWN"),
+                "owner": str(gap.get("owner") or "project_owner"),
+                "status": str(gap.get("status") or "FAIL"),
+                "command": str(gap.get("rerun_command") or gap.get("command") or ""),
+                "required_env": required_env,
+                "template_files": _dedupe(template_files),
+                "secret_env": secret_env,
+                "manual_env": manual_env,
+                "preset_env": preset_env,
+                "required_files": _string_list(gap.get("required_files")),
+            }
+        )
+    return bindings
+
+
+def _env_defaults(output_dir: Path) -> Mapping[str, object]:
+    return {
         "AIMANAGER_SPEND_FILE": output_dir / "templates/finance/aimanager-spend.template.csv",
         "AIMANAGER_YCAPI_BILL_FILE": output_dir / "templates/finance/ycapi-bill.template.csv",
         "AIMANAGER_KEY_INVENTORY_FILE": output_dir / "templates/security-ops/key-inventory.template.json",
@@ -349,55 +488,25 @@ def _env_template(gaps: Sequence[Mapping[str, object]], *, output_dir: Path) -> 
         "AIMANAGER_PRODUCTION_POLICY_ATTESTATION_FILE": output_dir
         / "templates/policy/production-policy-attestation.template.json",
     }
-    for name in env_names:
-        if name in _TOKEN_ENV_NAMES:
-            lines.append(f"# {name} must be injected by a secret manager or secure shell, not written to this file.")
+
+
+def _relative_output_path(value: str, *, output_dir: Path) -> str:
+    try:
+        path = Path(value)
+        return str(path.relative_to(output_dir))
+    except ValueError:
+        return ""
+
+
+def _dedupe(values: Sequence[str]) -> list[str]:
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for value in values:
+        if value in seen:
             continue
-        value = str(file_defaults.get(name, ""))
-        lines.append(f"export {name}=\"{value}\"")
-    return sanitize_secret_text("\n".join(lines) + "\n")
-
-
-def _readme(*, gaps: Sequence[Mapping[str, object]], source: Path) -> str:
-    lines = [
-        "# AiManager Evidence Template Pack",
-        "",
-        "These files are templates only. They are not acceptance evidence and must not be submitted unchanged.",
-        "",
-        f"- Source: `{source}`",
-        f"- Open Gaps: {len(gaps)}",
-        "",
-        "Rules:",
-        "",
-        "- Replace every `TEMPLATE_DO_NOT_SUBMIT` and placeholder with real evidence.",
-        "- Do not paste secrets, raw prompts, raw responses, employee keys, ycapi tokens, cookies, or customer content.",
-        "- Re-run `make acceptance-gate` after filling real evidence paths and secure environment values.",
-        "",
-    ]
-    if gaps:
-        lines.extend(["Open gap ids:", ""])
-        lines.extend(f"- {gap.get('id')} ({gap.get('owner')})" for gap in gaps)
-        lines.append("")
-    return sanitize_secret_text("\n".join(lines))
-
-
-def _manifest_markdown(result: Mapping[str, object]) -> str:
-    summary = _mapping(result.get("summary"))
-    lines = [
-        "# AiManager Evidence Template Pack",
-        "",
-        "Template pack only; this is not a PASS artifact.",
-        "",
-        f"- Status: {result.get('status')}",
-        f"- Generated At: {result.get('generated_at')}",
-        f"- Files: {summary.get('templates', 0)}",
-        "",
-        "| Kind | Owner | Path |",
-        "| --- | --- | --- |",
-    ]
-    for item in _mapping_list(result.get("files")):
-        lines.append(f"| {item.get('kind')} | {item.get('owner')} | `{item.get('path')}` |")
-    return sanitize_secret_text("\n".join(lines) + "\n")
+        seen.add(value)
+        deduped.append(value)
+    return deduped
 
 
 def _summary(*, files: Sequence[Mapping[str, object]], gaps: Sequence[Mapping[str, object]]) -> dict[str, int]:
@@ -456,6 +565,10 @@ def _mapping_list(value: object) -> list[Mapping[str, object]]:
 
 def _string_list(value: object) -> list[str]:
     return [str(item) for item in value if str(item)] if isinstance(value, list) else []
+
+
+def _format_list(values: Sequence[str]) -> str:
+    return ", ".join(f"`{value}`" for value in values) if values else "_none_"
 
 
 def _now_iso() -> str:

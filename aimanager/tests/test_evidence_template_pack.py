@@ -31,7 +31,13 @@ def test_evidence_template_pack_writes_safe_templates_without_secret_echo(tmp_pa
                         "AC-08-KEY-INVENTORY",
                         "production_key_inventory_governance",
                         "security/ops",
-                        required_env=["AIMANAGER_KEY_INVENTORY_FILE", "LITELLM_MASTER_KEY"],
+                        required_env=[
+                            "AIMANAGER_KEY_INVENTORY_FILE",
+                            "LITELLM_MASTER_KEY",
+                            "AIMANAGER_EMPLOYEE_MONITORING_POLICY_FILE",
+                            "AIMANAGER_EMPLOYEE_ROSTER_FILE",
+                            "AIMANAGER_EMPLOYEE_ACKNOWLEDGMENT_FILE",
+                        ],
                     ),
                     _gap(
                         "AC-15",
@@ -105,6 +111,24 @@ def test_evidence_template_pack_writes_safe_templates_without_secret_echo(tmp_pa
     )
     assert result["status"] == "BLOCKED"
     assert result["summary"]["templates"] >= 8
+    bindings = {binding["gap_id"]: binding for binding in result["gap_template_bindings"]}
+    key_binding = bindings["AC-08-KEY-INVENTORY"]
+    assert key_binding["command"] == "make acceptance-gate"
+    assert key_binding["secret_env"] == ["LITELLM_MASTER_KEY"]
+    assert key_binding["template_files"] == [
+        "templates/security-ops/key-inventory.template.json",
+        "templates/hr-legal-security/employee-roster.template.csv",
+        "templates/hr-legal-security/employee-acknowledgments.template.csv",
+    ]
+    assert "AIMANAGER_EMPLOYEE_MONITORING_POLICY_FILE=docs/aimanager/aimanager-employee-monitoring-policy.json" in key_binding["preset_env"]
+    finance_binding = bindings["AC-12-13-FINANCE"]
+    assert finance_binding["template_files"] == [
+        "templates/finance/aimanager-spend.template.csv",
+        "templates/finance/ycapi-bill.template.csv",
+    ]
+    live_binding = bindings["AC-19"]
+    assert live_binding["template_files"] == []
+    assert live_binding["secret_env"] == ["YCAPI_API_TOKEN"]
     assert (output_dir / "evidence-env.template").exists()
     assert (output_dir / "templates/security-ops/key-inventory.template.json").exists()
     assert (output_dir / "templates/finance/aimanager-spend.template.csv").exists()
@@ -117,6 +141,15 @@ def test_evidence_template_pack_writes_safe_templates_without_secret_echo(tmp_pa
     assert "TEMPLATE_DO_NOT_SUBMIT" in serialized
     assert "do-not-leak" not in serialized
     assert "[redacted:AIMANAGER_WECOM_WEBHOOK_URL]" in serialized
+    readme = (output_dir / "README.md").read_text(encoding="utf-8")
+    assert "Gap template map:" in readme
+    assert "Preset Env" in readme
+    assert "templates/finance/aimanager-spend.template.csv" in readme
+    assert "AIMANAGER_EMPLOYEE_MONITORING_POLICY_FILE=docs/aimanager/aimanager-employee-monitoring-policy.json" in readme
+    assert "LITELLM_MASTER_KEY" in readme
+    manifest_markdown = (output_dir / "evidence-template-pack.md").read_text(encoding="utf-8")
+    assert "Gap template bindings" in manifest_markdown
+    assert "templates/security-ops/key-inventory.template.json" in manifest_markdown
     env_template = (output_dir / "evidence-env.template").read_text(encoding="utf-8")
     assert "export AIMANAGER_BUSINESS_BASE_URL=\"\"" in env_template
     assert "export AIMANAGER_PUBLIC_ADMIN_URL=\"\"" in env_template

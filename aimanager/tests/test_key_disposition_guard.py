@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import sys
 from types import ModuleType, SimpleNamespace
@@ -362,6 +363,35 @@ def test_default_key_disposition_checker_rejects_active_blocked_key(monkeypatch)
     assert observed_where[0]["token"] != "sk-active-blocked"
 
 
+def test_default_key_disposition_checker_allows_active_unblocked_key(monkeypatch) -> None:
+    observed_active_where: list[dict[str, object]] = []
+    raw_token = "sk-active-unblocked"
+    expected_hashed_token = hashlib.sha256(raw_token.encode()).hexdigest()
+
+    class VerificationTokenTable:
+        async def find_unique(self, *, where):  # type: ignore[no-untyped-def]
+            observed_active_where.append(where)
+            return SimpleNamespace(blocked=False)
+
+    class DeletedVerificationTokenTable:
+        async def find_first(self, *, where):  # type: ignore[no-untyped-def]
+            raise AssertionError("deleted key table should not be queried for active unblocked keys")
+
+    fake_proxy_server = ModuleType("litellm.proxy.proxy_server")
+    fake_proxy_server.prisma_client = SimpleNamespace(
+        db=SimpleNamespace(
+            litellm_verificationtoken=VerificationTokenTable(),
+            litellm_deletedverificationtoken=DeletedVerificationTokenTable(),
+        )
+    )
+    monkeypatch.setitem(sys.modules, "litellm.proxy.proxy_server", fake_proxy_server)
+
+    decision = asyncio.run(_litellm_key_disposition_from_db(raw_token))
+
+    assert decision is None
+    assert observed_active_where == [{"token": expected_hashed_token}]
+
+
 def test_default_key_disposition_checker_rejects_deleted_key(monkeypatch) -> None:
     class VerificationTokenTable:
         async def find_unique(self, *, where):  # type: ignore[no-untyped-def]
@@ -386,6 +416,47 @@ def test_default_key_disposition_checker_rejects_deleted_key(monkeypatch) -> Non
     assert decision.status_code == 401
     assert decision.code == "aimanager_key_revoked"
     assert "revoked" in decision.message.lower()
+
+
+def test_default_key_disposition_checker_defers_unknown_key_to_litellm_auth(monkeypatch) -> None:
+    observed_active_where: list[dict[str, object]] = []
+    observed_deleted_where: list[dict[str, object]] = []
+    raw_token = "sk-unknown-to-disposition-guard"
+    expected_hashed_token = hashlib.sha256(raw_token.encode()).hexdigest()
+
+    class VerificationTokenTable:
+        async def find_unique(self, *, where):  # type: ignore[no-untyped-def]
+            observed_active_where.append(where)
+            return None
+
+    class DeletedVerificationTokenTable:
+        async def find_first(self, *, where):  # type: ignore[no-untyped-def]
+            observed_deleted_where.append(where)
+            return None
+
+    fake_proxy_server = ModuleType("litellm.proxy.proxy_server")
+    fake_proxy_server.prisma_client = SimpleNamespace(
+        db=SimpleNamespace(
+            litellm_verificationtoken=VerificationTokenTable(),
+            litellm_deletedverificationtoken=DeletedVerificationTokenTable(),
+        )
+    )
+    monkeypatch.setitem(sys.modules, "litellm.proxy.proxy_server", fake_proxy_server)
+
+    decision = asyncio.run(_litellm_key_disposition_from_db(raw_token))
+
+    assert decision is None
+    assert observed_active_where == [{"token": expected_hashed_token}]
+    assert observed_deleted_where == [{"token": expected_hashed_token}]
+
+
+def test_default_key_disposition_checker_fails_closed_when_prisma_uninitialized(monkeypatch) -> None:
+    fake_proxy_server = ModuleType("litellm.proxy.proxy_server")
+    fake_proxy_server.prisma_client = SimpleNamespace(db=None)
+    monkeypatch.setitem(sys.modules, "litellm.proxy.proxy_server", fake_proxy_server)
+
+    with pytest.raises(RuntimeError, match="Prisma client is not initialized"):
+        asyncio.run(_litellm_key_disposition_from_db("sk-db-unavailable"))
 
 
 async def _call_asgi(
