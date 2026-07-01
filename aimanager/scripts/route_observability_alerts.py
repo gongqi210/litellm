@@ -36,6 +36,7 @@ METRIC_KEYS = (
     "http_5xx_count",
     "budget_blocked_count",
     "passthrough_blocked_count",
+    "enforced_params_blocked_count",
     "missing_request_id_count",
 )
 
@@ -203,7 +204,9 @@ def validate_observability_report_alerts(report: dict[str, Any]) -> str:
         )
         alerts_match = _canonical_alerts(provided_alerts) == _canonical_alerts(expected_alerts)
     except ValueError as exc:
-        return f"observability report alerts could not be validated: {type(exc).__name__}"
+        detail = str(exc).strip()
+        suffix = f": {detail}" if detail else ""
+        return f"observability report alerts could not be validated: {type(exc).__name__}{suffix}"
     if alerts_match:
         return ""
     return (

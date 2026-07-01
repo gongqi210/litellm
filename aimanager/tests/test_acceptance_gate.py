@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+from aimanager.evidence_template_bindings import EVIDENCE_FILE_ENV_NAMES, evidence_env_defaults
 from aimanager.scripts.acceptance_coverage_matrix import DEFAULT_GATE_REGISTRY
 from aimanager.scripts.business_trial_acceptance_bundle import collect_business_trial_acceptance
 from aimanager.scripts.production_readiness_bundle import collect_production_readiness
@@ -389,6 +390,96 @@ def test_acceptance_gate_passes_safe_env_pointed_evidence_without_validating_gen
     assert intake_step["status"] == "PASS"
     assert intake["summary"] == {"PASS": 1, "FAIL": 0, "BLOCKED": 0, "files": 1}
     assert template_pack["status"] == "PASS"
+
+
+def test_acceptance_gate_evidence_file_env_registry_covers_template_defaults() -> None:
+    file_defaults = {name for name in evidence_env_defaults() if name.endswith("_FILE")}
+
+    assert file_defaults <= set(EVIDENCE_FILE_ENV_NAMES)
+    assert "AIMANAGER_LIGHTWEIGHT_ENTRY_RESULT_FILE" in EVIDENCE_FILE_ENV_NAMES
+    assert "AIMANAGER_EMPLOYEE_MONITORING_RESULT_FILE" in EVIDENCE_FILE_ENV_NAMES
+
+
+def test_acceptance_gate_intakes_lightweight_entry_result_env_file(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifacts"
+    owner_dir = tmp_path / "owner-evidence"
+    owner_dir.mkdir()
+    entry_result = owner_dir / "unsafe-lightweight-entry-result.json"
+    entry_result.write_text(
+        json.dumps(
+            {
+                "status": "PASS",
+                "request": {"raw_prompt": "customer text must not enter evidence intake"},
+                "headers": {"Authorization": "Bearer sk-entry-result-secret"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = collect_acceptance_gate(
+        output_dir=artifact_dir,
+        project_directory=PROJECT_ROOT,
+        acceptance_doc_file=PROJECT_ROOT / "docs/aimanager/1_acceptance_criteria.md",
+        generated_at=GENERATED_AT,
+        env={"AIMANAGER_LIGHTWEIGHT_ENTRY_RESULT_FILE": str(entry_result)},
+        production_readiness_collector=lambda **_: _production_bundle("PASS"),
+        business_trial_collector=lambda **kwargs: _business_bundle(
+            "PASS",
+            production_checks=kwargs["production_readiness_collector"]()["checks"],
+        ),
+        local_test_results_collector=_passing_local_test_results_collector,
+    )
+
+    intake = json.loads((artifact_dir / "evidence-intake.json").read_text(encoding="utf-8"))
+    serialized = json.dumps(result, ensure_ascii=False)
+    for path in (path for path in artifact_dir.rglob("*") if path.is_file()):
+        serialized += path.read_text(encoding="utf-8")
+    assert result["status"] == "FAIL"
+    assert intake["status"] == "FAIL"
+    assert intake["summary"]["files"] == 1
+    assert "sk-entry-result-secret" not in serialized
+    assert "[redacted:secret-like-value]" in serialized
+
+
+def test_acceptance_gate_intakes_employee_monitoring_result_env_file(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifacts"
+    owner_dir = tmp_path / "owner-evidence"
+    owner_dir.mkdir()
+    monitoring_result = owner_dir / "unsafe-employee-monitoring-result.json"
+    monitoring_result.write_text(
+        json.dumps(
+            {
+                "status": "PASS",
+                "raw_response": "employee prompt and response text must not enter evidence intake",
+                "token": "sk-monitoring-result-secret",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = collect_acceptance_gate(
+        output_dir=artifact_dir,
+        project_directory=PROJECT_ROOT,
+        acceptance_doc_file=PROJECT_ROOT / "docs/aimanager/1_acceptance_criteria.md",
+        generated_at=GENERATED_AT,
+        env={"AIMANAGER_EMPLOYEE_MONITORING_RESULT_FILE": str(monitoring_result)},
+        production_readiness_collector=lambda **_: _production_bundle("PASS"),
+        business_trial_collector=lambda **kwargs: _business_bundle(
+            "PASS",
+            production_checks=kwargs["production_readiness_collector"]()["checks"],
+        ),
+        local_test_results_collector=_passing_local_test_results_collector,
+    )
+
+    intake = json.loads((artifact_dir / "evidence-intake.json").read_text(encoding="utf-8"))
+    serialized = json.dumps(result, ensure_ascii=False)
+    for path in (path for path in artifact_dir.rglob("*") if path.is_file()):
+        serialized += path.read_text(encoding="utf-8")
+    assert result["status"] == "FAIL"
+    assert intake["status"] == "FAIL"
+    assert intake["summary"]["files"] == 1
+    assert "sk-monitoring-result-secret" not in serialized
+    assert "[redacted:secret-like-value]" in serialized
 
 
 def test_acceptance_gate_fails_when_mapped_local_acceptance_test_fails(tmp_path: Path) -> None:

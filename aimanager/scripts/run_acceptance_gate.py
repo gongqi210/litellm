@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
+from aimanager.evidence_template_bindings import EVIDENCE_FILE_ENV_NAMES
 from aimanager.redaction import (
     build_secret_redactions,
     sanitize_text as sanitize_secret_text,
@@ -26,17 +27,7 @@ from aimanager.scripts.validate_evidence_intake import validate_evidence_intake
 
 _EXIT_CODES = {"PASS": 0, "FAIL": 1, "BLOCKED": 2}
 _STATUS_ORDER = {"FAIL": 0, "BLOCKED": 1, "PASS": 2}
-_EVIDENCE_FILE_ENV_NAMES = (
-    "AIMANAGER_SPEND_FILE",
-    "AIMANAGER_YCAPI_BILL_FILE",
-    "AIMANAGER_KEY_INVENTORY_FILE",
-    "AIMANAGER_OBSERVABILITY_REPORT_FILE",
-    "AIMANAGER_PRODUCTION_POLICY_ATTESTATION_FILE",
-    "AIMANAGER_LIGHTWEIGHT_TRIAL_EVIDENCE_FILE",
-    "AIMANAGER_EMPLOYEE_MONITORING_POLICY_FILE",
-    "AIMANAGER_EMPLOYEE_ROSTER_FILE",
-    "AIMANAGER_EMPLOYEE_ACKNOWLEDGMENT_FILE",
-)
+_EVIDENCE_FILE_ENV_NAMES = EVIDENCE_FILE_ENV_NAMES
 
 ProductionReadinessCollector = Callable[..., dict[str, Any]]
 BusinessTrialCollector = Callable[..., dict[str, Any]]

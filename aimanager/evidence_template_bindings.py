@@ -4,6 +4,19 @@ from pathlib import Path
 from typing import Mapping, Sequence
 
 TOKEN_ENV_NAMES = frozenset({"LITELLM_MASTER_KEY", "YCAPI_API_TOKEN"})
+EVIDENCE_FILE_ENV_NAMES = (
+    "AIMANAGER_SPEND_FILE",
+    "AIMANAGER_YCAPI_BILL_FILE",
+    "AIMANAGER_KEY_INVENTORY_FILE",
+    "AIMANAGER_OBSERVABILITY_REPORT_FILE",
+    "AIMANAGER_PRODUCTION_POLICY_ATTESTATION_FILE",
+    "AIMANAGER_LIGHTWEIGHT_TRIAL_EVIDENCE_FILE",
+    "AIMANAGER_LIGHTWEIGHT_ENTRY_RESULT_FILE",
+    "AIMANAGER_EMPLOYEE_MONITORING_RESULT_FILE",
+    "AIMANAGER_EMPLOYEE_MONITORING_POLICY_FILE",
+    "AIMANAGER_EMPLOYEE_ROSTER_FILE",
+    "AIMANAGER_EMPLOYEE_ACKNOWLEDGMENT_FILE",
+)
 
 
 def build_gap_template_bindings(
@@ -83,6 +96,7 @@ def evidence_env_defaults(output_dir: Path | None = None) -> Mapping[str, object
         "AIMANAGER_EMPLOYEE_ACKNOWLEDGMENT_FILE": template_path(
             "templates/hr-legal-security/employee-acknowledgments.template.csv"
         ),
+        "AIMANAGER_EMPLOYEE_MONITORING_RESULT_FILE": "/tmp/aimanager-employee-monitoring.json",
         "AIMANAGER_PRODUCTION_POLICY_ATTESTATION_FILE": template_path(
             "templates/policy/production-policy-attestation.template.json"
         ),

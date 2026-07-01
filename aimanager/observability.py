@@ -175,11 +175,16 @@ def derive_observability_alerts(
 def _alert_metric_values(metrics: Mapping[str, Any]) -> dict[str, Any]:
     request_count = _non_negative_int(metrics.get("request_count"), "metrics.request_count")
     failed_requests = _non_negative_int(metrics.get("failed_requests"), "metrics.failed_requests")
+    if failed_requests > request_count:
+        raise ObservabilityReportError("metrics.failed_requests cannot exceed metrics.request_count")
+    computed_failure_rate = _rate(failed_requests, request_count)
     failure_rate_value = metrics.get("failure_rate")
     if failure_rate_value in (None, ""):
-        failure_rate = _rate(failed_requests, request_count)
+        failure_rate = computed_failure_rate
     else:
         failure_rate = _quantize_six(_decimal(failure_rate_value, "metrics.failure_rate"))
+        if failure_rate != computed_failure_rate:
+            raise ObservabilityReportError("metrics.failure_rate must equal failed_requests / request_count")
     return {
         "request_count": request_count,
         "failure_rate": failure_rate,

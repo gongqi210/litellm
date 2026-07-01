@@ -78,6 +78,33 @@ def test_route_observability_alerts_fails_when_alerts_do_not_match_metrics() -> 
     assert "metrics-derived alerts" in result.detail
 
 
+def test_route_observability_alerts_fails_when_failure_rate_disagrees_with_counts() -> None:
+    result = route_observability_alerts(
+        report={
+            "metrics": {
+                "request_count": 100,
+                "failed_requests": 90,
+                "failure_rate": "0.000000",
+                "http_429_count": 0,
+                "http_5xx_count": 0,
+                "budget_blocked_count": 0,
+                "passthrough_blocked_count": 0,
+                "enforced_params_blocked_count": 0,
+                "missing_request_id_count": 0,
+            },
+            "alert_policy": {"failure_rate_alert_threshold": "0.050000"},
+            "alerts": [],
+        },
+        webhook_url="",
+        dry_run=True,
+    )
+
+    assert result.status == "FAIL"
+    assert result.alert_count == 0
+    assert result.delivered_count == 0
+    assert "failure_rate" in result.detail
+
+
 def test_route_observability_alerts_blocks_when_webhook_missing() -> None:
     result = route_observability_alerts(
         report=_report_with_alerts(),
