@@ -7,7 +7,7 @@
     "test_suite": "PYTHONPATH=\"$PWD\" uv run --no-project --with pytest --with pyyaml pytest aimanager/tests -q",
     "production_readiness": "make production-readiness",
     "key_inventory_export": "LITELLM_MASTER_KEY=\"$LITELLM_MASTER_KEY\" PYTHONPATH=\"$PWD\" uv run --no-project python -m aimanager.scripts.export_key_inventory --admin-base-url \"${AIMANAGER_ADMIN_BASE_URL:-http://127.0.0.1:4001}\" --output-inventory-file \"$AIMANAGER_KEY_INVENTORY_FILE\" --output-json-file /tmp/aimanager-key-inventory-export.json",
-    "key_inventory_validation": "PYTHONPATH=\"$PWD\" uv run --no-project python -m aimanager.scripts.validate_key_inventory --inventory-file \"$AIMANAGER_KEY_INVENTORY_FILE\" --output-json-file /tmp/aimanager-key-inventory.json",
+    "key_inventory_validation": "AIMANAGER_EMPLOYEE_MONITORING_POLICY_FILE=\"${AIMANAGER_EMPLOYEE_MONITORING_POLICY_FILE:-docs/aimanager/aimanager-employee-monitoring-policy.json}\" PYTHONPATH=\"$PWD\" uv run --no-project python -m aimanager.scripts.validate_key_inventory --inventory-file \"$AIMANAGER_KEY_INVENTORY_FILE\" --require-acknowledged-employees --output-json-file /tmp/aimanager-key-inventory.json",
     "key_inventory_readiness": "make key-inventory-readiness",
     "admin_boundary_smoke": "AIMANAGER_ALLOWED_SSO_REDIRECT_HOSTS=\"${AIMANAGER_ALLOWED_SSO_REDIRECT_HOSTS:-}\" PYTHONPATH=\"$PWD\" uv run --no-project python -m aimanager.scripts.smoke_admin_boundary --business-base-url \"$AIMANAGER_BUSINESS_BASE_URL\" --public-admin-url \"$AIMANAGER_PUBLIC_ADMIN_URL\" --require-business-base-url --require-public-admin-url",
     "admin_boundary_readiness": "make admin-boundary-readiness",

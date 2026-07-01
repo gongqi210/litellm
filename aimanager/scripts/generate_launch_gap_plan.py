@@ -15,12 +15,19 @@ _STATUS_ORDER = {"FAIL": 0, "BLOCKED": 1, "PASS": 2}
 _GAP_CATALOG: dict[str, dict[str, object]] = {
     "AC-08-KEY-INVENTORY": {
         "owner": "security/ops",
-        "required_env": ["AIMANAGER_KEY_INVENTORY_FILE", "LITELLM_MASTER_KEY"],
+        "required_env": [
+            "AIMANAGER_KEY_INVENTORY_FILE",
+            "LITELLM_MASTER_KEY",
+            "AIMANAGER_EMPLOYEE_MONITORING_POLICY_FILE",
+            "AIMANAGER_EMPLOYEE_ROSTER_FILE",
+            "AIMANAGER_EMPLOYEE_ACKNOWLEDGMENT_FILE",
+        ],
         "command": "make key-inventory-readiness",
         "next_action": (
             "用 export_key_inventory 导出 24 小时内的生产 LiteLLM virtual key metadata-only 全量 inventory，并提供 exported_at、export_source、"
             "export_scope=all_virtual_keys、exported_by、expected_total_key_count；确认所有 active key 都有员工/团队、"
-            "模型、预算、限流、duration 和治理 metadata；shared virtual key 必须带 enforced_params。"
+            "模型、预算、限流、duration 和治理 metadata；shared virtual key 必须带 enforced_params；"
+            "同时用员工名册和最新监控制度确认导出交叉验证 key user_id 属于 active employee 且已完成确认。"
         ),
     },
     "AC-15": {

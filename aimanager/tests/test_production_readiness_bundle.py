@@ -242,6 +242,51 @@ def test_production_readiness_passes_with_governed_key_inventory(tmp_path) -> No
     inventory_file = tmp_path / "key-inventory.json"
     policy_file = tmp_path / "production-policy.json"
     report_file = tmp_path / "observability.json"
+    employee_policy_file, roster_file, acknowledgment_file = _employee_acknowledgment_files(tmp_path)
+    inventory_file.write_text(json.dumps(_valid_key_inventory()), encoding="utf-8")
+    policy_file.write_text(json.dumps(_valid_policy_attestation()), encoding="utf-8")
+    report_file.write_text(json.dumps(_observability_report_with_alert()), encoding="utf-8")
+
+    bundle = collect_production_readiness(
+        generated_at=GENERATED_AT,
+        env={
+            "AIMANAGER_KEY_INVENTORY_FILE": str(inventory_file),
+            "AIMANAGER_PRODUCTION_POLICY_ATTESTATION_FILE": str(policy_file),
+            "AIMANAGER_OBSERVABILITY_REPORT_FILE": str(report_file),
+            "AIMANAGER_WECOM_WEBHOOK_URL": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=redaction",
+            "AIMANAGER_EMPLOYEE_MONITORING_POLICY_FILE": str(employee_policy_file),
+            "AIMANAGER_EMPLOYEE_ROSTER_FILE": str(roster_file),
+            "AIMANAGER_EMPLOYEE_ACKNOWLEDGMENT_FILE": str(acknowledgment_file),
+            **_work_context_env(),
+        },
+        admin_boundary_runner=lambda **kwargs: [
+            _script_result(status="PASS", detail="business/admin edge checks passed")
+        ],
+        live_ycapi_runner=lambda **kwargs: _script_result(status="PASS", detail="ycapi /models returned 3 models"),
+        wecom_router=lambda **kwargs: _script_result(status="PASS", detail="sent 1 alert to WeCom webhook"),
+        finance_runner=lambda **kwargs: CheckResult(
+            id="AC-12-13-FINANCE",
+            name="finance_export_reconciliation",
+            status="PASS",
+            detail="finance files exported",
+            evidence={"output_files": ["aimanager_usage_daily.csv"]},
+        ),
+        work_context_runner=lambda **kwargs: _passing_work_context_results(),
+    )
+
+    key_inventory = next(check for check in bundle["checks"] if check["id"] == "AC-08-KEY-INVENTORY")
+    assert bundle["status"] == "PASS"
+    assert key_inventory["status"] == "PASS"
+    assert key_inventory["evidence"]["active_key_count"] == 1
+    assert key_inventory["evidence"]["violation_count"] == 0
+    assert key_inventory["evidence"]["export_scope"] == "all_virtual_keys"
+    assert key_inventory["evidence"]["employee_acknowledgment"]["acknowledged_employee_count"] == 2
+
+
+def test_production_readiness_blocks_key_inventory_without_employee_acknowledgment_evidence(tmp_path) -> None:
+    inventory_file = tmp_path / "key-inventory.json"
+    policy_file = tmp_path / "production-policy.json"
+    report_file = tmp_path / "observability.json"
     inventory_file.write_text(json.dumps(_valid_key_inventory()), encoding="utf-8")
     policy_file.write_text(json.dumps(_valid_policy_attestation()), encoding="utf-8")
     report_file.write_text(json.dumps(_observability_report_with_alert()), encoding="utf-8")
@@ -271,11 +316,10 @@ def test_production_readiness_passes_with_governed_key_inventory(tmp_path) -> No
     )
 
     key_inventory = next(check for check in bundle["checks"] if check["id"] == "AC-08-KEY-INVENTORY")
-    assert bundle["status"] == "PASS"
-    assert key_inventory["status"] == "PASS"
-    assert key_inventory["evidence"]["active_key_count"] == 1
-    assert key_inventory["evidence"]["violation_count"] == 0
-    assert key_inventory["evidence"]["export_scope"] == "all_virtual_keys"
+    assert bundle["status"] == "BLOCKED"
+    assert key_inventory["status"] == "BLOCKED"
+    assert "employee roster and acknowledgment evidence" in key_inventory["detail"]
+    assert "AIMANAGER_EMPLOYEE_ACKNOWLEDGMENT_FILE" in key_inventory["evidence"]["required_env"]
 
 
 def test_production_readiness_overall_status_prioritizes_fail_over_blocked() -> None:
@@ -589,6 +633,7 @@ def test_production_policy_attestation_passes_with_required_manual_checks(tmp_pa
     policy_file = tmp_path / "production_policy_attestation.json"
     report_file = tmp_path / "observability.json"
     inventory_file = tmp_path / "key-inventory.json"
+    employee_policy_file, roster_file, acknowledgment_file = _employee_acknowledgment_files(tmp_path)
     policy_file.write_text(json.dumps(_valid_policy_attestation()), encoding="utf-8")
     report_file.write_text(json.dumps(_observability_report_with_alert()), encoding="utf-8")
     inventory_file.write_text(json.dumps(_valid_key_inventory()), encoding="utf-8")
@@ -600,6 +645,9 @@ def test_production_policy_attestation_passes_with_required_manual_checks(tmp_pa
             "AIMANAGER_PRODUCTION_POLICY_ATTESTATION_FILE": str(policy_file),
             "AIMANAGER_OBSERVABILITY_REPORT_FILE": str(report_file),
             "AIMANAGER_WECOM_WEBHOOK_URL": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=redaction",
+            "AIMANAGER_EMPLOYEE_MONITORING_POLICY_FILE": str(employee_policy_file),
+            "AIMANAGER_EMPLOYEE_ROSTER_FILE": str(roster_file),
+            "AIMANAGER_EMPLOYEE_ACKNOWLEDGMENT_FILE": str(acknowledgment_file),
             **_work_context_env(),
         },
         admin_boundary_runner=lambda **kwargs: [
@@ -1031,7 +1079,7 @@ def _valid_key_inventory() -> dict[str, object]:
             {
                 "key_alias": "market-campaign-key",
                 "blocked": False,
-                "user_id": "employee-1",
+                "user_id": "u_market_1",
                 "team_id": "team-marketing",
                 "models": ["gemini-2.5-flash"],
                 "max_budget": 100,
@@ -1040,7 +1088,7 @@ def _valid_key_inventory() -> dict[str, object]:
                 "duration": "30d",
                 "metadata": {
                     "owner": "alice",
-                    "department_id": "dept_marketing",
+                    "department_id": "dept_market",
                     "project_id": "proj_launch",
                     "cost_center_id": "cc_growth",
                     "scenario_l1": "marketing",
@@ -1051,6 +1099,115 @@ def _valid_key_inventory() -> dict[str, object]:
             }
         ],
     }
+
+
+def _employee_acknowledgment_files(tmp_path) -> tuple:
+    policy_file = tmp_path / "employee-monitoring-policy.json"
+    roster_file = tmp_path / "employee-roster.json"
+    acknowledgment_file = tmp_path / "employee-acknowledgments.json"
+    policy_file.write_text(
+        json.dumps(
+            {
+                "policy_id": "aimanager-employee-monitoring-v1",
+                "version": "2026-06",
+                "title": "AiManager employee monitoring notice and permission boundary",
+                "published_at": "2026-06-30",
+                "effective_at": "2026-07-01",
+                "owner": "ai-platform",
+                "notice_url": "https://intranet.internal/policies/aimanager-employee-monitoring-v1",
+                "notice_channels": ["wecom", "employee-handbook"],
+                "monitored_metadata_fields": [
+                    "request_id",
+                    "timestamp",
+                    "employee_id",
+                    "department_id",
+                    "key_alias",
+                    "scenario_l1",
+                    "cost_center_id",
+                    "spend",
+                    "ip_hash",
+                    "user_agent_hash",
+                ],
+                "prohibited_monitoring_fields": [
+                    "prompt_text",
+                    "response_text",
+                    "raw_ip",
+                    "raw_user_agent",
+                    "customer_content",
+                ],
+                "retention_days": 90,
+                "rules": [
+                    {
+                        "rule_id": "off-hours-usage-v1",
+                        "type": "off_hours_usage",
+                        "enabled": True,
+                        "severity": "warning",
+                        "timezone": "Asia/Shanghai",
+                        "workday_start": "09:00",
+                        "workday_end": "18:30",
+                        "threshold_request_count": 20,
+                        "threshold_spend": "50",
+                        "lookback_hours": 24,
+                        "requires_exception_ticket": True,
+                    },
+                    {
+                        "rule_id": "key-sharing-v1",
+                        "type": "key_sharing",
+                        "enabled": True,
+                        "severity": "high",
+                        "lookback_hours": 24,
+                        "distinct_ip_hash_threshold": 3,
+                        "distinct_user_agent_hash_threshold": 3,
+                        "requires_disposition": True,
+                    },
+                ],
+                "permission_boundary": {
+                    "allowed_review_roles": ["ai_platform_admin", "security", "audit", "hr", "legal"],
+                    "prohibited_roles": ["direct_manager"],
+                    "raw_prompt_access": "prohibited",
+                    "customer_content_access": "prohibited",
+                    "requires_hr_or_legal_for_disciplinary_action": True,
+                    "employee_appeal_channel": "wecom://ai-compliance-helpdesk",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    roster_file.write_text(
+        json.dumps(
+            [
+                {"employee_id": "u_market_1", "department_id": "dept_market", "status": "active"},
+                {"employee_id": "u_sales_1", "department_id": "dept_sales", "status": "active"},
+            ]
+        ),
+        encoding="utf-8",
+    )
+    acknowledgment_file.write_text(
+        json.dumps(
+            [
+                {
+                    "employee_id": "u_market_1",
+                    "notice_version": "2026-06",
+                    "acknowledged_at": "2026-06-30T10:00:00+08:00",
+                    "understood_purpose": "true",
+                    "understood_scope": "true",
+                    "understood_appeal": "true",
+                    "understood_no_raw_content": "true",
+                },
+                {
+                    "employee_id": "u_sales_1",
+                    "notice_version": "2026-06",
+                    "acknowledged_at": "2026-06-30T10:05:00+08:00",
+                    "understood_purpose": "true",
+                    "understood_scope": "true",
+                    "understood_appeal": "true",
+                    "understood_no_raw_content": "true",
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return policy_file, roster_file, acknowledgment_file
 
 
 def test_module_exports_main() -> None:

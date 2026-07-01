@@ -241,7 +241,11 @@ def _live_ycapi_check(env: Mapping[str, str], *, live_ycapi_runner: LiveYcapiRun
 
 def _key_inventory_check(env: Mapping[str, str], *, generated_at: str | None) -> CheckResult:
     try:
-        result = collect_key_inventory_validation(env=env, generated_at=generated_at)
+        result = collect_key_inventory_validation(
+            env=env,
+            generated_at=generated_at,
+            require_acknowledged_employees=True,
+        )
     except Exception as exc:
         return CheckResult(
             id="AC-08-KEY-INVENTORY",
@@ -267,6 +271,9 @@ def _key_inventory_check(env: Mapping[str, str], *, generated_at: str | None) ->
         for field_name in ("exported_at", "export_source", "export_scope", "exported_by", "expected_total_key_count"):
             if field_name in export_metadata:
                 evidence[field_name] = export_metadata[field_name]
+    employee_acknowledgment = result.get("employee_acknowledgment")
+    if isinstance(employee_acknowledgment, dict):
+        evidence["employee_acknowledgment"] = dict(employee_acknowledgment)
     return CheckResult(
         id="AC-08-KEY-INVENTORY",
         name="production_key_inventory_governance",

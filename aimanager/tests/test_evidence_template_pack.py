@@ -164,6 +164,7 @@ def test_generated_templates_cannot_satisfy_production_readiness(tmp_path) -> No
                     _gap("AC-08-KEY-INVENTORY", "key-inventory", "security/ops"),
                     _gap("AC-12-13-FINANCE", "finance", "finance"),
                     _gap("AC-POLICY", "policy", "general_manager/finance/security/legal"),
+                    _gap("AC-26", "employee-monitoring", "HR/legal/security"),
                 ],
             }
         ),
@@ -178,6 +179,13 @@ def test_generated_templates_cannot_satisfy_production_readiness(tmp_path) -> No
             "AIMANAGER_YCAPI_BILL_FILE": str(output_dir / "templates/finance/ycapi-bill.template.csv"),
             "AIMANAGER_PRODUCTION_POLICY_ATTESTATION_FILE": str(
                 output_dir / "templates/policy/production-policy-attestation.template.json"
+            ),
+            "AIMANAGER_EMPLOYEE_MONITORING_POLICY_FILE": "docs/aimanager/aimanager-employee-monitoring-policy.json",
+            "AIMANAGER_EMPLOYEE_ROSTER_FILE": str(
+                output_dir / "templates/hr-legal-security/employee-roster.template.csv"
+            ),
+            "AIMANAGER_EMPLOYEE_ACKNOWLEDGMENT_FILE": str(
+                output_dir / "templates/hr-legal-security/employee-acknowledgments.template.csv"
             ),
         }
     )

@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import math
 import os
 import sys
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal, Mapping, Sequence
 
+from aimanager.employee_monitoring import validate_employee_monitoring_controls
 from aimanager.governance import REQUIRED_METADATA_FIELDS, SHARED_KEY_ENFORCED_PARAMS
 from aimanager.redaction import (
     SECRET_LIKE_REDACTION,
@@ -37,17 +40,63 @@ _REQUIRED_EXPORT_METADATA_FIELDS = (
 _EXPECTED_EXPORT_SCOPE = "all_virtual_keys"
 _MAX_EXPORT_AGE = timedelta(hours=24)
 _MAX_EXPORT_FUTURE_SKEW = timedelta(minutes=5)
+_EMPLOYEE_ACKNOWLEDGMENT_ENV = (
+    "AIMANAGER_EMPLOYEE_MONITORING_POLICY_FILE",
+    "AIMANAGER_EMPLOYEE_ROSTER_FILE",
+    "AIMANAGER_EMPLOYEE_ACKNOWLEDGMENT_FILE",
+)
+_REQUIRED_ACK_FLAGS = (
+    "understood_purpose",
+    "understood_scope",
+    "understood_appeal",
+    "understood_no_raw_content",
+)
+
+
+@dataclass(frozen=True)
+class _EmployeeAcknowledgmentContext:
+    policy_id: str
+    policy_version: str
+    active_employee_departments: Mapping[str, str]
+    acknowledged_employee_ids: frozenset[str]
+    missing_acknowledgment_count: int
+
+    def evidence(self) -> dict[str, object]:
+        return {
+            "policy_id": self.policy_id,
+            "policy_version": self.policy_version,
+            "active_employee_count": len(self.active_employee_departments),
+            "acknowledged_employee_count": len(self.acknowledged_employee_ids),
+            "missing_acknowledgment_count": self.missing_acknowledgment_count,
+        }
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Validate AiManager LiteLLM virtual key inventory governance.")
     parser.add_argument("--inventory-file", help="JSON object with keys[] exported from LiteLLM key inventory.")
+    parser.add_argument("--employee-monitoring-policy-file", help="JSON employee monitoring policy for roster cross-check.")
+    parser.add_argument("--employee-roster-file", help="CSV or JSON active employee roster for key ownership cross-check.")
+    parser.add_argument("--acknowledgment-file", help="CSV or JSON employee notice acknowledgments for key ownership cross-check.")
+    parser.add_argument(
+        "--require-acknowledged-employees",
+        action="store_true",
+        help="Require every active key user_id to be in the active roster and have acknowledged the monitoring policy.",
+    )
     parser.add_argument("--output-json-file", help="Optional destination JSON result.")
     parser.add_argument("--generated-at", help="Override generated_at timestamp for deterministic tests.")
     args = parser.parse_args(argv)
 
     inventory_path = Path(args.inventory_file) if args.inventory_file else None
-    result = collect_key_inventory_validation(inventory_file=inventory_path, generated_at=args.generated_at)
+    result = collect_key_inventory_validation(
+        inventory_file=inventory_path,
+        employee_monitoring_policy_file=Path(args.employee_monitoring_policy_file)
+        if args.employee_monitoring_policy_file
+        else None,
+        employee_roster_file=Path(args.employee_roster_file) if args.employee_roster_file else None,
+        acknowledgment_file=Path(args.acknowledgment_file) if args.acknowledgment_file else None,
+        require_acknowledged_employees=args.require_acknowledged_employees,
+        generated_at=args.generated_at,
+    )
     if args.output_json_file:
         try:
             output_path = Path(args.output_json_file)
@@ -69,6 +118,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 def collect_key_inventory_validation(
     *,
     inventory_file: Path | None = None,
+    employee_monitoring_policy_file: Path | None = None,
+    employee_roster_file: Path | None = None,
+    acknowledgment_file: Path | None = None,
+    require_acknowledged_employees: bool = False,
     env: Mapping[str, str] | None = None,
     generated_at: str | None = None,
 ) -> dict[str, object]:
@@ -150,6 +203,29 @@ def collect_key_inventory_validation(
             violations=export_metadata_violations,
         )
 
+    employee_context: _EmployeeAcknowledgmentContext | None = None
+    employee_check = _employee_acknowledgment_context(
+        policy_file=employee_monitoring_policy_file
+        or _env_path(current_env, "AIMANAGER_EMPLOYEE_MONITORING_POLICY_FILE"),
+        roster_file=employee_roster_file or _env_path(current_env, "AIMANAGER_EMPLOYEE_ROSTER_FILE"),
+        acknowledgment_file=acknowledgment_file or _env_path(current_env, "AIMANAGER_EMPLOYEE_ACKNOWLEDGMENT_FILE"),
+        require=require_acknowledged_employees,
+    )
+    if employee_check["status"] != "SKIP":
+        if employee_check["status"] != "PASS":
+            return _result(
+                status=employee_check["status"],  # type: ignore[arg-type]
+                detail=str(employee_check["detail"]),
+                generated_at=generated_at,
+                total_key_count=len(keys),
+                violations=employee_check.get("violations"),  # type: ignore[arg-type]
+                required_env=employee_check.get("required_env"),  # type: ignore[arg-type]
+                employee_acknowledgment=employee_check.get("employee_acknowledgment"),  # type: ignore[arg-type]
+            )
+        context = employee_check.get("context")
+        if isinstance(context, _EmployeeAcknowledgmentContext):
+            employee_context = context
+
     violations: list[dict[str, object]] = []
     active_key_count = 0
     blocked_key_count = 0
@@ -161,7 +237,7 @@ def collect_key_inventory_validation(
             blocked_key_count += 1
             continue
         active_key_count += 1
-        violations.extend(_active_key_violations(key, index=index))
+        violations.extend(_active_key_violations(key, index=index, employee_context=employee_context))
 
     if not violations and active_key_count == 0:
         return _result(
@@ -188,10 +264,16 @@ def collect_key_inventory_validation(
         blocked_key_count=blocked_key_count,
         violations=violations,
         export_metadata=_export_metadata_evidence(payload),
+        employee_acknowledgment=employee_context.evidence() if employee_context is not None else None,
     )
 
 
-def _active_key_violations(key: Mapping[str, Any], *, index: int) -> list[dict[str, object]]:
+def _active_key_violations(
+    key: Mapping[str, Any],
+    *,
+    index: int,
+    employee_context: _EmployeeAcknowledgmentContext | None = None,
+) -> list[dict[str, object]]:
     violations: list[dict[str, object]] = []
     missing_fields: list[str] = []
     for field_name in _REQUIRED_ACTIVE_KEY_FIELDS:
@@ -241,6 +323,50 @@ def _active_key_violations(key: Mapping[str, Any], *, index: int) -> list[dict[s
                     "fields": [f"metadata.enforced_params.{param}" for param in missing_enforced_params],
                 }
             )
+    if employee_context is not None:
+        violations.extend(_employee_ownership_violations(key, metadata=metadata, index=index, context=employee_context))
+    return violations
+
+
+def _employee_ownership_violations(
+    key: Mapping[str, Any],
+    *,
+    metadata: Mapping[str, Any],
+    index: int,
+    context: _EmployeeAcknowledgmentContext,
+) -> list[dict[str, object]]:
+    user_id = _text_value(key.get("user_id"))
+    if not user_id:
+        return []
+    key_ref = _key_ref(key, index=index)
+    expected_department = context.active_employee_departments.get(user_id)
+    if expected_department is None:
+        return [
+            {
+                "key_ref": key_ref,
+                "reason": "active key user_id is not in active employee roster",
+                "fields": ["user_id"],
+            }
+        ]
+
+    violations: list[dict[str, object]] = []
+    if user_id not in context.acknowledged_employee_ids:
+        violations.append(
+            {
+                "key_ref": key_ref,
+                "reason": "active key user_id has not acknowledged employee monitoring policy",
+                "fields": ["user_id"],
+            }
+        )
+    key_department = _text_value(metadata.get("department_id"))
+    if key_department and key_department != expected_department:
+        violations.append(
+            {
+                "key_ref": key_ref,
+                "reason": "active key department_id does not match employee roster",
+                "fields": ["metadata.department_id"],
+            }
+        )
     return violations
 
 
@@ -257,6 +383,7 @@ def _result(
     required_fields: Sequence[str] | None = None,
     raw_preview: str | None = None,
     export_metadata: Mapping[str, object] | None = None,
+    employee_acknowledgment: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     violation_list = [dict(item) for item in violations or ()]
     result: dict[str, object] = {
@@ -279,7 +406,161 @@ def _result(
         result["raw_preview"] = raw_preview
     if export_metadata:
         result["export_metadata"] = dict(export_metadata)
+    if employee_acknowledgment:
+        result["employee_acknowledgment"] = dict(employee_acknowledgment)
     return sanitize_secret_value(result)
+
+
+def _employee_acknowledgment_context(
+    *,
+    policy_file: Path | None,
+    roster_file: Path | None,
+    acknowledgment_file: Path | None,
+    require: bool,
+) -> dict[str, object]:
+    selected_files = (policy_file, roster_file, acknowledgment_file)
+    if not require and not any(selected_files):
+        return {"status": "SKIP", "detail": "employee acknowledgment cross-check not requested"}
+    missing_env = [
+        env_name
+        for env_name, selected_file in zip(_EMPLOYEE_ACKNOWLEDGMENT_ENV, selected_files, strict=True)
+        if selected_file is None or not str(selected_file).strip()
+    ]
+    if missing_env:
+        return {
+            "status": "BLOCKED",
+            "detail": "missing employee roster and acknowledgment evidence for key ownership cross-check",
+            "required_env": list(_EMPLOYEE_ACKNOWLEDGMENT_ENV),
+        }
+    assert policy_file is not None
+    assert roster_file is not None
+    assert acknowledgment_file is not None
+
+    try:
+        policy = _load_json_object(policy_file)
+        roster = _load_records(roster_file)
+        acknowledgments = _load_records(acknowledgment_file)
+    except FileNotFoundError as exc:
+        return {
+            "status": "BLOCKED",
+            "detail": f"employee acknowledgment evidence file does not exist: {exc.filename}",
+            "required_env": list(_EMPLOYEE_ACKNOWLEDGMENT_ENV),
+        }
+    except Exception as exc:
+        return {
+            "status": "FAIL",
+            "detail": f"employee acknowledgment evidence could not be loaded: {type(exc).__name__}",
+            "violations": [
+                {
+                    "key_ref": "employee_acknowledgment",
+                    "reason": "employee acknowledgment evidence could not be loaded",
+                    "fields": [type(exc).__name__],
+                }
+            ],
+        }
+
+    monitoring_result = validate_employee_monitoring_controls(
+        policy=policy,
+        employee_roster=roster,
+        acknowledgments=acknowledgments,
+    )
+    monitoring_status = str(monitoring_result.get("status"))
+    monitoring_summary = _mapping(monitoring_result.get("summary"))
+    employee_acknowledgment = {
+        "policy_id": str(monitoring_result.get("policy_id") or ""),
+        "policy_version": str(monitoring_result.get("policy_version") or ""),
+        "active_employee_count": monitoring_summary.get("active_employee_count", 0),
+        "acknowledged_employee_count": monitoring_summary.get("acknowledged_employee_count", 0),
+        "missing_acknowledgment_count": monitoring_summary.get("missing_acknowledgment_count", 0),
+    }
+    monitoring_errors = {str(error) for error in monitoring_result.get("errors") or []}
+    if monitoring_status != "PASS" and (monitoring_errors - {"acknowledgments.latest_notice"}):
+        return {
+            "status": _coerce_status(monitoring_status),
+            "detail": (
+                "employee monitoring evidence must PASS before key inventory can prove employee ownership: "
+                f"{monitoring_result.get('detail')}"
+            ),
+            "employee_acknowledgment": employee_acknowledgment,
+            "violations": [
+                {
+                    "key_ref": "employee_acknowledgment",
+                    "reason": "employee monitoring evidence did not pass",
+                    "fields": list(monitoring_result.get("errors") or []),
+                }
+            ],
+        }
+
+    active_departments = _active_employee_departments(roster)
+    acknowledged_ids = _acknowledged_employee_ids(
+        acknowledgments=acknowledgments,
+        policy_version=str(policy.get("version") or "").strip(),
+        published_at=_parse_datetime(policy.get("published_at")),
+    )
+    context = _EmployeeAcknowledgmentContext(
+        policy_id=str(monitoring_result.get("policy_id") or ""),
+        policy_version=str(monitoring_result.get("policy_version") or ""),
+        active_employee_departments=active_departments,
+        acknowledged_employee_ids=frozenset(acknowledged_ids),
+        missing_acknowledgment_count=int(employee_acknowledgment["missing_acknowledgment_count"]),
+    )
+    return {
+        "status": "PASS",
+        "detail": "employee acknowledgment evidence passed",
+        "employee_acknowledgment": context.evidence(),
+        "context": context,
+    }
+
+
+def _load_json_object(path: Path) -> dict[str, Any]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"{path} must contain a JSON object")
+    return payload
+
+
+def _load_records(path: Path) -> list[dict[str, Any]]:
+    suffix = path.suffix.lower()
+    if suffix == ".json":
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, list):
+            raise ValueError(f"{path} must contain a JSON array")
+        return [dict(item) for item in payload if isinstance(item, dict)]
+    if suffix == ".csv":
+        with path.open(encoding="utf-8", newline="") as handle:
+            return [dict(row) for row in csv.DictReader(handle)]
+    raise ValueError(f"unsupported file type for {path}; expected .json or .csv")
+
+
+def _active_employee_departments(rows: Sequence[Mapping[str, Any]]) -> dict[str, str]:
+    departments: dict[str, str] = {}
+    for row in rows:
+        if _text_value(row.get("status") or "active").lower() != "active":
+            continue
+        employee_id = _text_value(row.get("employee_id"))
+        department_id = _text_value(row.get("department_id"))
+        if employee_id and department_id:
+            departments[employee_id] = department_id
+    return departments
+
+
+def _acknowledged_employee_ids(
+    *,
+    acknowledgments: Sequence[Mapping[str, Any]],
+    policy_version: str,
+    published_at: datetime | None,
+) -> set[str]:
+    acknowledged: set[str] = set()
+    for row in acknowledgments:
+        employee_id = _text_value(row.get("employee_id"))
+        if not employee_id or _text_value(row.get("notice_version")) != policy_version:
+            continue
+        acknowledged_at = _parse_datetime(row.get("acknowledged_at"))
+        if published_at is not None and (acknowledged_at is None or _is_before(acknowledged_at, published_at)):
+            continue
+        if all(_truthy(row.get(field_name)) for field_name in _REQUIRED_ACK_FLAGS):
+            acknowledged.add(employee_id)
+    return acknowledged
 
 
 def _extract_keys(payload: Mapping[str, Any]) -> list[Any] | None:
@@ -404,6 +685,32 @@ def _env_path(env: Mapping[str, str], name: str) -> Path | None:
     value = env.get(name, "")
     value = value.strip() if isinstance(value, str) else ""
     return Path(value) if value else None
+
+
+def _mapping(value: Any) -> Mapping[str, Any]:
+    return value if isinstance(value, Mapping) else {}
+
+
+def _coerce_status(value: Any) -> Status:
+    return value if value in {"PASS", "FAIL", "BLOCKED"} else "FAIL"
+
+
+def _text_value(value: Any) -> str:
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _is_before(left: datetime, right: datetime) -> bool:
+    if (left.tzinfo is None) != (right.tzinfo is None):
+        return left.replace(tzinfo=None) < right.replace(tzinfo=None)
+    return left < right
+
+
+def _truthy(value: Any) -> bool:
+    if value is True:
+        return True
+    if isinstance(value, str):
+        return value.strip().lower() in {"true", "1", "yes", "y", "acknowledged"}
+    return False
 
 
 def _is_blocked_key(key: Mapping[str, Any]) -> bool:

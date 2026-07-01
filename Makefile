@@ -79,8 +79,8 @@ key-inventory-export:
 
 key-inventory-readiness:
 	AIMANAGER_KEY_INVENTORY_FILE="$${AIMANAGER_KEY_INVENTORY_FILE:-/tmp/aimanager-key-inventory.json}" $(MAKE) key-inventory-export
-	AIMANAGER_KEY_INVENTORY_FILE="$${AIMANAGER_KEY_INVENTORY_FILE:-/tmp/aimanager-key-inventory.json}" PYTHONPATH="$$(pwd)" uv run --no-project python -m aimanager.scripts.validate_key_inventory --inventory-file "$${AIMANAGER_KEY_INVENTORY_FILE:-/tmp/aimanager-key-inventory.json}" --output-json-file "$${AIMANAGER_KEY_INVENTORY_VALIDATION_RESULT_FILE:-/tmp/aimanager-key-inventory-validation.json}"
-	AIMANAGER_KEY_INVENTORY_FILE="$${AIMANAGER_KEY_INVENTORY_FILE:-/tmp/aimanager-key-inventory.json}" $(MAKE) production-readiness
+	AIMANAGER_KEY_INVENTORY_FILE="$${AIMANAGER_KEY_INVENTORY_FILE:-/tmp/aimanager-key-inventory.json}" AIMANAGER_EMPLOYEE_MONITORING_POLICY_FILE="$${AIMANAGER_EMPLOYEE_MONITORING_POLICY_FILE:-docs/aimanager/aimanager-employee-monitoring-policy.json}" PYTHONPATH="$$(pwd)" uv run --no-project python -m aimanager.scripts.validate_key_inventory --inventory-file "$${AIMANAGER_KEY_INVENTORY_FILE:-/tmp/aimanager-key-inventory.json}" --require-acknowledged-employees --output-json-file "$${AIMANAGER_KEY_INVENTORY_VALIDATION_RESULT_FILE:-/tmp/aimanager-key-inventory-validation.json}"
+	AIMANAGER_KEY_INVENTORY_FILE="$${AIMANAGER_KEY_INVENTORY_FILE:-/tmp/aimanager-key-inventory.json}" AIMANAGER_EMPLOYEE_MONITORING_POLICY_FILE="$${AIMANAGER_EMPLOYEE_MONITORING_POLICY_FILE:-docs/aimanager/aimanager-employee-monitoring-policy.json}" $(MAKE) production-readiness
 
 admin-boundary-smoke:
 	AIMANAGER_ALLOWED_SSO_REDIRECT_HOSTS="$${AIMANAGER_ALLOWED_SSO_REDIRECT_HOSTS:-}" PYTHONPATH="$$(pwd)" uv run --no-project python -m aimanager.scripts.smoke_admin_boundary --business-base-url "$${AIMANAGER_BUSINESS_BASE_URL}" --public-admin-url "$${AIMANAGER_PUBLIC_ADMIN_URL}" --require-business-base-url --require-public-admin-url

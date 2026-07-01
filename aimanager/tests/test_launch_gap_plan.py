@@ -116,12 +116,19 @@ def test_launch_gap_plan_assigns_key_inventory_gap_to_security_ops(tmp_path) -> 
     gap = result["gaps"][0]
     assert gap["id"] == "AC-08-KEY-INVENTORY"
     assert gap["owner"] == "security/ops"
-    assert gap["required_env"] == ["AIMANAGER_KEY_INVENTORY_FILE", "LITELLM_MASTER_KEY"]
+    assert gap["required_env"] == [
+        "AIMANAGER_KEY_INVENTORY_FILE",
+        "LITELLM_MASTER_KEY",
+        "AIMANAGER_EMPLOYEE_MONITORING_POLICY_FILE",
+        "AIMANAGER_EMPLOYEE_ROSTER_FILE",
+        "AIMANAGER_EMPLOYEE_ACKNOWLEDGMENT_FILE",
+    ]
     assert gap["command"] == "make key-inventory-readiness"
     assert "<" not in gap["command"]
     assert "export_key_inventory" in gap["next_action"]
     assert "virtual key" in gap["next_action"]
     assert "expected_total_key_count" in gap["next_action"]
+    assert "active employee" in gap["next_action"]
 
 
 def test_launch_gap_plan_assigns_finance_gap_to_export_before_readiness(tmp_path) -> None:

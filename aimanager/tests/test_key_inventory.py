@@ -48,6 +48,112 @@ def test_key_inventory_passes_when_all_active_keys_are_governed(tmp_path) -> Non
     }
 
 
+def test_key_inventory_passes_when_active_keys_belong_to_acknowledged_employees(tmp_path) -> None:
+    inventory_file = tmp_path / "keys.json"
+    policy_file, roster_file, acknowledgment_file = _employee_acknowledgment_files(tmp_path)
+    inventory_file.write_text(
+        json.dumps(
+            {
+                "keys": [_governed_key("market-campaign-key", user_id="u_market_1", department_id="dept_market")],
+                **_trusted_export_metadata(expected_total_key_count=1),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = collect_key_inventory_validation(
+        inventory_file=inventory_file,
+        employee_monitoring_policy_file=policy_file,
+        employee_roster_file=roster_file,
+        acknowledgment_file=acknowledgment_file,
+        require_acknowledged_employees=True,
+        generated_at=GENERATED_AT,
+    )
+
+    assert result["status"] == "PASS"
+    assert result["employee_acknowledgment"] == {
+        "policy_id": "aimanager-employee-monitoring-v1",
+        "policy_version": "2026-06",
+        "active_employee_count": 2,
+        "acknowledged_employee_count": 2,
+        "missing_acknowledgment_count": 0,
+    }
+
+
+def test_key_inventory_fails_keys_for_unknown_unacknowledged_or_wrong_department_employees(tmp_path) -> None:
+    inventory_file = tmp_path / "keys.json"
+    policy_file, roster_file, acknowledgment_file = _employee_acknowledgment_files(
+        tmp_path,
+        acknowledgments=[
+            {
+                "employee_id": "u_market_1",
+                "notice_version": "2026-06",
+                "acknowledged_at": "2026-06-30T10:00:00+08:00",
+                "understood_purpose": "true",
+                "understood_scope": "true",
+                "understood_appeal": "true",
+                "understood_no_raw_content": "true",
+            }
+        ],
+    )
+    inventory_file.write_text(
+        json.dumps(
+            {
+                "keys": [
+                    _governed_key("known-but-unacknowledged", user_id="u_sales_1", department_id="dept_sales"),
+                    _governed_key("unknown-employee", user_id="u_shadow_1", department_id="dept_shadow"),
+                    _governed_key("wrong-department", user_id="u_market_1", department_id="dept_sales"),
+                ],
+                **_trusted_export_metadata(expected_total_key_count=3),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = collect_key_inventory_validation(
+        inventory_file=inventory_file,
+        employee_monitoring_policy_file=policy_file,
+        employee_roster_file=roster_file,
+        acknowledgment_file=acknowledgment_file,
+        require_acknowledged_employees=True,
+        generated_at=GENERATED_AT,
+    )
+
+    assert result["status"] == "FAIL"
+    reasons = {violation["reason"] for violation in result["violations"]}
+    assert "active key user_id has not acknowledged employee monitoring policy" in reasons
+    assert "active key user_id is not in active employee roster" in reasons
+    assert "active key department_id does not match employee roster" in reasons
+
+
+def test_key_inventory_blocks_when_employee_acknowledgment_evidence_is_required_but_missing(tmp_path) -> None:
+    inventory_file = tmp_path / "keys.json"
+    inventory_file.write_text(
+        json.dumps(
+            {
+                "keys": [_governed_key("market-campaign-key")],
+                **_trusted_export_metadata(expected_total_key_count=1),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = collect_key_inventory_validation(
+        inventory_file=inventory_file,
+        require_acknowledged_employees=True,
+        env={},
+        generated_at=GENERATED_AT,
+    )
+
+    assert result["status"] == "BLOCKED"
+    assert "employee roster and acknowledgment evidence" in result["detail"]
+    assert result["required_env"] == [
+        "AIMANAGER_EMPLOYEE_MONITORING_POLICY_FILE",
+        "AIMANAGER_EMPLOYEE_ROSTER_FILE",
+        "AIMANAGER_EMPLOYEE_ACKNOWLEDGMENT_FILE",
+    ]
+
+
 def test_key_inventory_fails_active_legacy_keys_without_governance(tmp_path) -> None:
     inventory_file = tmp_path / "keys.json"
     inventory_file.write_text(
@@ -301,10 +407,16 @@ def test_key_inventory_fails_non_boolean_shared_key_marker(tmp_path) -> None:
     ]
 
 
-def _governed_key(key_alias: str, *, metadata_extra: dict[str, object] | None = None) -> dict[str, object]:
+def _governed_key(
+    key_alias: str,
+    *,
+    user_id: str = "employee-1",
+    department_id: str = "dept_marketing",
+    metadata_extra: dict[str, object] | None = None,
+) -> dict[str, object]:
     metadata = {
         "owner": "alice",
-        "department_id": "dept_marketing",
+        "department_id": department_id,
         "project_id": "proj_launch",
         "cost_center_id": "cc_growth",
         "scenario_l1": "marketing",
@@ -317,7 +429,7 @@ def _governed_key(key_alias: str, *, metadata_extra: dict[str, object] | None = 
     return {
         "key_alias": key_alias,
         "blocked": False,
-        "user_id": "employee-1",
+        "user_id": user_id,
         "team_id": "team-marketing",
         "models": ["gemini-2.5-flash"],
         "max_budget": 100,
@@ -339,4 +451,118 @@ def _trusted_export_metadata(
         "export_scope": "all_virtual_keys",
         "exported_by": "security-ops",
         "expected_total_key_count": expected_total_key_count,
+    }
+
+
+def _employee_acknowledgment_files(
+    tmp_path,
+    *,
+    acknowledgments: list[dict[str, object]] | None = None,
+) -> tuple:
+    policy_file = tmp_path / "employee-monitoring-policy.json"
+    roster_file = tmp_path / "employee-roster.json"
+    acknowledgment_file = tmp_path / "employee-acknowledgments.json"
+    policy_file.write_text(json.dumps(_employee_monitoring_policy()), encoding="utf-8")
+    roster_file.write_text(
+        json.dumps(
+            [
+                {"employee_id": "u_market_1", "department_id": "dept_market", "status": "active"},
+                {"employee_id": "u_sales_1", "department_id": "dept_sales", "status": "active"},
+                {"employee_id": "u_left_1", "department_id": "dept_sales", "status": "inactive"},
+            ]
+        ),
+        encoding="utf-8",
+    )
+    acknowledgment_file.write_text(
+        json.dumps(
+            acknowledgments
+            or [
+                {
+                    "employee_id": "u_market_1",
+                    "notice_version": "2026-06",
+                    "acknowledged_at": "2026-06-30T10:00:00+08:00",
+                    "understood_purpose": "true",
+                    "understood_scope": "true",
+                    "understood_appeal": "true",
+                    "understood_no_raw_content": "true",
+                },
+                {
+                    "employee_id": "u_sales_1",
+                    "notice_version": "2026-06",
+                    "acknowledged_at": "2026-06-30T10:05:00+08:00",
+                    "understood_purpose": "true",
+                    "understood_scope": "true",
+                    "understood_appeal": "true",
+                    "understood_no_raw_content": "true",
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return policy_file, roster_file, acknowledgment_file
+
+
+def _employee_monitoring_policy() -> dict[str, object]:
+    return {
+        "policy_id": "aimanager-employee-monitoring-v1",
+        "version": "2026-06",
+        "title": "AiManager employee monitoring notice and permission boundary",
+        "published_at": "2026-06-30",
+        "effective_at": "2026-07-01",
+        "owner": "ai-platform",
+        "notice_url": "https://intranet.internal/policies/aimanager-employee-monitoring-v1",
+        "notice_channels": ["wecom", "employee-handbook"],
+        "monitored_metadata_fields": [
+            "request_id",
+            "timestamp",
+            "employee_id",
+            "department_id",
+            "key_alias",
+            "scenario_l1",
+            "cost_center_id",
+            "spend",
+            "ip_hash",
+            "user_agent_hash",
+        ],
+        "prohibited_monitoring_fields": [
+            "prompt_text",
+            "response_text",
+            "raw_ip",
+            "raw_user_agent",
+            "customer_content",
+        ],
+        "retention_days": 90,
+        "rules": [
+            {
+                "rule_id": "off-hours-usage-v1",
+                "type": "off_hours_usage",
+                "enabled": True,
+                "severity": "warning",
+                "timezone": "Asia/Shanghai",
+                "workday_start": "09:00",
+                "workday_end": "18:30",
+                "threshold_request_count": 20,
+                "threshold_spend": "50",
+                "lookback_hours": 24,
+                "requires_exception_ticket": True,
+            },
+            {
+                "rule_id": "key-sharing-v1",
+                "type": "key_sharing",
+                "enabled": True,
+                "severity": "high",
+                "lookback_hours": 24,
+                "distinct_ip_hash_threshold": 3,
+                "distinct_user_agent_hash_threshold": 3,
+                "requires_disposition": True,
+            },
+        ],
+        "permission_boundary": {
+            "allowed_review_roles": ["ai_platform_admin", "security", "audit", "hr", "legal"],
+            "prohibited_roles": ["direct_manager"],
+            "raw_prompt_access": "prohibited",
+            "customer_content_access": "prohibited",
+            "requires_hr_or_legal_for_disciplinary_action": True,
+            "employee_appeal_channel": "wecom://ai-compliance-helpdesk",
+        },
     }
