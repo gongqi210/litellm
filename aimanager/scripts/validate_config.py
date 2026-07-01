@@ -30,6 +30,7 @@ FORBIDDEN_CONFIG_MARKERS = (
 )
 
 IMAGE_MODEL_NAME = "ycapi-image-1"
+MAX_USER_API_KEY_CACHE_TTL_SECONDS = 5
 
 
 class ConfigValidationError(ValueError):
@@ -143,6 +144,22 @@ def _validate_general_settings(config: dict[str, Any]) -> None:
         raise ConfigValidationError("general_settings.pass_through_endpoints must be empty for ycapi-only mode")
     if general_settings.get("always_include_stream_usage") is not True:
         raise ConfigValidationError("general_settings.always_include_stream_usage must be true for billable streams")
+    _validate_user_api_key_cache_ttl(general_settings)
+
+
+def _validate_user_api_key_cache_ttl(general_settings: dict[str, Any]) -> None:
+    ttl = general_settings.get("user_api_key_cache_ttl")
+    if (
+        not isinstance(ttl, (int, float))
+        or isinstance(ttl, bool)
+        or not math.isfinite(ttl)
+        or ttl <= 0
+        or ttl > MAX_USER_API_KEY_CACHE_TTL_SECONDS
+    ):
+        raise ConfigValidationError(
+            "general_settings.user_api_key_cache_ttl must be a positive number no greater than "
+            f"{MAX_USER_API_KEY_CACHE_TTL_SECONDS} seconds"
+        )
 
 
 def _validate_positive_number(params: dict[str, Any], model_name: str, field_name: str) -> None:

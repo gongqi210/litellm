@@ -24,6 +24,7 @@ def test_aimanager_config_is_locked_to_ycapi() -> None:
     assert config["general_settings"]["master_key"] == "os.environ/LITELLM_MASTER_KEY"
     assert config["general_settings"]["store_model_in_db"] is False
     assert config["general_settings"]["always_include_stream_usage"] is True
+    assert config["general_settings"]["user_api_key_cache_ttl"] == 5
 
     model_list = config["model_list"]
     assert model_list
@@ -167,6 +168,44 @@ def test_validator_rejects_missing_or_disabled_stream_usage(tmp_path: Path, valu
     )
 
     with pytest.raises(ConfigValidationError, match="always_include_stream_usage"):
+        validate_aimanager_config(bad_config)
+
+
+@pytest.mark.parametrize("bad_value", [None, False, True, "5", 0, -1, 5.1, 60, float("nan"), float("inf")])
+def test_validator_rejects_missing_or_unsafe_user_api_key_cache_ttl(
+    tmp_path: Path, bad_value: object
+) -> None:
+    general_settings = {
+        "master_key": "os.environ/LITELLM_MASTER_KEY",
+        "store_model_in_db": False,
+        "always_include_stream_usage": True,
+    }
+    if bad_value is not None:
+        general_settings["user_api_key_cache_ttl"] = bad_value
+
+    bad_config = tmp_path / "bad-key-cache-ttl.yaml"
+    bad_config.write_text(
+        yaml.safe_dump(
+            {
+                "model_list": [
+                    {
+                        "model_name": "gemini-2.5-flash",
+                        "litellm_params": {
+                            "model": "openai/gemini-2.5-flash",
+                            "api_base": "os.environ/YCAPI_BASE_URL",
+                            "api_key": "os.environ/YCAPI_API_TOKEN",
+                            "input_cost_per_token": 0.000001,
+                            "output_cost_per_token": 0.000001,
+                        },
+                    }
+                ],
+                "general_settings": general_settings,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigValidationError, match="user_api_key_cache_ttl"):
         validate_aimanager_config(bad_config)
 
 

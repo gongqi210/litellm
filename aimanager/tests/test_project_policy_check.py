@@ -104,6 +104,8 @@ def test_aimanager_cli_entry_emits_machine_readable_status() -> None:
     assert payload["commands"]["employee_monitoring_validate"] == "make employee-monitoring-validate"
     assert payload["commands"]["lightweight_trial_evidence_capture"] == "make lightweight-trial-evidence-capture"
     assert "acceptance_gate" in payload["commands"]
+    assert "--with pydantic" in payload["commands"]["test_suite"]
+    assert "--with pydantic" in payload["commands"]["acceptance_gate"]
 
 
 def test_makefile_exposes_finance_export_operator_target() -> None:
