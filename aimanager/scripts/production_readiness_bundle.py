@@ -6,7 +6,7 @@ import math
 import os
 import sys
 from dataclasses import asdict, dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Literal, Mapping, Sequence
 
@@ -22,12 +22,14 @@ from aimanager.scripts.route_observability_alerts import route_observability_ale
 from aimanager.scripts.smoke_admin_boundary import run_admin_boundary_smoke
 from aimanager.scripts.smoke_live_ycapi import DEFAULT_YCAPI_BASE_URL, run_live_ycapi_smoke
 from aimanager.scripts.smoke_work_context_enforcement import run_work_context_enforcement_smoke
-from aimanager.scripts.validate_key_inventory import collect_key_inventory_validation
+from aimanager.scripts.validate_key_inventory import _parse_datetime, collect_key_inventory_validation
 
 
 ReadinessStatus = Literal["PASS", "FAIL", "BLOCKED"]
 DEFAULT_EXPECTED_MODELS = ("gemini-2.5-flash", "deepseek-chat", "ycapi-image-1")
 DEFAULT_FINANCE_OUTPUT_DIR = "/tmp/aimanager-production-readiness-finance"
+_POLICY_APPROVAL_MAX_AGE = timedelta(days=90)
+_POLICY_APPROVAL_FUTURE_SKEW = timedelta(minutes=5)
 
 
 @dataclass(frozen=True)
@@ -58,20 +60,21 @@ def collect_production_readiness(
     work_context_runner: WorkContextRunner = run_work_context_enforcement_smoke,
 ) -> dict[str, Any]:
     current_env = os.environ if env is None else env
+    generated = generated_at or datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     redactions = _redactions(current_env)
     checks = [
         _admin_boundary_check(current_env, admin_boundary_runner=admin_boundary_runner),
         _work_context_enforcement_check(current_env, work_context_runner=work_context_runner),
         _live_ycapi_check(current_env, live_ycapi_runner=live_ycapi_runner),
-        _key_inventory_check(current_env, generated_at=generated_at),
+        _key_inventory_check(current_env, generated_at=generated),
         _wecom_routing_check(current_env, wecom_router=wecom_router),
         (finance_runner or _finance_evidence_check)(env=current_env),
-        _production_policy_attestation_check(current_env),
+        _production_policy_attestation_check(current_env, generated_at=generated),
     ]
     sanitized_checks = [_sanitize_check(check, redactions) for check in checks]
     return {
         "status": _overall_status(check["status"] for check in sanitized_checks),
-        "generated_at": generated_at or datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "generated_at": generated,
         "summary": _summary(sanitized_checks),
         "checks": sanitized_checks,
     }
@@ -506,7 +509,7 @@ def _finance_evidence_check(*, env: Mapping[str, str]) -> CheckResult:
     )
 
 
-def _production_policy_attestation_check(env: Mapping[str, str]) -> CheckResult:
+def _production_policy_attestation_check(env: Mapping[str, str], *, generated_at: str | None = None) -> CheckResult:
     path = _env_value(env, "AIMANAGER_PRODUCTION_POLICY_ATTESTATION_FILE")
     if not path:
         return CheckResult(
@@ -546,7 +549,7 @@ def _production_policy_attestation_check(env: Mapping[str, str]) -> CheckResult:
             evidence={"redaction_marker": _SECRET_LIKE_REDACTION},
         )
 
-    violations = production_policy_violations(payload)
+    violations = production_policy_violations(payload, reference_time=generated_at)
     if violations:
         return CheckResult(
             id="AC-POLICY",
@@ -673,11 +676,24 @@ def _load_json_object(path: Path) -> dict[str, Any]:
     return payload
 
 
-def production_policy_violations(payload: Mapping[str, Any]) -> list[str]:
+def production_policy_violations(
+    payload: Mapping[str, Any],
+    *,
+    reference_time: str | datetime | None = None,
+    max_approval_age: timedelta = _POLICY_APPROVAL_MAX_AGE,
+    future_skew: timedelta = _POLICY_APPROVAL_FUTURE_SKEW,
+) -> list[str]:
     violations: list[str] = []
-    for field_name in ("policy_id", "policy_version", "approved_at"):
+    for field_name in ("policy_id", "policy_version"):
         if not _text(payload.get(field_name)):
             violations.append(field_name)
+    _approved_at_violations(
+        payload.get("approved_at"),
+        reference_time=reference_time,
+        max_age=max_approval_age,
+        future_skew=future_skew,
+        violations=violations,
+    )
 
     chargeback = _required_mapping(payload, "chargeback", violations)
     _require_true(chargeback, "chargeback.confirmed", violations)
@@ -731,6 +747,38 @@ def production_policy_violations(payload: Mapping[str, Any]) -> list[str]:
             if not _text(approval.get(key)):
                 violations.append(f"approvals[{index}].{key}")
     return violations
+
+
+def _approved_at_violations(
+    value: Any,
+    *,
+    reference_time: str | datetime | None,
+    max_age: timedelta,
+    future_skew: timedelta,
+    violations: list[str],
+) -> None:
+    approved_at_text = _text(value)
+    if not approved_at_text:
+        violations.append("approved_at")
+        return
+    approved_at = _parse_datetime(approved_at_text)
+    if approved_at is None:
+        violations.append("approved_at.iso8601")
+        return
+    current_time = _reference_time(reference_time)
+    if approved_at - current_time > future_skew:
+        violations.append("approved_at.future")
+        return
+    if current_time - approved_at > max_age:
+        violations.append("approved_at.stale")
+
+
+def _reference_time(value: str | datetime | None) -> datetime:
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
+    return _parse_datetime(value) or datetime.now(UTC)
 
 
 def _required_mapping(payload: Mapping[str, Any], field_name: str, violations: list[str]) -> dict[str, Any]:

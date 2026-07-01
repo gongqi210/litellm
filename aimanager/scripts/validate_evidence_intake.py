@@ -103,15 +103,16 @@ def validate_evidence_intake(
     env: Mapping[str, str] | None = None,
     generated_at: str | None = None,
 ) -> dict[str, object]:
+    generated = generated_at or _now_iso()
     redactions = build_secret_redactions(env)
     checks = (
-        _collect_file_checks(input_files, redactions=redactions)
+        _collect_file_checks(input_files, redactions=redactions, generated_at=generated)
         if input_files is not None
-        else _collect_checks(input_dir or _DEFAULT_INPUT_DIR, redactions=redactions)
+        else _collect_checks(input_dir or _DEFAULT_INPUT_DIR, redactions=redactions, generated_at=generated)
     )
     result = {
         "status": _overall_status(check.status for check in checks),
-        "generated_at": generated_at or _now_iso(),
+        "generated_at": generated,
         "summary": _summary(checks),
         "checks": [asdict(check) for check in checks],
     }
@@ -123,7 +124,9 @@ def validate_evidence_intake(
     return sanitize_value(result, redactions)
 
 
-def _collect_checks(input_dir: Path, *, redactions: Mapping[str, str] | None = None) -> list[FileCheck]:
+def _collect_checks(
+    input_dir: Path, *, redactions: Mapping[str, str] | None = None, generated_at: str | None = None
+) -> list[FileCheck]:
     if not input_dir.exists():
         return [
             FileCheck(
@@ -149,11 +152,14 @@ def _collect_checks(input_dir: Path, *, redactions: Mapping[str, str] | None = N
                 detail="evidence input directory contains no files",
             )
         ]
-    return [_validate_file(path, root=input_dir, redactions=redactions) for path in files]
+    return [_validate_file(path, root=input_dir, redactions=redactions, generated_at=generated_at) for path in files]
 
 
 def _collect_file_checks(
-    input_files: Sequence[Path], *, redactions: Mapping[str, str] | None = None
+    input_files: Sequence[Path],
+    *,
+    redactions: Mapping[str, str] | None = None,
+    generated_at: str | None = None,
 ) -> list[FileCheck]:
     files = tuple(dict.fromkeys(Path(path) for path in input_files))
     if not files:
@@ -187,11 +193,17 @@ def _collect_file_checks(
                 )
             )
             continue
-        checks.append(_validate_file(path, root=path.parent, redactions=redactions))
+        checks.append(_validate_file(path, root=path.parent, redactions=redactions, generated_at=generated_at))
     return checks
 
 
-def _validate_file(path: Path, *, root: Path, redactions: Mapping[str, str] | None = None) -> FileCheck:
+def _validate_file(
+    path: Path,
+    *,
+    root: Path,
+    redactions: Mapping[str, str] | None = None,
+    generated_at: str | None = None,
+) -> FileCheck:
     try:
         content = path.read_text(encoding="utf-8")
     except UnicodeDecodeError:
@@ -229,7 +241,7 @@ def _validate_file(path: Path, *, root: Path, redactions: Mapping[str, str] | No
         findings.append(_finding("FAIL", "environment_secret_value", env_secret_detail, redactions=redactions))
     suffix = path.suffix.lower()
     if suffix == ".json":
-        findings.extend(_json_findings(path, content))
+        findings.extend(_json_findings(path, content, generated_at=generated_at))
     elif suffix == ".csv":
         findings.extend(_csv_findings(path))
 
@@ -237,7 +249,7 @@ def _validate_file(path: Path, *, root: Path, redactions: Mapping[str, str] | No
     return _file_check(path, root=root, status=status, findings=findings, redactions=redactions)
 
 
-def _json_findings(path: Path, content: str) -> list[FileFinding]:
+def _json_findings(path: Path, content: str, *, generated_at: str | None = None) -> list[FileFinding]:
     try:
         payload = json.loads(content)
     except Exception as exc:
@@ -250,11 +262,13 @@ def _json_findings(path: Path, content: str) -> list[FileFinding]:
         if str(payload.get("status") or "").strip().upper() == "TEMPLATE":
             findings.append(_finding("BLOCKED", "template_status", "JSON status is TEMPLATE"))
         if not any(finding.status == "BLOCKED" for finding in findings):
-            findings.extend(_schema_findings(path, payload))
+            findings.extend(_schema_findings(path, payload, generated_at=generated_at))
     return findings
 
 
-def _schema_findings(path: Path, payload: Mapping[str, Any]) -> list[FileFinding]:
+def _schema_findings(
+    path: Path, payload: Mapping[str, Any], *, generated_at: str | None = None
+) -> list[FileFinding]:
     if _looks_like_ac23_trial_evidence(path, payload):
         try:
             TrialEvidence.model_validate(payload)
@@ -267,7 +281,7 @@ def _schema_findings(path: Path, payload: Mapping[str, Any]) -> list[FileFinding
                 )
             ]
     if _looks_like_production_policy_attestation(path, payload):
-        violations = production_policy_violations(payload)
+        violations = production_policy_violations(payload, reference_time=generated_at)
         if violations:
             return [
                 _finding(

@@ -346,6 +346,24 @@ def test_evidence_intake_fails_schema_invalid_production_policy_attestation(tmp_
     assert "employee_virtual_key_only.ycapi_token_visible_to_employee" in serialized
 
 
+def test_evidence_intake_fails_stale_production_policy_attestation(tmp_path) -> None:
+    evidence_dir = tmp_path / "evidence"
+    evidence_dir.mkdir()
+    payload = _valid_production_policy_attestation()
+    payload["approved_at"] = "2026-03-01T09:00:00+08:00"
+    (evidence_dir / "production-policy-attestation.json").write_text(
+        json.dumps(payload),
+        encoding="utf-8",
+    )
+
+    result = validate_evidence_intake(input_dir=evidence_dir, generated_at="2026-07-01T02:30:00Z")
+
+    serialized = json.dumps(result, ensure_ascii=False)
+    assert result["status"] == "FAIL"
+    assert "schema_validation" in serialized
+    assert "approved_at.stale" in serialized
+
+
 def test_evidence_intake_passes_filled_safe_files(tmp_path) -> None:
     evidence_dir = tmp_path / "evidence"
     evidence_dir.mkdir()
@@ -391,4 +409,45 @@ def _gap(gap_id: str, name: str, owner: str) -> dict[str, object]:
         "command": "make acceptance-gate",
         "next_action": "collect real external evidence",
         "sources": ["launch_gap_plan"],
+    }
+
+
+def _valid_production_policy_attestation() -> dict[str, object]:
+    return {
+        "policy_id": "aimanager-production-policy",
+        "policy_version": "2026-06",
+        "approved_at": "2026-06-30T09:00:00+08:00",
+        "chargeback": {
+            "mode": "showback",
+            "confirmed": True,
+            "policy_ref": "FIN-AI-2026-06",
+            "effective_month": "2026-06",
+        },
+        "pricing_approval": {
+            "confirmed": True,
+            "pricing_version": "m1-2026-06",
+            "approval_ref": "FIN-PRICE-2026-06",
+            "approver": "finance-controller",
+        },
+        "ycapi_token_limit": {
+            "confirmed": True,
+            "limit_ref": "YCAPI-LIMIT-2026-06",
+            "monthly_budget_cny": "10000",
+            "rpm_limit": 600,
+        },
+        "employee_virtual_key_only": {
+            "confirmed": True,
+            "distribution_channel": "aimanager-admin",
+            "ycapi_token_visible_to_employee": False,
+        },
+        "data_boundaries": {
+            "confirmed": True,
+            "policy_ref": "SEC-DATA-AI-2026-06",
+            "categories": ["personal_information", "customer_data", "trade_secret"],
+        },
+        "approvals": [
+            {"role": "finance", "approver": "finance-controller", "approval_ref": "FIN-APPROVED"},
+            {"role": "security", "approver": "security-owner", "approval_ref": "SEC-APPROVED"},
+            {"role": "legal", "approver": "legal-owner", "approval_ref": "LEGAL-APPROVED"},
+        ],
     }

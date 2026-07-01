@@ -1038,6 +1038,36 @@ def test_production_policy_attestation_requires_distinct_approvers_for_required_
     assert "approvals.distinct_approvers" in policy_check["detail"]
 
 
+def test_production_policy_attestation_rejects_stale_approval_timestamp(tmp_path) -> None:
+    payload = _valid_policy_attestation()
+    payload["approved_at"] = "2026-03-01T09:00:00+08:00"
+
+    policy_check = _policy_check_for_payload(tmp_path, payload, generated_at="2026-07-01T02:30:00Z")
+
+    assert policy_check["status"] == "FAIL"
+    assert "approved_at.stale" in policy_check["detail"]
+
+
+def test_production_policy_attestation_rejects_future_approval_timestamp(tmp_path) -> None:
+    payload = _valid_policy_attestation()
+    payload["approved_at"] = "2026-07-01T02:40:01Z"
+
+    policy_check = _policy_check_for_payload(tmp_path, payload, generated_at="2026-07-01T02:30:00Z")
+
+    assert policy_check["status"] == "FAIL"
+    assert "approved_at.future" in policy_check["detail"]
+
+
+def test_production_policy_attestation_rejects_invalid_approval_timestamp(tmp_path) -> None:
+    payload = _valid_policy_attestation()
+    payload["approved_at"] = "not-a-timestamp"
+
+    policy_check = _policy_check_for_payload(tmp_path, payload, generated_at="2026-07-01T02:30:00Z")
+
+    assert policy_check["status"] == "FAIL"
+    assert "approved_at.iso8601" in policy_check["detail"]
+
+
 def test_production_policy_attestation_normalizes_approver_names_for_distinctness(tmp_path) -> None:
     payload = _valid_policy_attestation()
     payload["approvals"][0]["approver"] = "Alice"
@@ -1055,6 +1085,7 @@ def test_production_policy_attestation_example_file_is_valid() -> None:
     policy_file = repo_root / "docs" / "aimanager" / "production_policy_attestation.example.json"
 
     bundle = collect_production_readiness(
+        generated_at=GENERATED_AT,
         env={"AIMANAGER_PRODUCTION_POLICY_ATTESTATION_FILE": str(policy_file)},
         admin_boundary_runner=lambda **kwargs: [
             _script_result(status="PASS", detail="business/admin edge checks passed")
@@ -1171,15 +1202,20 @@ def _script_result(*, status: str, detail: str, **overrides: object):
     )()
 
 
-def _policy_check_for_payload(tmp_path, payload: dict[str, object]) -> dict[str, object]:
+def _policy_check_for_payload(
+    tmp_path, payload: dict[str, object], *, generated_at: str | None = None
+) -> dict[str, object]:
     policy_file = tmp_path / "production_policy_attestation.json"
     policy_file.write_text(json.dumps(payload), encoding="utf-8")
-    bundle = _policy_bundle_for_env({"AIMANAGER_PRODUCTION_POLICY_ATTESTATION_FILE": str(policy_file)})
+    bundle = _policy_bundle_for_env(
+        {"AIMANAGER_PRODUCTION_POLICY_ATTESTATION_FILE": str(policy_file)}, generated_at=generated_at
+    )
     return next(check for check in bundle["checks"] if check["id"] == "AC-POLICY")
 
 
-def _policy_bundle_for_env(env: dict[str, str]) -> dict[str, object]:
+def _policy_bundle_for_env(env: dict[str, str], *, generated_at: str | None = None) -> dict[str, object]:
     return collect_production_readiness(
+        generated_at=generated_at,
         env=env,
         admin_boundary_runner=lambda **kwargs: [
             _script_result(status="PASS", detail="business/admin edge checks passed")
