@@ -467,7 +467,7 @@ def _collect_evidence_intake(env: Mapping[str, str], *, generated_at: str) -> di
         for value in [str(env.get(name) or "").strip()]
         if value
     ]
-    return validate_evidence_intake(input_files=files, generated_at=generated_at)
+    return validate_evidence_intake(input_files=files, env=env, generated_at=generated_at)
 
 
 def _collect_local_test_results(

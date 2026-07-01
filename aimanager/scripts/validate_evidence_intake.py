@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import re
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
@@ -11,7 +12,7 @@ from typing import Any, Literal, Mapping, Sequence
 
 from pydantic import ValidationError
 
-from aimanager.redaction import contains_secret_like, sanitize_text, sanitize_value
+from aimanager.redaction import build_secret_redactions, contains_secret_like, sanitize_text, sanitize_value
 from aimanager.scripts.business_trial_acceptance_bundle import TrialEvidence
 from aimanager.scripts.production_readiness_bundle import production_policy_violations
 from aimanager.validation_errors import compact_validation_errors
@@ -74,7 +75,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--generated-at")
     args = parser.parse_args(argv)
 
-    result = validate_evidence_intake(input_dir=args.input_dir, generated_at=args.generated_at)
+    result = validate_evidence_intake(input_dir=args.input_dir, env=os.environ, generated_at=args.generated_at)
     if args.output_json_file:
         _write_json(args.output_json_file, result)
     if args.output_markdown_file:
@@ -92,9 +93,15 @@ def validate_evidence_intake(
     *,
     input_dir: Path | None = None,
     input_files: Sequence[Path] | None = None,
+    env: Mapping[str, str] | None = None,
     generated_at: str | None = None,
 ) -> dict[str, object]:
-    checks = _collect_file_checks(input_files) if input_files is not None else _collect_checks(input_dir or _DEFAULT_INPUT_DIR)
+    redactions = build_secret_redactions(env)
+    checks = (
+        _collect_file_checks(input_files, redactions=redactions)
+        if input_files is not None
+        else _collect_checks(input_dir or _DEFAULT_INPUT_DIR, redactions=redactions)
+    )
     result = {
         "status": _overall_status(check.status for check in checks),
         "generated_at": generated_at or _now_iso(),
@@ -106,10 +113,10 @@ def validate_evidence_intake(
     else:
         result["input_dir"] = str(input_dir or _DEFAULT_INPUT_DIR)
     result["markdown"] = _markdown(result)
-    return sanitize_value(result)
+    return sanitize_value(result, redactions)
 
 
-def _collect_checks(input_dir: Path) -> list[FileCheck]:
+def _collect_checks(input_dir: Path, *, redactions: Mapping[str, str] | None = None) -> list[FileCheck]:
     if not input_dir.exists():
         return [
             FileCheck(
@@ -135,10 +142,12 @@ def _collect_checks(input_dir: Path) -> list[FileCheck]:
                 detail="evidence input directory contains no files",
             )
         ]
-    return [_validate_file(path, root=input_dir) for path in files]
+    return [_validate_file(path, root=input_dir, redactions=redactions) for path in files]
 
 
-def _collect_file_checks(input_files: Sequence[Path]) -> list[FileCheck]:
+def _collect_file_checks(
+    input_files: Sequence[Path], *, redactions: Mapping[str, str] | None = None
+) -> list[FileCheck]:
     files = tuple(dict.fromkeys(Path(path) for path in input_files))
     if not files:
         return [
@@ -171,27 +180,46 @@ def _collect_file_checks(input_files: Sequence[Path]) -> list[FileCheck]:
                 )
             )
             continue
-        checks.append(_validate_file(path, root=path.parent))
+        checks.append(_validate_file(path, root=path.parent, redactions=redactions))
     return checks
 
 
-def _validate_file(path: Path, *, root: Path) -> FileCheck:
+def _validate_file(path: Path, *, root: Path, redactions: Mapping[str, str] | None = None) -> FileCheck:
     try:
         content = path.read_text(encoding="utf-8")
     except UnicodeDecodeError:
-        return _file_check(path, root=root, status="FAIL", findings=[_finding("FAIL", "unreadable_file", "file is not UTF-8 text")])
+        return _file_check(
+            path,
+            root=root,
+            status="FAIL",
+            findings=[_finding("FAIL", "unreadable_file", "file is not UTF-8 text", redactions=redactions)],
+            redactions=redactions,
+        )
     except Exception as exc:
         return _file_check(
             path,
             root=root,
             status="FAIL",
-            findings=[_finding("FAIL", "unreadable_file", f"file could not be read: {type(exc).__name__}")],
+            findings=[
+                _finding(
+                    "FAIL",
+                    "unreadable_file",
+                    f"file could not be read: {type(exc).__name__}",
+                    redactions=redactions,
+                )
+            ],
+            redactions=redactions,
         )
 
     findings: list[FileFinding] = []
     findings.extend(_template_findings(content))
     if contains_secret_like(content):
-        findings.append(_finding("FAIL", "secret_like_value", _secret_detail(content)))
+        findings.append(
+            _finding("FAIL", "secret_like_value", _secret_detail(content, redactions=redactions), redactions=redactions)
+        )
+    env_secret_detail = _environment_secret_detail(content, redactions=redactions)
+    if env_secret_detail:
+        findings.append(_finding("FAIL", "environment_secret_value", env_secret_detail, redactions=redactions))
     suffix = path.suffix.lower()
     if suffix == ".json":
         findings.extend(_json_findings(path, content))
@@ -199,7 +227,7 @@ def _validate_file(path: Path, *, root: Path) -> FileCheck:
         findings.extend(_csv_findings(path))
 
     status = _overall_status(finding.status for finding in findings)
-    return _file_check(path, root=root, status=status, findings=findings)
+    return _file_check(path, root=root, status=status, findings=findings, redactions=redactions)
 
 
 def _json_findings(path: Path, content: str) -> list[FileFinding]:
@@ -340,26 +368,49 @@ def _is_forbidden_key(key: str) -> bool:
     return normalized.endswith("body") and any(fragment in normalized for fragment in ("request", "response"))
 
 
-def _file_check(path: Path, *, root: Path, status: EvidenceStatus, findings: list[FileFinding]) -> FileCheck:
+def _file_check(
+    path: Path,
+    *,
+    root: Path,
+    status: EvidenceStatus,
+    findings: list[FileFinding],
+    redactions: Mapping[str, str] | None = None,
+) -> FileCheck:
     detail = "evidence file is intake-safe" if status == "PASS" else "; ".join(finding.detail for finding in findings)
     return FileCheck(
         path=str(path.relative_to(root) if path.is_relative_to(root) else path),
         status=status,
-        detail=sanitize_text(detail),
+        detail=sanitize_text(detail, redactions),
         findings=findings,
     )
 
 
-def _finding(status: EvidenceStatus, reason: str, detail: str) -> FileFinding:
-    return FileFinding(status=status, reason=reason, detail=sanitize_text(detail))
+def _finding(
+    status: EvidenceStatus,
+    reason: str,
+    detail: str,
+    *,
+    redactions: Mapping[str, str] | None = None,
+) -> FileFinding:
+    return FileFinding(status=status, reason=reason, detail=sanitize_text(detail, redactions))
 
 
-def _secret_detail(content: str) -> str:
+def _secret_detail(content: str, *, redactions: Mapping[str, str] | None = None) -> str:
     for line in content.splitlines():
-        sanitized = sanitize_text(line)
+        sanitized = sanitize_text(line, redactions)
         if sanitized != line or contains_secret_like(line):
             return f"secret-like value detected: {sanitized.strip()}"
     return "secret-like value detected"
+
+
+def _environment_secret_detail(content: str, *, redactions: Mapping[str, str] | None = None) -> str:
+    if not redactions:
+        return ""
+    for line in content.splitlines():
+        sanitized = sanitize_text(line, redactions)
+        if sanitized != line:
+            return f"environment secret value detected: {sanitized.strip()}"
+    return ""
 
 
 def _overall_status(statuses: Sequence[str] | object) -> EvidenceStatus:

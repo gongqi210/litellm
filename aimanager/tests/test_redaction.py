@@ -72,6 +72,13 @@ def test_build_secret_redactions_ignores_short_non_common_env_values() -> None:
     assert sanitized == "abc1234 is below the env redaction length boundary"
 
 
+def test_secret_assignment_redaction_ignores_common_boolean_governance_flags() -> None:
+    value = "`AIMANAGER_LIGHTWEIGHT_TRIAL_NO_SECRET_ECHO_CONFIRMED=false`"
+
+    assert sanitize_value(value) == value
+    assert not contains_secret_like(value)
+
+
 def test_contains_secret_like_flags_structured_secrets_without_false_substrings() -> None:
     assert contains_secret_like("Bearer should-not-leak")
     assert contains_secret_like("sk-abc")

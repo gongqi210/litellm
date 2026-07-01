@@ -105,6 +105,65 @@ def test_evidence_handoff_cli_writes_manifest_and_owner_markdown_with_redaction(
     assert "Do not paste secrets" in owner_markdown
 
 
+def test_evidence_handoff_surfaces_template_hints_for_owner_requests(tmp_path) -> None:
+    launch_file = tmp_path / "launch-gap-plan.json"
+    launch_file.write_text(
+        json.dumps(
+            _launch_plan(
+                status="BLOCKED",
+                gaps=[
+                    _gap(
+                        "AC-12-13-FINANCE",
+                        "finance_export_reconciliation",
+                        "BLOCKED",
+                        "finance",
+                        required_env=["AIMANAGER_SPEND_FILE", "AIMANAGER_YCAPI_BILL_FILE"],
+                    ),
+                    _gap(
+                        "AC-08-KEY-INVENTORY",
+                        "production_key_inventory_governance",
+                        "BLOCKED",
+                        "security/ops",
+                        required_env=[
+                            "AIMANAGER_KEY_INVENTORY_FILE",
+                            "LITELLM_MASTER_KEY",
+                            "AIMANAGER_EMPLOYEE_MONITORING_POLICY_FILE",
+                        ],
+                    ),
+                ],
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    result = collect_evidence_handoff(
+        launch_gap_plan_file=launch_file,
+        output_dir=tmp_path / "handoff",
+        generated_at="2026-07-01T00:00:00Z",
+    )
+
+    finance = next(owner for owner in result["owners"] if owner["owner"] == "finance")
+    finance_hint = finance["gaps"][0]["template_hints"]
+    assert finance_hint["template_files"] == [
+        "templates/finance/aimanager-spend.template.csv",
+        "templates/finance/ycapi-bill.template.csv",
+    ]
+    assert finance_hint["secret_env"] == []
+    assert finance_hint["manual_env"] == []
+    assert "Template Files:" in finance["markdown"]
+    assert "templates/finance/aimanager-spend.template.csv" in finance["markdown"]
+
+    security = next(owner for owner in result["owners"] if owner["owner"] == "security/ops")
+    security_hint = security["gaps"][0]["template_hints"]
+    assert security_hint["template_files"] == ["templates/security-ops/key-inventory.template.json"]
+    assert security_hint["secret_env"] == ["LITELLM_MASTER_KEY"]
+    assert security_hint["preset_env"] == [
+        "AIMANAGER_EMPLOYEE_MONITORING_POLICY_FILE=docs/aimanager/aimanager-employee-monitoring-policy.json"
+    ]
+    assert "Secret Env:" in security["markdown"]
+    assert "LITELLM_MASTER_KEY" in security["markdown"]
+
+
 def test_evidence_handoff_preserves_fail_when_launch_plan_is_not_an_object(tmp_path) -> None:
     launch_file = tmp_path / "launch-gap-plan.json"
     launch_file.write_text("[]", encoding="utf-8")

@@ -39,7 +39,7 @@ _BEARER_PATTERN = re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]+")
 _SECRET_KEY_PATTERN = re.compile(r"\bsk-[A-Za-z0-9._~-]+")
 _SECRET_ASSIGNMENT_PATTERN = re.compile(
     r"\b((?:[A-Za-z0-9_-]*(?:TOKEN|API[_-]?KEY|SECRET|WEBHOOK|PASSWORD)[A-Za-z0-9_-]*)"
-    r"\s*[:=]\s*)(?!os\.environ/)[^,\s\"']+",
+    r"\s*[:=]\s*)(?!os\.environ/)([^,\s\"'`]+)",
     re.IGNORECASE,
 )
 _DSN_PASSWORD_PATTERN = re.compile(
@@ -51,7 +51,6 @@ _SECRET_PATTERNS = (
     (_WECOM_WEBHOOK_PATTERN, WECOM_WEBHOOK_URL_REDACTION),
     (_BEARER_PATTERN, f"Bearer {SECRET_LIKE_REDACTION}"),
     (_SECRET_KEY_PATTERN, SECRET_LIKE_REDACTION),
-    (_SECRET_ASSIGNMENT_PATTERN, rf"\1{SECRET_LIKE_REDACTION}"),
     (_DSN_PASSWORD_PATTERN, rf"\1{SECRET_LIKE_REDACTION}\2"),
 )
 
@@ -87,11 +86,15 @@ def sanitize_text(value: str, redactions: Mapping[str, str] | None = None) -> st
         sanitized = sanitized.replace(secret, replacement)
     for pattern, replacement in _SECRET_PATTERNS:
         sanitized = pattern.sub(replacement, sanitized)
+    sanitized = _SECRET_ASSIGNMENT_PATTERN.sub(_sanitize_secret_assignment, sanitized)
     return sanitized
 
 
 def contains_secret_like(value: str) -> bool:
-    return any(pattern.search(value) for pattern, _replacement in _SECRET_PATTERNS)
+    return any(pattern.search(value) for pattern, _replacement in _SECRET_PATTERNS) or any(
+        _should_redact_assignment_value(match.group(2))
+        for match in _SECRET_ASSIGNMENT_PATTERN.finditer(value)
+    )
 
 
 def _sorted_redactions(redactions: Mapping[str, str] | None) -> dict[str, str]:
@@ -110,3 +113,14 @@ def _should_redact_env_value(value: str) -> bool:
     if value.lower() in _COMMON_NON_SECRET_VALUES:
         return False
     return True
+
+
+def _sanitize_secret_assignment(match: re.Match[str]) -> str:
+    value = match.group(2)
+    if not _should_redact_assignment_value(value):
+        return match.group(0)
+    return f"{match.group(1)}{SECRET_LIKE_REDACTION}"
+
+
+def _should_redact_assignment_value(value: str) -> bool:
+    return value.strip().lower() not in _COMMON_NON_SECRET_VALUES

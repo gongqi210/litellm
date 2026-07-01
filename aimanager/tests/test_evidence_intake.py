@@ -67,6 +67,45 @@ def test_evidence_intake_fails_secret_like_and_raw_prompt_without_echoing_secret
     assert "Bearer [redacted:secret-like-value]" in serialized
 
 
+def test_evidence_intake_fails_bare_environment_secret_value_without_echoing_it(tmp_path) -> None:
+    secret = "ycapi-live-7f3c9a2b8e1d4506"
+    evidence_dir = tmp_path / "evidence"
+    evidence_dir.mkdir()
+    (evidence_dir / "owner-note.md").write_text(
+        f"Operator recorded ycapi token {secret} while collecting evidence.\n",
+        encoding="utf-8",
+    )
+
+    result = validate_evidence_intake(
+        input_dir=evidence_dir,
+        env={"YCAPI_API_TOKEN": secret},
+        generated_at="2026-07-01T00:00:00Z",
+    )
+
+    serialized = json.dumps(result, ensure_ascii=False)
+    assert result["status"] == "FAIL"
+    assert secret not in serialized
+    assert "YCAPI_API_TOKEN" in serialized
+
+
+def test_evidence_intake_ignores_common_secret_named_env_values(tmp_path) -> None:
+    evidence_dir = tmp_path / "evidence"
+    evidence_dir.mkdir()
+    (evidence_dir / "owner-note.md").write_text(
+        "Finance marked reconciliation as true after comparing non-zero totals.\n",
+        encoding="utf-8",
+    )
+
+    result = validate_evidence_intake(
+        input_dir=evidence_dir,
+        env={"AIMANAGER_SECRET_FLAG": "true"},
+        generated_at="2026-07-01T00:00:00Z",
+    )
+
+    assert result["status"] == "PASS"
+    assert result["summary"] == {"PASS": 1, "FAIL": 0, "BLOCKED": 0, "files": 1}
+
+
 def test_evidence_intake_allows_policy_boundaries_that_prohibit_raw_content_access(tmp_path) -> None:
     evidence_dir = tmp_path / "evidence"
     evidence_dir.mkdir()

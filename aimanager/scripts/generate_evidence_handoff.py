@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Mapping, Sequence
 
+from aimanager.evidence_template_bindings import build_gap_template_bindings
 from aimanager.redaction import sanitize_text as sanitize_secret_text
 from aimanager.redaction import sanitize_value as sanitize_secret_value
 
@@ -52,7 +53,7 @@ def collect_evidence_handoff(
 ) -> dict[str, object]:
     generated = generated_at or _now_iso()
     launch = _load_launch_gap_plan(launch_gap_plan_file)
-    gaps = _gap_list(launch, launch_gap_plan_file)
+    gaps = _add_template_hints(_gap_list(launch, launch_gap_plan_file))
     groups = _group_by_owner(gaps, output_dir)
     summary = _summary(groups)
     result = {
@@ -189,6 +190,25 @@ def _gap_list(launch: Mapping[str, object], source_file: Path) -> list[dict[str,
     return []
 
 
+def _add_template_hints(gaps: Sequence[dict[str, object]]) -> list[dict[str, object]]:
+    enriched: list[dict[str, object]] = []
+    bindings = build_gap_template_bindings(gaps)
+    for index, gap in enumerate(gaps):
+        binding = bindings[index] if index < len(bindings) else {}
+        enriched.append(
+            {
+                **gap,
+                "template_hints": {
+                    "template_files": _string_list(binding.get("template_files")),
+                    "secret_env": _string_list(binding.get("secret_env")),
+                    "manual_env": _string_list(binding.get("manual_env")),
+                    "preset_env": _string_list(binding.get("preset_env")),
+                },
+            }
+        )
+    return enriched
+
+
 def _input_gap(
     *,
     name: str,
@@ -271,6 +291,7 @@ def _render_owner_markdown(owner_group: Mapping[str, object]) -> str:
         "",
     ]
     for gap in _mapping_list(owner_group.get("gaps")):
+        template_hints = _mapping(gap.get("template_hints"))
         lines.extend(
             [
                 f"## {gap.get('id')} {gap.get('name')}",
@@ -281,6 +302,10 @@ def _render_owner_markdown(owner_group: Mapping[str, object]) -> str:
                 f"- Command: `{gap.get('command')}`" if gap.get("command") else "- Command: ",
                 f"- Required Env: {_format_list(_string_list(gap.get('required_env')))}",
                 f"- Required Files: {_format_list(_string_list(gap.get('required_files')))}",
+                f"- Template Files: {_format_list(_string_list(template_hints.get('template_files')))}",
+                f"- Secret Env: {_format_list(_string_list(template_hints.get('secret_env')))}",
+                f"- Manual Env: {_format_list(_string_list(template_hints.get('manual_env')))}",
+                f"- Preset Env: {_format_list(_string_list(template_hints.get('preset_env')))}",
                 f"- Sources: {_format_list(_string_list(gap.get('sources')))}",
                 "",
             ]
@@ -327,6 +352,10 @@ def _string_list(value: object) -> list[str]:
 
 def _mapping_list(value: object) -> list[Mapping[str, object]]:
     return [item for item in value if isinstance(item, Mapping)] if isinstance(value, list) else []
+
+
+def _mapping(value: object) -> Mapping[str, object]:
+    return value if isinstance(value, Mapping) else {}
 
 
 def _format_list(values: Sequence[str]) -> str:
