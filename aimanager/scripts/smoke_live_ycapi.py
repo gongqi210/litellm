@@ -15,6 +15,10 @@ from typing import Any, Literal
 
 LiveYcapiStatus = Literal["PASS", "FAIL", "BLOCKED"]
 DEFAULT_YCAPI_BASE_URL = "https://ycapi.ycaicloud.com/v1"
+DEFAULT_CHAT_MODEL = "gemini-2.5-flash"
+DEFAULT_IMAGE_MODEL = "ycapi-image-1"
+_CHAT_REQUEST_ID = "aimanager-live-ycapi-smoke-chat"
+_IMAGE_REQUEST_ID = "aimanager-live-ycapi-smoke-image"
 
 
 @dataclass(frozen=True)
@@ -31,6 +35,12 @@ class LiveYcapiSmokeResult:
     status_code: int | None = None
     model_count: int = 0
     observed_models: tuple[str, ...] = ()
+    inference_checked: bool = False
+    chat_status_code: int | None = None
+    image_status_code: int | None = None
+    chat_usage_present: bool = False
+    image_result_count: int = 0
+    roundtrip_request_ids: tuple[str, ...] = ()
 
 
 Fetch = Callable[[str, str, dict[str, str], bytes | None], HttpResponse]
@@ -42,6 +52,9 @@ def run_live_ycapi_smoke(
     api_token: str,
     token_env_name: str = "YCAPI_API_TOKEN",
     expected_models: Sequence[str] = (),
+    run_inference_roundtrip: bool = False,
+    chat_model: str = DEFAULT_CHAT_MODEL,
+    image_model: str = DEFAULT_IMAGE_MODEL,
     fetch: Fetch | None = None,
     timeout_seconds: float = 10,
 ) -> LiveYcapiSmokeResult:
@@ -104,12 +117,268 @@ def run_live_ycapi_smoke(
             observed_models=observed_models,
         )
 
+    if run_inference_roundtrip:
+        roundtrip_result = _run_inference_roundtrip(
+            base_url=base_url,
+            api_token=api_token,
+            fetcher=fetcher,
+            model_status_code=response.status_code,
+            model_count=len(observed_models),
+            observed_models=observed_models,
+            chat_model=chat_model,
+            image_model=image_model,
+        )
+        if roundtrip_result is not None:
+            return roundtrip_result
+
     return LiveYcapiSmokeResult(
         status="PASS",
         detail=f"ycapi /models returned {len(observed_models)} model(s)",
         status_code=response.status_code,
         model_count=len(observed_models),
         observed_models=observed_models,
+    )
+
+
+def _run_inference_roundtrip(
+    *,
+    base_url: str,
+    api_token: str,
+    fetcher: Fetch,
+    model_status_code: int,
+    model_count: int,
+    observed_models: tuple[str, ...],
+    chat_model: str,
+    image_model: str,
+) -> LiveYcapiSmokeResult | None:
+    request_ids: list[str] = []
+    chat_status_code: int | None = None
+    image_status_code: int | None = None
+    chat_usage_present = False
+    image_result_count = 0
+    if chat_model not in observed_models:
+        return _roundtrip_result(
+            status="FAIL",
+            detail=f"ycapi chat roundtrip model is not listed by /models: {chat_model}",
+            model_status_code=model_status_code,
+            model_count=model_count,
+            observed_models=observed_models,
+            chat_status_code=chat_status_code,
+            image_status_code=image_status_code,
+            chat_usage_present=chat_usage_present,
+            image_result_count=image_result_count,
+            request_ids=(),
+        )
+    if image_model not in observed_models:
+        return _roundtrip_result(
+            status="FAIL",
+            detail=f"ycapi image roundtrip model is not listed by /models: {image_model}",
+            model_status_code=model_status_code,
+            model_count=model_count,
+            observed_models=observed_models,
+            chat_status_code=chat_status_code,
+            image_status_code=image_status_code,
+            chat_usage_present=chat_usage_present,
+            image_result_count=image_result_count,
+            request_ids=(),
+        )
+    try:
+        request_ids.append(_CHAT_REQUEST_ID)
+        chat_response = fetcher(
+            "POST",
+            _join_url(base_url, "/chat/completions"),
+            {
+                "Authorization": f"Bearer {api_token}",
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "x-request-id": _CHAT_REQUEST_ID,
+            },
+            _json_bytes(
+                {
+                    "model": chat_model,
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": "AiManager live ycapi smoke. Reply with a short acknowledgement.",
+                        }
+                    ],
+                    "max_tokens": 16,
+                    "temperature": 0,
+                    "stream": False,
+                }
+            ),
+        )
+    except (OSError, ValueError, http.client.HTTPException) as exc:
+        return _roundtrip_result(
+            status="FAIL",
+            detail=f"ycapi chat roundtrip request failed: {type(exc).__name__}",
+            model_status_code=model_status_code,
+            model_count=model_count,
+            observed_models=observed_models,
+            chat_status_code=chat_status_code,
+            image_status_code=image_status_code,
+            chat_usage_present=chat_usage_present,
+            image_result_count=image_result_count,
+            request_ids=tuple(request_ids),
+        )
+    chat_status_code = chat_response.status_code
+    if chat_response.status_code != 200:
+        return _roundtrip_result(
+            status="FAIL",
+            detail=f"ycapi chat roundtrip returned HTTP {chat_response.status_code}",
+            model_status_code=model_status_code,
+            model_count=model_count,
+            observed_models=observed_models,
+            chat_status_code=chat_status_code,
+            image_status_code=image_status_code,
+            chat_usage_present=chat_usage_present,
+            image_result_count=image_result_count,
+            request_ids=tuple(request_ids),
+        )
+    chat_payload = _decode_json(chat_response.body)
+    if chat_payload is None:
+        return _roundtrip_result(
+            status="FAIL",
+            detail="ycapi chat roundtrip returned non-JSON response",
+            model_status_code=model_status_code,
+            model_count=model_count,
+            observed_models=observed_models,
+            chat_status_code=chat_status_code,
+            image_status_code=image_status_code,
+            chat_usage_present=chat_usage_present,
+            image_result_count=image_result_count,
+            request_ids=tuple(request_ids),
+        )
+    chat_usage_present = _has_positive_usage(chat_payload)
+    if not chat_usage_present:
+        return _roundtrip_result(
+            status="FAIL",
+            detail="ycapi chat roundtrip did not return usage",
+            model_status_code=model_status_code,
+            model_count=model_count,
+            observed_models=observed_models,
+            chat_status_code=chat_status_code,
+            image_status_code=image_status_code,
+            chat_usage_present=chat_usage_present,
+            image_result_count=image_result_count,
+            request_ids=tuple(request_ids),
+        )
+
+    try:
+        request_ids.append(_IMAGE_REQUEST_ID)
+        image_response = fetcher(
+            "POST",
+            _join_url(base_url, "/images/generations"),
+            {
+                "Authorization": f"Bearer {api_token}",
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "x-request-id": _IMAGE_REQUEST_ID,
+            },
+            _json_bytes(
+                {
+                    "model": image_model,
+                    "prompt": "AiManager live ycapi smoke image.",
+                    "n": 1,
+                    "size": "512x512",
+                    "response_format": "b64_json",
+                }
+            ),
+        )
+    except (OSError, ValueError, http.client.HTTPException) as exc:
+        return _roundtrip_result(
+            status="FAIL",
+            detail=f"ycapi image roundtrip request failed: {type(exc).__name__}",
+            model_status_code=model_status_code,
+            model_count=model_count,
+            observed_models=observed_models,
+            chat_status_code=chat_status_code,
+            image_status_code=image_status_code,
+            chat_usage_present=chat_usage_present,
+            image_result_count=image_result_count,
+            request_ids=tuple(request_ids),
+        )
+    image_status_code = image_response.status_code
+    if image_response.status_code != 200:
+        return _roundtrip_result(
+            status="FAIL",
+            detail=f"ycapi image roundtrip returned HTTP {image_response.status_code}",
+            model_status_code=model_status_code,
+            model_count=model_count,
+            observed_models=observed_models,
+            chat_status_code=chat_status_code,
+            image_status_code=image_status_code,
+            chat_usage_present=chat_usage_present,
+            image_result_count=image_result_count,
+            request_ids=tuple(request_ids),
+        )
+    image_payload = _decode_json(image_response.body)
+    if image_payload is None:
+        return _roundtrip_result(
+            status="FAIL",
+            detail="ycapi image roundtrip returned non-JSON response",
+            model_status_code=model_status_code,
+            model_count=model_count,
+            observed_models=observed_models,
+            chat_status_code=chat_status_code,
+            image_status_code=image_status_code,
+            chat_usage_present=chat_usage_present,
+            image_result_count=image_result_count,
+            request_ids=tuple(request_ids),
+        )
+    image_result_count = _image_result_count(image_payload)
+    if image_result_count <= 0:
+        return _roundtrip_result(
+            status="FAIL",
+            detail="ycapi image roundtrip did not return image data",
+            model_status_code=model_status_code,
+            model_count=model_count,
+            observed_models=observed_models,
+            chat_status_code=chat_status_code,
+            image_status_code=image_status_code,
+            chat_usage_present=chat_usage_present,
+            image_result_count=image_result_count,
+            request_ids=tuple(request_ids),
+        )
+    return _roundtrip_result(
+        status="PASS",
+        detail=f"ycapi /models returned {model_count} model(s); chat/image roundtrip passed",
+        model_status_code=model_status_code,
+        model_count=model_count,
+        observed_models=observed_models,
+        chat_status_code=chat_status_code,
+        image_status_code=image_status_code,
+        chat_usage_present=chat_usage_present,
+        image_result_count=image_result_count,
+        request_ids=tuple(request_ids),
+    )
+
+
+def _roundtrip_result(
+    *,
+    status: LiveYcapiStatus,
+    detail: str,
+    model_status_code: int,
+    model_count: int,
+    observed_models: tuple[str, ...],
+    chat_status_code: int | None,
+    image_status_code: int | None,
+    chat_usage_present: bool,
+    image_result_count: int,
+    request_ids: tuple[str, ...],
+) -> LiveYcapiSmokeResult:
+    return LiveYcapiSmokeResult(
+        status=status,
+        detail=detail,
+        status_code=model_status_code,
+        model_count=model_count,
+        observed_models=observed_models,
+        inference_checked=True,
+        chat_status_code=chat_status_code,
+        image_status_code=image_status_code,
+        chat_usage_present=chat_usage_present,
+        image_result_count=image_result_count,
+        roundtrip_request_ids=request_ids,
     )
 
 
@@ -127,6 +396,41 @@ def _extract_model_ids(payload: Any) -> tuple[str, ...]:
         if isinstance(model_id, str) and model_id.strip():
             model_ids.append(model_id)
     return tuple(model_ids)
+
+
+def _decode_json(body: bytes) -> dict[str, Any] | None:
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _has_positive_usage(payload: dict[str, Any]) -> bool:
+    usage = payload.get("usage")
+    if not isinstance(usage, dict):
+        return False
+    total_tokens = usage.get("total_tokens")
+    return isinstance(total_tokens, int) and total_tokens > 0
+
+
+def _image_result_count(payload: dict[str, Any]) -> int:
+    data = payload.get("data")
+    if not isinstance(data, list):
+        return 0
+    result_count = 0
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        if isinstance(item.get("b64_json"), str) and item["b64_json"].strip():
+            result_count += 1
+        elif isinstance(item.get("url"), str) and item["url"].strip():
+            result_count += 1
+    return result_count
+
+
+def _json_bytes(payload: dict[str, Any]) -> bytes:
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
 
 
 def _fetch_with_urllib(*, timeout_seconds: float) -> Fetch:
@@ -171,6 +475,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=[],
         help="Model id expected in ycapi /models. Repeat for multiple models.",
     )
+    parser.add_argument(
+        "--run-inference-roundtrip",
+        action="store_true",
+        help="Also run one live chat and one live image generation request after /models passes.",
+    )
+    parser.add_argument("--chat-model", default=DEFAULT_CHAT_MODEL)
+    parser.add_argument("--image-model", default=DEFAULT_IMAGE_MODEL)
     parser.add_argument("--timeout", type=float, default=10)
     parser.add_argument("--output-json-file", help="Optional path to write the smoke result JSON.")
     args = parser.parse_args(argv)
@@ -181,6 +492,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             api_token=os.environ.get(args.api_token_env, ""),
             token_env_name=args.api_token_env,
             expected_models=args.expect_model,
+            run_inference_roundtrip=args.run_inference_roundtrip,
+            chat_model=args.chat_model,
+            image_model=args.image_model,
             timeout_seconds=args.timeout,
         )
     except Exception as exc:
@@ -196,7 +510,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     print(
         f"{result.status} live ycapi smoke: "
-        f"status_code={result.status_code or '-'} model_count={result.model_count} {result.detail}"
+        f"status_code={result.status_code or '-'} model_count={result.model_count} "
+        f"inference_checked={str(result.inference_checked).lower()} {result.detail}"
     )
     if write_error:
         print(f"WARN live ycapi smoke result file not written: {write_error}", file=sys.stderr)

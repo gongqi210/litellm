@@ -49,6 +49,149 @@ def test_live_ycapi_smoke_gets_models_without_printing_token() -> None:
     assert len(calls) == 1
 
 
+def test_live_ycapi_smoke_can_run_chat_and_image_roundtrip_without_logging_content() -> None:
+    token = "ycapi-token-secret"
+    calls: list[tuple[str, str, dict[str, str], dict[str, object] | None]] = []
+
+    def fetch(method: str, url: str, headers: dict[str, str], body: bytes | None) -> HttpResponse:
+        payload = json.loads(body.decode("utf-8")) if body else None
+        calls.append((method, url, headers, payload))
+        assert headers["Authorization"] == f"Bearer {token}"
+        if url.endswith("/models"):
+            return _models_response(["gemini-2.5-flash", "deepseek-chat", "ycapi-image-1"])
+        if url.endswith("/chat/completions"):
+            assert method == "POST"
+            assert payload is not None
+            assert payload["model"] == "gemini-2.5-flash"
+            assert "messages" in payload
+            return HttpResponse(
+                status_code=200,
+                headers={"Content-Type": "application/json", "x-request-id": "ycapi-chat-request-id"},
+                body=json.dumps(
+                    {
+                        "id": "chatcmpl-live-smoke",
+                        "object": "chat.completion",
+                        "choices": [{"message": {"role": "assistant", "content": "do not log me"}}],
+                        "usage": {"prompt_tokens": 6, "completion_tokens": 3, "total_tokens": 9},
+                    }
+                ).encode("utf-8"),
+            )
+        if url.endswith("/images/generations"):
+            assert method == "POST"
+            assert payload is not None
+            assert payload["model"] == "ycapi-image-1"
+            assert payload["response_format"] == "b64_json"
+            return HttpResponse(
+                status_code=200,
+                headers={"Content-Type": "application/json", "x-request-id": "ycapi-image-request-id"},
+                body=json.dumps({"created": 1, "data": [{"b64_json": "raw-image-content-not-for-output"}]}).encode(
+                    "utf-8"
+                ),
+            )
+        raise AssertionError(url)
+
+    result = run_live_ycapi_smoke(
+        base_url="https://ycapi.ycaicloud.com/v1",
+        api_token=token,
+        expected_models=("gemini-2.5-flash", "ycapi-image-1"),
+        run_inference_roundtrip=True,
+        fetch=fetch,
+    )
+
+    assert result.status == "PASS"
+    assert result.inference_checked is True
+    assert result.chat_status_code == 200
+    assert result.image_status_code == 200
+    assert result.chat_usage_present is True
+    assert result.image_result_count == 1
+    assert result.roundtrip_request_ids == (
+        "aimanager-live-ycapi-smoke-chat",
+        "aimanager-live-ycapi-smoke-image",
+    )
+    serialized = json.dumps(result.__dict__, ensure_ascii=False)
+    assert "ycapi-token-secret" not in serialized
+    assert "do not log me" not in serialized
+    assert "raw-image-content-not-for-output" not in serialized
+    assert [call[0] for call in calls] == ["GET", "POST", "POST"]
+
+
+def test_live_ycapi_smoke_fails_chat_roundtrip_without_echoing_response_body() -> None:
+    def fetch(method: str, url: str, headers: dict[str, str], body: bytes | None) -> HttpResponse:  # noqa: ARG001
+        if url.endswith("/models"):
+            return _models_response(["gemini-2.5-flash", "ycapi-image-1"])
+        if url.endswith("/chat/completions"):
+            return HttpResponse(
+                status_code=200,
+                headers={"Content-Type": "application/json"},
+                body=b'{"choices":[{"message":{"content":"Bearer ycapi-token-secret sk-secret-leak"}}]}',
+            )
+        raise AssertionError("image request should not run after chat failure")
+
+    result = run_live_ycapi_smoke(
+        base_url="https://ycapi.ycaicloud.com/v1",
+        api_token="ycapi-token-secret",
+        expected_models=("gemini-2.5-flash", "ycapi-image-1"),
+        run_inference_roundtrip=True,
+        fetch=fetch,
+    )
+
+    assert result.status == "FAIL"
+    assert result.detail == "ycapi chat roundtrip did not return usage"
+    assert result.inference_checked is True
+    assert result.chat_status_code == 200
+    assert result.image_status_code is None
+    assert "ycapi-token-secret" not in result.detail
+    assert "sk-secret-leak" not in result.detail
+
+
+def test_live_ycapi_smoke_rejects_unlisted_chat_model_before_paid_roundtrip() -> None:
+    calls: list[tuple[str, str]] = []
+
+    def fetch(method: str, url: str, headers: dict[str, str], body: bytes | None) -> HttpResponse:  # noqa: ARG001
+        calls.append((method, url))
+        if url.endswith("/models"):
+            return _models_response(["ycapi-image-1"])
+        raise AssertionError("roundtrip request should not run for unlisted chat model")
+
+    result = run_live_ycapi_smoke(
+        base_url="https://ycapi.ycaicloud.com/v1",
+        api_token="ycapi-token-secret",
+        run_inference_roundtrip=True,
+        chat_model="gemini-2.5-flash",
+        image_model="ycapi-image-1",
+        fetch=fetch,
+    )
+
+    assert result.status == "FAIL"
+    assert result.detail == "ycapi chat roundtrip model is not listed by /models: gemini-2.5-flash"
+    assert result.inference_checked is True
+    assert calls == [("GET", "https://ycapi.ycaicloud.com/v1/models")]
+
+
+def test_live_ycapi_smoke_rejects_unlisted_image_model_before_paid_roundtrip() -> None:
+    calls: list[tuple[str, str]] = []
+
+    def fetch(method: str, url: str, headers: dict[str, str], body: bytes | None) -> HttpResponse:  # noqa: ARG001
+        calls.append((method, url))
+        if url.endswith("/models"):
+            return _models_response(["gemini-2.5-flash"])
+        raise AssertionError("roundtrip request should not run for unlisted image model")
+
+    result = run_live_ycapi_smoke(
+        base_url="https://ycapi.ycaicloud.com/v1",
+        api_token="ycapi-token-secret",
+        run_inference_roundtrip=True,
+        chat_model="gemini-2.5-flash",
+        image_model="ycapi-image-1",
+        fetch=fetch,
+    )
+
+    assert result.status == "FAIL"
+    assert result.detail == "ycapi image roundtrip model is not listed by /models: ycapi-image-1"
+    assert result.inference_checked is True
+    assert calls == [("GET", "https://ycapi.ycaicloud.com/v1/models")]
+
+
 def test_live_ycapi_smoke_fails_when_expected_model_is_missing() -> None:
     result = run_live_ycapi_smoke(
         base_url="https://ycapi.ycaicloud.com/v1",

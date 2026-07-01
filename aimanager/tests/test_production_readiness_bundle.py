@@ -83,6 +83,54 @@ def test_production_readiness_runs_work_context_enforcement_smoke_and_redacts_em
     assert ac20["evidence"]["results"][0]["path"] == "/v1/chat/completions"
 
 
+def test_production_readiness_live_ycapi_evidence_includes_inference_roundtrip_metadata() -> None:
+    calls: list[dict[str, object]] = []
+
+    def live_ycapi_runner(**kwargs):
+        calls.append(kwargs)
+        return _script_result(
+            status="PASS",
+            detail="ycapi /models, chat, and image roundtrip passed",
+            status_code=200,
+            model_count=3,
+            observed_models=("gemini-2.5-flash", "deepseek-chat", "ycapi-image-1"),
+            inference_checked=True,
+            chat_status_code=200,
+            image_status_code=200,
+            chat_usage_present=True,
+            image_result_count=1,
+            roundtrip_request_ids=("aimanager-live-ycapi-smoke-chat", "aimanager-live-ycapi-smoke-image"),
+        )
+
+    bundle = collect_production_readiness(
+        env={"YCAPI_API_TOKEN": "ycapi-redaction-value"},
+        admin_boundary_runner=lambda **kwargs: [
+            _script_result(status="PASS", detail="business/admin edge checks passed")
+        ],
+        live_ycapi_runner=live_ycapi_runner,
+        wecom_router=lambda **kwargs: _script_result(status="BLOCKED", detail="missing webhook"),
+        finance_runner=lambda **kwargs: CheckResult(
+            id="AC-12-13-FINANCE",
+            name="finance_export_reconciliation",
+            status="BLOCKED",
+            detail="missing files",
+            evidence={},
+        ),
+    )
+
+    ac19 = next(check for check in bundle["checks"] if check["id"] == "AC-19")
+    assert calls[0]["run_inference_roundtrip"] is True
+    assert ac19["status"] == "PASS"
+    assert ac19["evidence"]["inference_checked"] is True
+    assert ac19["evidence"]["chat_usage_present"] is True
+    assert ac19["evidence"]["image_result_count"] == 1
+    assert ac19["evidence"]["roundtrip_request_ids"] == [
+        "aimanager-live-ycapi-smoke-chat",
+        "aimanager-live-ycapi-smoke-image",
+    ]
+    assert "ycapi-redaction-value" not in json.dumps(bundle, ensure_ascii=False)
+
+
 def test_production_readiness_fails_when_work_context_smoke_reaches_provider() -> None:
     bundle = collect_production_readiness(
         env=_work_context_env(),
@@ -936,25 +984,27 @@ def test_finance_evidence_blocks_non_billable_placeholder_inputs(tmp_path) -> No
     assert "billable" in finance_check["detail"]
 
 
-def _script_result(*, status: str, detail: str):
+def _script_result(*, status: str, detail: str, **overrides: object):
+    fields = {
+        "status": status,
+        "detail": detail,
+        "status_code": 200 if status == "PASS" else None,
+        "model_count": 3 if status == "PASS" else 0,
+        "observed_models": ("gemini-2.5-flash", "deepseek-chat", "ycapi-image-1") if status == "PASS" else (),
+        "alert_count": 1,
+        "delivered_count": 1 if status == "PASS" else 0,
+        "payload": None,
+        "name": "script_case",
+        "surface": "business",
+        "method": "GET",
+        "path": "/ui",
+        "policy_code": "aimanager_route_not_allowed",
+    }
+    fields.update(overrides)
     return type(
         "ScriptResult",
         (),
-        {
-            "status": status,
-            "detail": detail,
-            "status_code": 200 if status == "PASS" else None,
-            "model_count": 3 if status == "PASS" else 0,
-            "observed_models": ("gemini-2.5-flash", "deepseek-chat", "ycapi-image-1") if status == "PASS" else (),
-            "alert_count": 1,
-            "delivered_count": 1 if status == "PASS" else 0,
-            "payload": None,
-            "name": "script_case",
-            "surface": "business",
-            "method": "GET",
-            "path": "/ui",
-            "policy_code": "aimanager_route_not_allowed",
-        },
+        fields,
     )()
 
 

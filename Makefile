@@ -1,7 +1,7 @@
 # LiteLLM Makefile
 # Simple Makefile for running tests and basic development tasks
 
-.PHONY: help policy-check key-inventory-export key-inventory-readiness admin-boundary-smoke admin-boundary-readiness finance-export finance-readiness wecom-alert-route wecom-alert-readiness production-readiness live-ycapi-preflight work-context-enforcement-smoke work-context-enforcement-readiness production-policy-readiness employee-monitoring-validate lightweight-trial-evidence-capture acceptance-gate evidence-handoff evidence-template-pack evidence-intake test test-unit test-unit-llms test-unit-proxy-guardrails test-unit-proxy-core test-unit-proxy-misc \
+.PHONY: help policy-check key-inventory-export key-inventory-readiness admin-boundary-smoke admin-boundary-readiness finance-export finance-readiness wecom-alert-route wecom-alert-readiness production-readiness live-ycapi-preflight live-ycapi-roundtrip work-context-enforcement-smoke work-context-enforcement-readiness production-policy-readiness employee-monitoring-validate lightweight-trial-evidence-capture acceptance-gate evidence-handoff evidence-template-pack evidence-intake test test-unit test-unit-llms test-unit-proxy-guardrails test-unit-proxy-core test-unit-proxy-misc \
 	test-unit-integrations test-unit-core-utils test-unit-other test-unit-root \
 	test-proxy-unit-a test-proxy-unit-b test-integration test-unit-helm \
 	info lint lint-dev format \
@@ -24,6 +24,7 @@ help:
 	@echo "  make wecom-alert-readiness - Dry-run WeCom payload and rerun live readiness for AC-16"
 	@echo "  make production-readiness - Run AiManager production readiness bundle"
 	@echo "  make live-ycapi-preflight - Run read-only live ycapi /models preflight for AC-19"
+	@echo "  make live-ycapi-roundtrip - Run live ycapi /models + chat/image roundtrip smoke for AC-19"
 	@echo "  make work-context-enforcement-smoke - Verify business chat/image reject missing work context"
 	@echo "  make work-context-enforcement-readiness - Smoke work-context fail-closed and rerun readiness for AC-20"
 	@echo "  make production-policy-readiness - Rerun production readiness with AC-POLICY attestation"
@@ -110,6 +111,9 @@ production-readiness:
 
 live-ycapi-preflight:
 	PYTHONPATH="$$(pwd)" uv run --no-project python -m aimanager.scripts.smoke_live_ycapi --expect-model gemini-2.5-flash --expect-model deepseek-chat --expect-model ycapi-image-1
+
+live-ycapi-roundtrip:
+	PYTHONPATH="$$(pwd)" uv run --no-project python -m aimanager.scripts.smoke_live_ycapi --expect-model gemini-2.5-flash --expect-model deepseek-chat --expect-model ycapi-image-1 --run-inference-roundtrip
 
 work-context-enforcement-smoke:
 	PYTHONPATH="$$(pwd)" uv run --no-project python -m aimanager.scripts.smoke_work_context_enforcement --base-url "$${AIMANAGER_BUSINESS_BASE_URL:-http://localhost:4000}"

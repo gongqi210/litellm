@@ -66,8 +66,11 @@ _GAP_CATALOG: dict[str, dict[str, object]] = {
     "AC-19": {
         "owner": "architecture/ops",
         "required_env": ["YCAPI_API_TOKEN"],
-        "command": "make live-ycapi-preflight",
-        "next_action": "在生产侧注入真实 ycapi token，跑只读 /models preflight；输出不得包含 token、请求 URL 或响应 body。",
+        "command": "make live-ycapi-roundtrip",
+        "next_action": (
+            "在生产侧注入真实 ycapi token，跑 /models + chat/image roundtrip；"
+            "输出只保留状态码、模型数量、usage/image 计数和 request id，不得包含 token、请求 URL、prompt 或响应 body。"
+        ),
     },
     "AC-20": {
         "owner": "product/engineering/security/ops",

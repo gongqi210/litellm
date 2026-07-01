@@ -216,6 +216,7 @@ def _live_ycapi_check(env: Mapping[str, str], *, live_ycapi_runner: LiveYcapiRun
             api_token=_env_value(env, "YCAPI_API_TOKEN"),
             token_env_name="YCAPI_API_TOKEN",
             expected_models=DEFAULT_EXPECTED_MODELS,
+            run_inference_roundtrip=True,
         )
     except Exception as exc:
         return CheckResult(
@@ -234,6 +235,12 @@ def _live_ycapi_check(env: Mapping[str, str], *, live_ycapi_runner: LiveYcapiRun
             "model_count": getattr(result, "model_count", 0),
             "expected_models": list(DEFAULT_EXPECTED_MODELS),
             "observed_models": list(getattr(result, "observed_models", ())),
+            "inference_checked": getattr(result, "inference_checked", False),
+            "chat_status_code": getattr(result, "chat_status_code", None),
+            "image_status_code": getattr(result, "image_status_code", None),
+            "chat_usage_present": getattr(result, "chat_usage_present", False),
+            "image_result_count": getattr(result, "image_result_count", 0),
+            "roundtrip_request_ids": list(getattr(result, "roundtrip_request_ids", ())),
             "required_env": ["YCAPI_API_TOKEN"],
         },
     )

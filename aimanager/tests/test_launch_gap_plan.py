@@ -243,9 +243,10 @@ def test_launch_gap_plan_assigns_live_ycapi_gap_to_make_target(tmp_path) -> None
     assert gap["id"] == "AC-19"
     assert gap["owner"] == "architecture/ops"
     assert gap["required_env"] == ["YCAPI_API_TOKEN"]
-    assert gap["command"] == "make live-ycapi-preflight"
+    assert gap["command"] == "make live-ycapi-roundtrip"
     assert "<" not in gap["command"]
-    assert "只读 /models preflight" in gap["next_action"]
+    assert "/models + chat/image roundtrip" in gap["next_action"]
+    assert "prompt" in gap["next_action"]
 
 
 def test_launch_gap_plan_assigns_work_context_gap_to_env_driven_smoke_target(tmp_path) -> None:

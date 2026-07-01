@@ -97,6 +97,7 @@ def test_aimanager_cli_entry_emits_machine_readable_status() -> None:
     assert payload["commands"]["admin_boundary_readiness"] == "make admin-boundary-readiness"
     assert payload["commands"]["wecom_alert_readiness"] == "make wecom-alert-readiness"
     assert payload["commands"]["live_ycapi_preflight"] == "make live-ycapi-preflight"
+    assert payload["commands"]["live_ycapi_roundtrip"] == "make live-ycapi-roundtrip"
     assert payload["commands"]["work_context_enforcement_smoke"] == "make work-context-enforcement-smoke"
     assert payload["commands"]["work_context_enforcement_readiness"] == "make work-context-enforcement-readiness"
     assert payload["commands"]["production_policy_readiness"] == "make production-policy-readiness"
