@@ -22,7 +22,7 @@ def test_acceptance_coverage_matrix_covers_real_acceptance_doc() -> None:
     assert result["doc_coverage"]["missing_in_doc"] == []
     assert result["status"] == "BLOCKED"
     assert result["summary"]["FAIL"] == 0
-    assert result["summary"]["BLOCKED"] == 8
+    assert result["summary"]["BLOCKED"] == 9
 
 
 def test_acceptance_coverage_matrix_overlays_bundle_checks_and_merged_ids(tmp_path) -> None:
@@ -33,6 +33,7 @@ def test_acceptance_coverage_matrix_overlays_bundle_checks_and_merged_ids(tmp_pa
             _bundle(
                 [
                     _check("AC-15", "production_admin_boundary", "BLOCKED", "missing production URLs"),
+                    _check("AC-20", "production_work_context_enforcement", "PASS", "work context smoke ok"),
                     _check("AC-19", "live_ycapi_preflight", "PASS", "ycapi ok"),
                     _check("AC-08-KEY-INVENTORY", "production_key_inventory_governance", "PASS", "key inventory ok"),
                     _check("AC-16-WECOM", "wecom_alert_routing", "PASS", "alert delivered"),
@@ -75,6 +76,8 @@ def test_acceptance_coverage_matrix_overlays_bundle_checks_and_merged_ids(tmp_pa
     assert by_id["AC-12"]["status"] == "PASS"
     assert by_id["AC-13"]["bundle_check_id"] == "AC-12-13-FINANCE"
     assert by_id["AC-15"]["status"] == "BLOCKED"
+    assert by_id["AC-20"]["status"] == "PASS"
+    assert by_id["AC-20"]["bundle_check_id"] == "AC-20"
     assert by_id["AC-23"]["status"] == "FAIL"
     assert by_id["AC-23"]["detail"] == "operator took too long"
     assert "AC-23" in result["markdown"]
@@ -87,6 +90,7 @@ def test_acceptance_coverage_matrix_fails_when_supplied_bundle_omits_registered_
             _bundle(
                 [
                     _check("AC-15", "production_admin_boundary", "PASS", "ok"),
+                    _check("AC-20", "production_work_context_enforcement", "PASS", "ok"),
                     _check("AC-19", "live_ycapi_preflight", "PASS", "ok"),
                     _check("AC-08-KEY-INVENTORY", "production_key_inventory_governance", "PASS", "ok"),
                     _check("AC-12-13-FINANCE", "finance_reconciliation", "PASS", "ok"),
@@ -119,6 +123,7 @@ def test_acceptance_coverage_matrix_fails_on_unregistered_bundle_checks(tmp_path
             _bundle(
                 [
                     _check("AC-15", "production_admin_boundary", "PASS", "ok"),
+                    _check("AC-20", "production_work_context_enforcement", "PASS", "ok"),
                     _check("AC-19", "live_ycapi_preflight", "PASS", "ok"),
                     _check("AC-08-KEY-INVENTORY", "production_key_inventory_governance", "PASS", "ok"),
                     _check("AC-16-WECOM", "wecom_alert_routing", "PASS", "ok"),

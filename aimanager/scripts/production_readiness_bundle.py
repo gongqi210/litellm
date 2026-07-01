@@ -21,6 +21,7 @@ from aimanager.scripts.export_finance import export_finance_csvs
 from aimanager.scripts.route_observability_alerts import route_observability_alerts
 from aimanager.scripts.smoke_admin_boundary import run_admin_boundary_smoke
 from aimanager.scripts.smoke_live_ycapi import DEFAULT_YCAPI_BASE_URL, run_live_ycapi_smoke
+from aimanager.scripts.smoke_work_context_enforcement import run_work_context_enforcement_smoke
 from aimanager.scripts.validate_key_inventory import collect_key_inventory_validation
 
 
@@ -42,6 +43,7 @@ AdminBoundaryRunner = Callable[..., Sequence[Any]]
 LiveYcapiRunner = Callable[..., Any]
 WeComRouter = Callable[..., Any]
 FinanceRunner = Callable[..., CheckResult]
+WorkContextRunner = Callable[..., Sequence[Any]]
 _SECRET_LIKE_REDACTION = SECRET_LIKE_REDACTION
 
 
@@ -53,11 +55,13 @@ def collect_production_readiness(
     live_ycapi_runner: LiveYcapiRunner = run_live_ycapi_smoke,
     wecom_router: WeComRouter = route_observability_alerts,
     finance_runner: FinanceRunner | None = None,
+    work_context_runner: WorkContextRunner = run_work_context_enforcement_smoke,
 ) -> dict[str, Any]:
     current_env = os.environ if env is None else env
     redactions = _redactions(current_env)
     checks = [
         _admin_boundary_check(current_env, admin_boundary_runner=admin_boundary_runner),
+        _work_context_enforcement_check(current_env, work_context_runner=work_context_runner),
         _live_ycapi_check(current_env, live_ycapi_runner=live_ycapi_runner),
         _key_inventory_check(current_env, generated_at=generated_at),
         _wecom_routing_check(current_env, wecom_router=wecom_router),
@@ -127,6 +131,78 @@ def _admin_boundary_result_evidence(result: object) -> dict[str, object]:
         "method": getattr(result, "method", ""),
         "path": getattr(result, "path", ""),
         "status": _coerce_status(getattr(result, "status", "FAIL")),
+        "status_code": getattr(result, "status_code", None),
+        "policy_code": getattr(result, "policy_code", None),
+        "detail": str(getattr(result, "detail", "")),
+    }
+
+
+def _work_context_enforcement_check(
+    env: Mapping[str, str], *, work_context_runner: WorkContextRunner
+) -> CheckResult:
+    required_env = ["AIMANAGER_BUSINESS_BASE_URL", "AIMANAGER_EMPLOYEE_VIRTUAL_KEY"]
+    missing = [name for name in required_env if not _env_value(env, name)]
+    if missing:
+        return CheckResult(
+            id="AC-20",
+            name="production_work_context_enforcement",
+            status="BLOCKED",
+            detail=(
+                f"missing {', '.join(missing)}; cannot verify production business surface "
+                "rejects missing work-context metadata"
+            ),
+            evidence={"required_env": required_env},
+        )
+
+    try:
+        results = list(
+            work_context_runner(
+                base_url=_env_value(env, "AIMANAGER_BUSINESS_BASE_URL"),
+                employee_key=_env_value(env, "AIMANAGER_EMPLOYEE_VIRTUAL_KEY"),
+                request_marker=_env_value(env, "AIMANAGER_WORK_CONTEXT_SMOKE_MARKER") or "production-readiness",
+            )
+        )
+    except Exception as exc:
+        return CheckResult(
+            id="AC-20",
+            name="production_work_context_enforcement",
+            status="FAIL",
+            detail=f"work-context enforcement smoke failed: {type(exc).__name__}",
+            evidence={"required_env": required_env},
+        )
+
+    if not results:
+        return CheckResult(
+            id="AC-20",
+            name="production_work_context_enforcement",
+            status="BLOCKED",
+            detail="work-context enforcement smoke returned no results",
+            evidence={"required_env": required_env, "result_count": 0},
+        )
+
+    statuses = ["PASS" if getattr(result, "passed", False) else "FAIL" for result in results]
+    details = [str(getattr(result, "detail", "")) for result in results if getattr(result, "detail", "")]
+    return CheckResult(
+        id="AC-20",
+        name="production_work_context_enforcement",
+        status=_overall_status(statuses),
+        detail=_compact_detail(details, default="work-context enforcement smoke completed"),
+        evidence={
+            "required_env": required_env,
+            "result_count": len(results),
+            **_count_statuses(statuses),
+            "results": [_work_context_result_evidence(result) for result in results],
+        },
+    )
+
+
+def _work_context_result_evidence(result: object) -> dict[str, object]:
+    case = getattr(result, "case", None)
+    return {
+        "method": getattr(case, "method", ""),
+        "path": getattr(case, "path", ""),
+        "model": getattr(case, "model", ""),
+        "status": "PASS" if getattr(result, "passed", False) else "FAIL",
         "status_code": getattr(result, "status_code", None),
         "policy_code": getattr(result, "policy_code", None),
         "detail": str(getattr(result, "detail", "")),

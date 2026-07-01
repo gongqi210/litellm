@@ -111,7 +111,21 @@ DEFAULT_GATE_REGISTRY: tuple[AcceptanceGate, ...] = (
         bundle_check_id="AC-19",
         bundle_source="production_readiness",
     ),
-    AcceptanceGate("AC-20", "product/engineering", "local_test", ("aimanager/work_context.py", "aimanager/scripts/validate_work_context.py", "aimanager/tests/test_work_context.py")),
+    AcceptanceGate(
+        "AC-20",
+        "product/engineering/security/ops",
+        "bundle_check",
+        (
+            "aimanager/work_context.py",
+            "aimanager/scripts/validate_work_context.py",
+            "aimanager/scripts/smoke_work_context_enforcement.py",
+            "aimanager/tests/test_work_context.py",
+            "aimanager/tests/test_policy_chat_body.py",
+            "aimanager/tests/test_work_context_enforcement_smoke.py",
+        ),
+        bundle_check_id="AC-20",
+        bundle_source="production_readiness",
+    ),
     AcceptanceGate("AC-21", "product/marketing", "local_test", ("aimanager/work_context.py", "aimanager/tests/test_work_context.py")),
     AcceptanceGate("AC-22", "marketing/legal", "local_test", ("aimanager/work_context.py", "aimanager/tests/test_work_context.py")),
     AcceptanceGate(

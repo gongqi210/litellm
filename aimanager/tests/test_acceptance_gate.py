@@ -16,6 +16,7 @@ GOLDEN_GENERATED_AT = "2026-06-30T03:00:00Z"
 GOLDEN_FIXTURE_DIR = PROJECT_ROOT / "aimanager/tests/fixtures/acceptance_golden"
 M1_CHECK_IDS = (
     "AC-15",
+    "AC-20",
     "AC-19",
     "AC-08-KEY-INVENTORY",
     "AC-16-WECOM",
@@ -148,6 +149,7 @@ def test_acceptance_gate_reaches_pass_with_real_collectors_and_golden_evidence(t
         return collect_production_readiness(
             **kwargs,
             admin_boundary_runner=_passing_admin_boundary_runner,
+            work_context_runner=_passing_work_context_runner,
             live_ycapi_runner=_passing_live_ycapi_runner,
             wecom_router=_passing_wecom_router,
         )
@@ -401,6 +403,7 @@ def test_acceptance_gate_cli_reports_failure_when_output_dir_cannot_be_created(t
 def test_acceptance_gate_cli_runs_empty_env_without_production_secrets(tmp_path: Path, monkeypatch, capsys) -> None:
     for name in (
         "AIMANAGER_BUSINESS_BASE_URL",
+        "AIMANAGER_EMPLOYEE_VIRTUAL_KEY",
         "AIMANAGER_PUBLIC_ADMIN_URL",
         "AIMANAGER_OBSERVABILITY_REPORT_FILE",
         "AIMANAGER_WECOM_WEBHOOK_URL",
@@ -490,6 +493,7 @@ def _golden_acceptance_env(tmp_path: Path) -> dict[str, str]:
         "AIMANAGER_BUSINESS_BASE_URL": "https://aimanager-business.internal.invalid",
         "AIMANAGER_PUBLIC_ADMIN_URL": "https://aimanager-admin.internal.invalid",
         "AIMANAGER_ALLOWED_SSO_REDIRECT_HOSTS": "sso.company.internal",
+        "AIMANAGER_EMPLOYEE_VIRTUAL_KEY": "synthetic-employee-virtual-key-from-secure-env",
         "YCAPI_API_TOKEN": "synthetic-ycapi-credential-from-secure-env",
         "AIMANAGER_KEY_INVENTORY_FILE": str(GOLDEN_FIXTURE_DIR / "key-inventory.json"),
         "AIMANAGER_OBSERVABILITY_REPORT_FILE": str(GOLDEN_FIXTURE_DIR / "observability.json"),
@@ -540,6 +544,25 @@ def _passing_live_ycapi_runner(**_: object) -> SimpleNamespace:
         model_count=3,
         observed_models=("gemini-2.5-flash", "deepseek-chat", "ycapi-image-1"),
     )
+
+
+def _passing_work_context_runner(**_: object) -> list[SimpleNamespace]:
+    return [
+        SimpleNamespace(
+            case=SimpleNamespace(method="POST", path="/v1/chat/completions", model="gemini-2.5-flash"),
+            passed=True,
+            detail="chat missing metadata rejected before provider dispatch",
+            status_code=400,
+            policy_code="aimanager_work_context_invalid",
+        ),
+        SimpleNamespace(
+            case=SimpleNamespace(method="POST", path="/v1/images/generations", model="ycapi-image-1"),
+            passed=True,
+            detail="image missing metadata rejected before provider dispatch",
+            status_code=400,
+            policy_code="aimanager_work_context_invalid",
+        ),
+    ]
 
 
 def _passing_wecom_router(**_: object) -> SimpleNamespace:

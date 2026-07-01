@@ -241,6 +241,37 @@ def test_launch_gap_plan_assigns_live_ycapi_gap_to_make_target(tmp_path) -> None
     assert "只读 /models preflight" in gap["next_action"]
 
 
+def test_launch_gap_plan_assigns_work_context_gap_to_env_driven_smoke_target(tmp_path) -> None:
+    production_file = tmp_path / "production-readiness.json"
+    production_file.write_text(
+        json.dumps(
+            _bundle(
+                checks=[
+                    _check(
+                        "AC-20",
+                        "production_work_context_enforcement",
+                        "BLOCKED",
+                        "missing production work-context smoke inputs",
+                        {"required_env": ["AIMANAGER_BUSINESS_BASE_URL", "AIMANAGER_EMPLOYEE_VIRTUAL_KEY"]},
+                    )
+                ]
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    result = collect_launch_gap_plan(production_readiness_file=production_file)
+
+    gap = result["gaps"][0]
+    assert gap["id"] == "AC-20"
+    assert gap["owner"] == "product/engineering/security/ops"
+    assert gap["required_env"] == ["AIMANAGER_BUSINESS_BASE_URL", "AIMANAGER_EMPLOYEE_VIRTUAL_KEY"]
+    assert gap["command"] == "make work-context-enforcement-readiness"
+    assert "<" not in gap["command"]
+    assert "aimanager_work_context_invalid" in gap["next_action"]
+    assert "metadata" in gap["next_action"]
+
+
 def test_launch_gap_plan_assigns_policy_gap_to_env_driven_make_target(tmp_path) -> None:
     production_file = tmp_path / "production-readiness.json"
     production_file.write_text(

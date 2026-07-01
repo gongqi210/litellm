@@ -10,6 +10,7 @@ from aimanager.scripts.production_readiness_bundle import (
     main,
 )
 from aimanager.scripts.smoke_admin_boundary import AdminBoundaryResult
+from aimanager.scripts.smoke_work_context_enforcement import WorkContextSmokeCase, WorkContextSmokeResult
 
 GENERATED_AT = "2026-07-01T02:30:00Z"
 
@@ -21,15 +22,147 @@ def test_production_readiness_blocks_without_required_inputs() -> None:
     statuses = {check["id"]: check["status"] for check in bundle["checks"]}
     assert statuses == {
         "AC-15": "BLOCKED",
+        "AC-20": "BLOCKED",
         "AC-19": "BLOCKED",
         "AC-08-KEY-INVENTORY": "BLOCKED",
         "AC-16-WECOM": "BLOCKED",
         "AC-12-13-FINANCE": "BLOCKED",
         "AC-POLICY": "BLOCKED",
     }
-    assert "YCAPI_API_TOKEN" in bundle["checks"][1]["detail"]
+    ac19 = next(check for check in bundle["checks"] if check["id"] == "AC-19")
+    ac20 = next(check for check in bundle["checks"] if check["id"] == "AC-20")
+    assert "YCAPI_API_TOKEN" in ac19["detail"]
+    assert "AIMANAGER_BUSINESS_BASE_URL" in ac20["detail"]
+    assert "AIMANAGER_EMPLOYEE_VIRTUAL_KEY" in ac20["detail"]
+    assert ac20["evidence"]["required_env"] == [
+        "AIMANAGER_BUSINESS_BASE_URL",
+        "AIMANAGER_EMPLOYEE_VIRTUAL_KEY",
+    ]
     assert bundle["checks"][0]["evidence"]["result_count"] == 2
     assert "AIMANAGER_WECOM_WEBHOOK_URL" in json.dumps(bundle, ensure_ascii=False)
+
+
+def test_production_readiness_runs_work_context_enforcement_smoke_and_redacts_employee_key() -> None:
+    calls: list[dict[str, object]] = []
+
+    def runner(**kwargs):
+        calls.append(kwargs)
+        return [
+            _work_context_result(detail="blocked with employee key sk-employee-redaction-value"),
+            _work_context_result(path="/v1/images/generations", model="ycapi-image-1"),
+        ]
+
+    bundle = collect_production_readiness(
+        env=_work_context_env(),
+        admin_boundary_runner=lambda **kwargs: [
+            _script_result(status="PASS", detail="business/admin edge checks passed")
+        ],
+        live_ycapi_runner=lambda **kwargs: _script_result(status="PASS", detail="ycapi /models returned 3 models"),
+        wecom_router=lambda **kwargs: _script_result(status="BLOCKED", detail="missing webhook"),
+        finance_runner=lambda **kwargs: CheckResult(
+            id="AC-12-13-FINANCE",
+            name="finance_export_reconciliation",
+            status="PASS",
+            detail="finance files exported",
+            evidence={"output_files": ["aimanager_usage_daily.csv"]},
+        ),
+        work_context_runner=runner,
+    )
+
+    ac20 = next(check for check in bundle["checks"] if check["id"] == "AC-20")
+    serialized = json.dumps(bundle, ensure_ascii=False)
+    assert ac20["status"] == "PASS"
+    assert calls[0]["base_url"] == "https://aimanager.example.com"
+    assert calls[0]["employee_key"] == "sk-employee-redaction-value"
+    assert calls[0]["request_marker"] == "production-readiness"
+    assert "sk-employee-redaction-value" not in serialized
+    assert "DO_NOT_ECHO" not in serialized
+    assert "[redacted:AIMANAGER_EMPLOYEE_VIRTUAL_KEY]" in serialized
+    assert ac20["evidence"]["result_count"] == 2
+    assert ac20["evidence"]["pass_count"] == 2
+    assert ac20["evidence"]["results"][0]["path"] == "/v1/chat/completions"
+
+
+def test_production_readiness_fails_when_work_context_smoke_reaches_provider() -> None:
+    bundle = collect_production_readiness(
+        env=_work_context_env(),
+        admin_boundary_runner=lambda **kwargs: [
+            _script_result(status="PASS", detail="business/admin edge checks passed")
+        ],
+        live_ycapi_runner=lambda **kwargs: _script_result(status="PASS", detail="ycapi /models returned 3 models"),
+        wecom_router=lambda **kwargs: _script_result(status="BLOCKED", detail="missing webhook"),
+        finance_runner=lambda **kwargs: CheckResult(
+            id="AC-12-13-FINANCE",
+            name="finance_export_reconciliation",
+            status="PASS",
+            detail="finance files exported",
+            evidence={"output_files": ["aimanager_usage_daily.csv"]},
+        ),
+        work_context_runner=lambda **kwargs: [
+            _work_context_result(
+                passed=False,
+                detail="expected 400, got 200",
+                status_code=200,
+                policy_code=None,
+            )
+        ],
+    )
+
+    ac20 = next(check for check in bundle["checks"] if check["id"] == "AC-20")
+    assert bundle["status"] == "FAIL"
+    assert ac20["status"] == "FAIL"
+    assert "expected 400, got 200" in ac20["detail"]
+
+
+def test_production_readiness_fails_closed_when_work_context_smoke_raises() -> None:
+    def runner(**_: object):
+        raise OSError("network unavailable")
+
+    bundle = collect_production_readiness(
+        env=_work_context_env(),
+        admin_boundary_runner=lambda **kwargs: [
+            _script_result(status="PASS", detail="business/admin edge checks passed")
+        ],
+        live_ycapi_runner=lambda **kwargs: _script_result(status="PASS", detail="ycapi /models returned 3 models"),
+        wecom_router=lambda **kwargs: _script_result(status="BLOCKED", detail="missing webhook"),
+        finance_runner=lambda **kwargs: CheckResult(
+            id="AC-12-13-FINANCE",
+            name="finance_export_reconciliation",
+            status="PASS",
+            detail="finance files exported",
+            evidence={"output_files": ["aimanager_usage_daily.csv"]},
+        ),
+        work_context_runner=runner,
+    )
+
+    ac20 = next(check for check in bundle["checks"] if check["id"] == "AC-20")
+    assert bundle["status"] == "FAIL"
+    assert ac20["status"] == "FAIL"
+    assert "OSError" in ac20["detail"]
+
+
+def test_production_readiness_blocks_when_work_context_smoke_returns_no_cases() -> None:
+    bundle = collect_production_readiness(
+        env=_work_context_env(),
+        admin_boundary_runner=lambda **kwargs: [
+            _script_result(status="PASS", detail="business/admin edge checks passed")
+        ],
+        live_ycapi_runner=lambda **kwargs: _script_result(status="PASS", detail="ycapi /models returned 3 models"),
+        wecom_router=lambda **kwargs: _script_result(status="PASS", detail="sent 1 alert to WeCom webhook"),
+        finance_runner=lambda **kwargs: CheckResult(
+            id="AC-12-13-FINANCE",
+            name="finance_export_reconciliation",
+            status="PASS",
+            detail="finance files exported",
+            evidence={"output_files": ["aimanager_usage_daily.csv"]},
+        ),
+        work_context_runner=lambda **kwargs: [],
+    )
+
+    ac20 = next(check for check in bundle["checks"] if check["id"] == "AC-20")
+    assert bundle["status"] == "BLOCKED"
+    assert ac20["status"] == "BLOCKED"
+    assert ac20["evidence"]["result_count"] == 0
 
 
 def test_production_readiness_blocks_without_key_inventory() -> None:
@@ -82,6 +215,7 @@ def test_production_readiness_blocks_empty_key_inventory(tmp_path) -> None:
             "AIMANAGER_PRODUCTION_POLICY_ATTESTATION_FILE": str(policy_file),
             "AIMANAGER_OBSERVABILITY_REPORT_FILE": str(report_file),
             "AIMANAGER_WECOM_WEBHOOK_URL": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=redaction",
+            **_work_context_env(),
         },
         admin_boundary_runner=lambda **kwargs: [
             _script_result(status="PASS", detail="business/admin edge checks passed")
@@ -95,6 +229,7 @@ def test_production_readiness_blocks_empty_key_inventory(tmp_path) -> None:
             detail="finance files exported",
             evidence={"output_files": ["aimanager_usage_daily.csv"]},
         ),
+        work_context_runner=lambda **kwargs: _passing_work_context_results(),
     )
 
     key_inventory = next(check for check in bundle["checks"] if check["id"] == "AC-08-KEY-INVENTORY")
@@ -118,6 +253,7 @@ def test_production_readiness_passes_with_governed_key_inventory(tmp_path) -> No
             "AIMANAGER_PRODUCTION_POLICY_ATTESTATION_FILE": str(policy_file),
             "AIMANAGER_OBSERVABILITY_REPORT_FILE": str(report_file),
             "AIMANAGER_WECOM_WEBHOOK_URL": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=redaction",
+            **_work_context_env(),
         },
         admin_boundary_runner=lambda **kwargs: [
             _script_result(status="PASS", detail="business/admin edge checks passed")
@@ -131,6 +267,7 @@ def test_production_readiness_passes_with_governed_key_inventory(tmp_path) -> No
             detail="finance files exported",
             evidence={"output_files": ["aimanager_usage_daily.csv"]},
         ),
+        work_context_runner=lambda **kwargs: _passing_work_context_results(),
     )
 
     key_inventory = next(check for check in bundle["checks"] if check["id"] == "AC-08-KEY-INVENTORY")
@@ -280,6 +417,7 @@ def test_production_readiness_cli_writes_json_and_returns_blocked(monkeypatch, t
     monkeypatch.delenv("AIMANAGER_PUBLIC_ADMIN_URL", raising=False)
     monkeypatch.delenv("AIMANAGER_WECOM_WEBHOOK_URL", raising=False)
     monkeypatch.delenv("AIMANAGER_OBSERVABILITY_REPORT_FILE", raising=False)
+    monkeypatch.delenv("AIMANAGER_EMPLOYEE_VIRTUAL_KEY", raising=False)
     monkeypatch.delenv("AIMANAGER_SPEND_FILE", raising=False)
     monkeypatch.delenv("AIMANAGER_YCAPI_BILL_FILE", raising=False)
     monkeypatch.delenv("AIMANAGER_PRODUCTION_POLICY_ATTESTATION_FILE", raising=False)
@@ -294,6 +432,7 @@ def test_production_readiness_cli_writes_json_and_returns_blocked(monkeypatch, t
     assert bundle["status"] == "BLOCKED"
     assert {check["id"] for check in bundle["checks"]} == {
         "AC-15",
+        "AC-20",
         "AC-19",
         "AC-08-KEY-INVENTORY",
         "AC-16-WECOM",
@@ -461,6 +600,7 @@ def test_production_policy_attestation_passes_with_required_manual_checks(tmp_pa
             "AIMANAGER_PRODUCTION_POLICY_ATTESTATION_FILE": str(policy_file),
             "AIMANAGER_OBSERVABILITY_REPORT_FILE": str(report_file),
             "AIMANAGER_WECOM_WEBHOOK_URL": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=redaction",
+            **_work_context_env(),
         },
         admin_boundary_runner=lambda **kwargs: [
             _script_result(status="PASS", detail="business/admin edge checks passed")
@@ -474,6 +614,7 @@ def test_production_policy_attestation_passes_with_required_manual_checks(tmp_pa
             detail="finance files exported",
             evidence={"output_files": ["aimanager_usage_daily.csv"]},
         ),
+        work_context_runner=lambda **kwargs: _passing_work_context_results(),
     )
 
     policy_check = next(check for check in bundle["checks"] if check["id"] == "AC-POLICY")
@@ -791,6 +932,43 @@ def _policy_bundle_for_env(env: dict[str, str]) -> dict[str, object]:
             detail="finance files exported",
             evidence={"output_files": ["aimanager_usage_daily.csv"]},
         ),
+    )
+
+
+def _work_context_env() -> dict[str, str]:
+    return {
+        "AIMANAGER_BUSINESS_BASE_URL": "https://aimanager.example.com",
+        "AIMANAGER_EMPLOYEE_VIRTUAL_KEY": "sk-employee-redaction-value",
+    }
+
+
+def _passing_work_context_results() -> list[WorkContextSmokeResult]:
+    return [
+        _work_context_result(path="/v1/chat/completions"),
+        _work_context_result(path="/v1/images/generations", model="ycapi-image-1"),
+    ]
+
+
+def _work_context_result(
+    *,
+    path: str = "/v1/chat/completions",
+    model: str = "gemini-2.5-flash",
+    passed: bool = True,
+    detail: str = "missing work context rejected before provider dispatch",
+    status_code: int | None = 400,
+    policy_code: str | None = "aimanager_work_context_invalid",
+) -> WorkContextSmokeResult:
+    return WorkContextSmokeResult(
+        case=WorkContextSmokeCase(
+            method="POST",
+            path=path,
+            model=model,
+            prompt="DO_NOT_ECHO_WORK_CONTEXT_SMOKE_TEST",
+        ),
+        passed=passed,
+        detail=detail,
+        status_code=status_code,
+        policy_code=policy_code,
     )
 
 

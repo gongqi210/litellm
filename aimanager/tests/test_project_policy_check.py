@@ -98,6 +98,7 @@ def test_aimanager_cli_entry_emits_machine_readable_status() -> None:
     assert payload["commands"]["wecom_alert_readiness"] == "make wecom-alert-readiness"
     assert payload["commands"]["live_ycapi_preflight"] == "make live-ycapi-preflight"
     assert payload["commands"]["work_context_enforcement_smoke"] == "make work-context-enforcement-smoke"
+    assert payload["commands"]["work_context_enforcement_readiness"] == "make work-context-enforcement-readiness"
     assert payload["commands"]["production_policy_readiness"] == "make production-policy-readiness"
     assert payload["commands"]["employee_monitoring_validate"] == "make employee-monitoring-validate"
     assert payload["commands"]["lightweight_trial_evidence_capture"] == "make lightweight-trial-evidence-capture"
@@ -134,6 +135,10 @@ def test_makefile_exposes_remaining_production_readiness_operator_targets() -> N
 
     assert "wecom-alert-readiness:" in makefile
     assert "$(MAKE) wecom-alert-route AIMANAGER_WECOM_DRY_RUN=true || true" in makefile
+
+    assert "work-context-enforcement-readiness:" in makefile
+    assert "$(MAKE) work-context-enforcement-smoke || true" in makefile
+    assert "$(MAKE) production-readiness" in makefile
 
 
 def test_makefile_exposes_wecom_alert_route_operator_target() -> None:
