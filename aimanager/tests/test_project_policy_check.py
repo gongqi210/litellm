@@ -75,6 +75,15 @@ def test_aimanager_cli_entry_emits_machine_readable_status() -> None:
     assert "--min-severity \"${AIMANAGER_WECOM_MIN_SEVERITY:-warning}\"" in wecom_alert_route
     assert "--title \"AiManager production readiness alerts\"" in wecom_alert_route
     assert "--output-payload-file /tmp/aimanager-wecom-alert-payload.json" in wecom_alert_route
+    assert "admin_boundary_smoke" in payload["commands"]
+    admin_boundary_smoke = payload["commands"]["admin_boundary_smoke"]
+    assert "aimanager.scripts.smoke_admin_boundary" in admin_boundary_smoke
+    assert "--business-base-url \"$AIMANAGER_BUSINESS_BASE_URL\"" in admin_boundary_smoke
+    assert "--public-admin-url \"$AIMANAGER_PUBLIC_ADMIN_URL\"" in admin_boundary_smoke
+    assert "AIMANAGER_ALLOWED_SSO_REDIRECT_HOSTS=\"${AIMANAGER_ALLOWED_SSO_REDIRECT_HOSTS:-}\"" in admin_boundary_smoke
+    assert "--require-business-base-url" in admin_boundary_smoke
+    assert "--require-public-admin-url" in admin_boundary_smoke
+    assert "<sso-host>" not in admin_boundary_smoke
     assert "production_readiness" in payload["commands"]
     assert "acceptance_gate" in payload["commands"]
 
@@ -99,3 +108,16 @@ def test_makefile_exposes_wecom_alert_route_operator_target() -> None:
     assert "--min-severity \"$${AIMANAGER_WECOM_MIN_SEVERITY:-warning}\"" in makefile
     assert "--title \"AiManager production readiness alerts\"" in makefile
     assert "--output-payload-file /tmp/aimanager-wecom-alert-payload.json" in makefile
+
+
+def test_makefile_exposes_admin_boundary_operator_target() -> None:
+    makefile = MAKEFILE.read_text(encoding="utf-8")
+
+    assert "admin-boundary-smoke:" in makefile
+    assert "aimanager.scripts.smoke_admin_boundary" in makefile
+    assert "--business-base-url \"$${AIMANAGER_BUSINESS_BASE_URL}\"" in makefile
+    assert "--public-admin-url \"$${AIMANAGER_PUBLIC_ADMIN_URL}\"" in makefile
+    assert "AIMANAGER_ALLOWED_SSO_REDIRECT_HOSTS=\"$${AIMANAGER_ALLOWED_SSO_REDIRECT_HOSTS:-}\"" in makefile
+    assert "--require-business-base-url" in makefile
+    assert "--require-public-admin-url" in makefile
+    assert "<sso-host>" not in makefile

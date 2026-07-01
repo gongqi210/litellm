@@ -34,6 +34,16 @@ def test_evidence_template_pack_writes_safe_templates_without_secret_echo(tmp_pa
                         required_env=["AIMANAGER_KEY_INVENTORY_FILE"],
                     ),
                     _gap(
+                        "AC-15",
+                        "production_admin_boundary",
+                        "architecture/security/ops",
+                        required_env=[
+                            "AIMANAGER_BUSINESS_BASE_URL",
+                            "AIMANAGER_PUBLIC_ADMIN_URL",
+                            "AIMANAGER_ALLOWED_SSO_REDIRECT_HOSTS",
+                        ],
+                    ),
+                    _gap(
                         "AC-16-WECOM",
                         "wecom_alert_routing",
                         "ops",
@@ -92,6 +102,9 @@ def test_evidence_template_pack_writes_safe_templates_without_secret_echo(tmp_pa
     assert "do-not-leak" not in serialized
     assert "[redacted:AIMANAGER_WECOM_WEBHOOK_URL]" in serialized
     env_template = (output_dir / "evidence-env.template").read_text(encoding="utf-8")
+    assert "export AIMANAGER_BUSINESS_BASE_URL=\"\"" in env_template
+    assert "export AIMANAGER_PUBLIC_ADMIN_URL=\"\"" in env_template
+    assert "export AIMANAGER_ALLOWED_SSO_REDIRECT_HOSTS=\"\"" in env_template
     assert "export AIMANAGER_KEY_INVENTORY_FILE=" in env_template
     assert "export AIMANAGER_WECOM_WEBHOOK_URL=\"\"" in env_template
     assert "# YCAPI_API_TOKEN must be injected by a secret manager or secure shell" in env_template

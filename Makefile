@@ -1,7 +1,7 @@
 # LiteLLM Makefile
 # Simple Makefile for running tests and basic development tasks
 
-.PHONY: help policy-check key-inventory-export finance-export wecom-alert-route acceptance-gate evidence-handoff evidence-template-pack evidence-intake test test-unit test-unit-llms test-unit-proxy-guardrails test-unit-proxy-core test-unit-proxy-misc \
+.PHONY: help policy-check key-inventory-export admin-boundary-smoke finance-export wecom-alert-route acceptance-gate evidence-handoff evidence-template-pack evidence-intake test test-unit test-unit-llms test-unit-proxy-guardrails test-unit-proxy-core test-unit-proxy-misc \
 	test-unit-integrations test-unit-core-utils test-unit-other test-unit-root \
 	test-proxy-unit-a test-proxy-unit-b test-integration test-unit-helm \
 	info lint lint-dev format \
@@ -15,6 +15,7 @@ help:
 	@echo "Available commands:"
 	@echo "  make policy-check       - Run AiManager project policy gate"
 	@echo "  make key-inventory-export - Export metadata-only LiteLLM virtual-key inventory for AC-08"
+	@echo "  make admin-boundary-smoke - Probe production business/admin exposure boundaries for AC-15"
 	@echo "  make finance-export     - Export AiManager finance CSVs from LiteLLM spend and ycapi bill evidence"
 	@echo "  make wecom-alert-route  - Route AiManager observability alerts to WeCom for AC-16"
 	@echo "  make acceptance-gate    - Run AiManager one-command acceptance gate into /tmp or AIMANAGER_ACCEPTANCE_GATE_OUTPUT_DIR"
@@ -64,6 +65,9 @@ policy-check:
 
 key-inventory-export:
 	PYTHONPATH="$$(pwd)" uv run --no-project python -m aimanager.scripts.export_key_inventory --admin-base-url "$${AIMANAGER_ADMIN_BASE_URL:-http://127.0.0.1:4001}" --output-inventory-file "$${AIMANAGER_KEY_INVENTORY_FILE:-/tmp/aimanager-key-inventory.json}" --output-json-file "$${AIMANAGER_KEY_INVENTORY_EXPORT_RESULT_FILE:-/tmp/aimanager-key-inventory-export.json}"
+
+admin-boundary-smoke:
+	AIMANAGER_ALLOWED_SSO_REDIRECT_HOSTS="$${AIMANAGER_ALLOWED_SSO_REDIRECT_HOSTS:-}" PYTHONPATH="$$(pwd)" uv run --no-project python -m aimanager.scripts.smoke_admin_boundary --business-base-url "$${AIMANAGER_BUSINESS_BASE_URL}" --public-admin-url "$${AIMANAGER_PUBLIC_ADMIN_URL}" --require-business-base-url --require-public-admin-url
 
 finance-export:
 	PYTHONPATH="$$(pwd)" uv run --no-project python -m aimanager.scripts.export_finance --spend-file "$${AIMANAGER_SPEND_FILE}" --ycapi-bill-file "$${AIMANAGER_YCAPI_BILL_FILE}" --output-dir "$${AIMANAGER_FINANCE_OUTPUT_DIR:-/tmp/aimanager-finance-export}"

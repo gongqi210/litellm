@@ -49,7 +49,11 @@ def test_launch_gap_plan_dedupes_production_checks_and_groups_actionable_gaps(tm
     assert [gap["id"] for gap in result["gaps"]] == ["AC-26", "AC-15", "AC-23"]
     ac15 = next(gap for gap in result["gaps"] if gap["id"] == "AC-15")
     assert ac15["owner"] == "architecture/security/ops"
-    assert ac15["required_env"] == ["AIMANAGER_BUSINESS_BASE_URL", "AIMANAGER_PUBLIC_ADMIN_URL"]
+    assert ac15["required_env"] == [
+        "AIMANAGER_BUSINESS_BASE_URL",
+        "AIMANAGER_PUBLIC_ADMIN_URL",
+        "AIMANAGER_ALLOWED_SSO_REDIRECT_HOSTS",
+    ]
     assert ac15["sources"] == ["business_trial", "production_readiness"]
     assert "smoke_admin_boundary" in ac15["command"]
     assert "生产业务 URL" in ac15["next_action"]
@@ -195,6 +199,49 @@ def test_launch_gap_plan_assigns_wecom_gap_to_route_alerts_before_readiness(tmp_
     assert gap["command"].index("|| true") < gap["command"].index("production_readiness_bundle")
     assert "route_observability_alerts" in gap["next_action"]
     assert "企业微信" in gap["next_action"]
+
+
+def test_launch_gap_plan_assigns_admin_boundary_gap_to_smoke_before_readiness(tmp_path) -> None:
+    production_file = tmp_path / "production-readiness.json"
+    production_file.write_text(
+        json.dumps(
+            _bundle(
+                checks=[
+                    _check(
+                        "AC-15",
+                        "production_admin_boundary",
+                        "BLOCKED",
+                        "missing production boundary URLs",
+                        {"required_env": ["AIMANAGER_BUSINESS_BASE_URL", "AIMANAGER_PUBLIC_ADMIN_URL"]},
+                    )
+                ]
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    result = collect_launch_gap_plan(production_readiness_file=production_file)
+
+    assert result["status"] == "BLOCKED"
+    gap = result["gaps"][0]
+    assert gap["id"] == "AC-15"
+    assert gap["owner"] == "architecture/security/ops"
+    assert gap["required_env"] == [
+        "AIMANAGER_BUSINESS_BASE_URL",
+        "AIMANAGER_PUBLIC_ADMIN_URL",
+        "AIMANAGER_ALLOWED_SSO_REDIRECT_HOSTS",
+    ]
+    assert "aimanager.scripts.smoke_admin_boundary" in gap["command"]
+    assert "--business-base-url \"$AIMANAGER_BUSINESS_BASE_URL\"" in gap["command"]
+    assert "--public-admin-url \"$AIMANAGER_PUBLIC_ADMIN_URL\"" in gap["command"]
+    assert "AIMANAGER_ALLOWED_SSO_REDIRECT_HOSTS=\"${AIMANAGER_ALLOWED_SSO_REDIRECT_HOSTS:-}\"" in gap["command"]
+    assert "--require-business-base-url" in gap["command"]
+    assert "--require-public-admin-url" in gap["command"]
+    assert "<sso-host>" not in gap["command"]
+    assert "aimanager.scripts.production_readiness_bundle" in gap["command"]
+    assert gap["command"].index("smoke_admin_boundary") < gap["command"].index("production_readiness_bundle")
+    assert gap["command"].index("|| true") < gap["command"].index("production_readiness_bundle")
+    assert "AIMANAGER_ALLOWED_SSO_REDIRECT_HOSTS" in gap["next_action"]
 
 
 def test_launch_gap_plan_keeps_worst_duplicate_status_and_preserves_existing_evidence(tmp_path) -> None:

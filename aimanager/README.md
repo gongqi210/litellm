@@ -516,15 +516,18 @@ Expected result: `PASS`, `reject_status=400`, `accept_status=200`, and `policy_c
 Production admin boundary preflight:
 
 ```bash
+make admin-boundary-smoke
+
+# equivalent explicit form
+AIMANAGER_ALLOWED_SSO_REDIRECT_HOSTS="${AIMANAGER_ALLOWED_SSO_REDIRECT_HOSTS:-}" \
 PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.smoke_admin_boundary \
   --business-base-url "$AIMANAGER_BUSINESS_BASE_URL" \
   --public-admin-url "$AIMANAGER_PUBLIC_ADMIN_URL" \
-  --allowed-sso-redirect-host sso.company.example \
   --require-business-base-url \
   --require-public-admin-url
 ```
 
-Expected production result: every line is `PASS`. The business URL checks call management-only routes such as `/ui`, `/key/generate`, `/v2/key/info`, `/metrics`, and `/config/field/update` while spoofing `x-aimanager-role=proxy_admin`; those routes must still be blocked by AiManager policy or by an upstream auth/edge layer. These requests do not send `Authorization`, even if `LITELLM_MASTER_KEY` is present in the environment. The public admin URL checks send unauthenticated requests with the same spoofed trusted header; the admin surface must be unreachable, return 401/403/404 from the edge, or redirect only to an explicitly allowed SSO host. A public `POST /key/generate` that reaches AiManager governance and returns `aimanager_key_governance_invalid` is a `FAIL`, because it proves client-supplied trusted headers were not stripped before the management surface. If either production URL is not supplied, the script returns `BLOCKED` when the matching `--require-*` flag is set. Relative or same-origin login redirects are not accepted as SSO evidence; pass the external SSO host explicitly with `--allowed-sso-redirect-host`.
+Expected production result: every line is `PASS`. The business URL checks call management-only routes such as `/ui`, `/key/generate`, `/v2/key/info`, `/metrics`, and `/config/field/update` while spoofing `x-aimanager-role=proxy_admin`; those routes must still be blocked by AiManager policy or by an upstream auth/edge layer. These requests do not send `Authorization`, even if `LITELLM_MASTER_KEY` is present in the environment. The public admin URL checks send unauthenticated requests with the same spoofed trusted header; the admin surface must be unreachable, return 401/403/404 from the edge, or redirect only to an explicitly allowed SSO host. Set `AIMANAGER_ALLOWED_SSO_REDIRECT_HOSTS` to comma-separated SSO hosts when the public admin URL redirects, for example `sso.company.example,login.company.example`. A public `POST /key/generate` that reaches AiManager governance and returns `aimanager_key_governance_invalid` is a `FAIL`, because it proves client-supplied trusted headers were not stripped before the management surface. If either production URL is not supplied, the script returns `BLOCKED` when the matching `--require-*` flag is set. Relative or same-origin login redirects are not accepted as SSO evidence.
 
 Live ycapi token preflight:
 

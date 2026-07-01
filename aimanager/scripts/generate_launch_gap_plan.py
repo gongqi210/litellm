@@ -33,13 +33,26 @@ _GAP_CATALOG: dict[str, dict[str, object]] = {
     },
     "AC-15": {
         "owner": "architecture/security/ops",
-        "required_env": ["AIMANAGER_BUSINESS_BASE_URL", "AIMANAGER_PUBLIC_ADMIN_URL"],
+        "required_env": [
+            "AIMANAGER_BUSINESS_BASE_URL",
+            "AIMANAGER_PUBLIC_ADMIN_URL",
+            "AIMANAGER_ALLOWED_SSO_REDIRECT_HOSTS",
+        ],
         "command": (
+            "(AIMANAGER_ALLOWED_SSO_REDIRECT_HOSTS=\"${AIMANAGER_ALLOWED_SSO_REDIRECT_HOSTS:-}\" "
             "PYTHONPATH=\"$PWD\" uv run --no-project python -m aimanager.scripts.smoke_admin_boundary "
-            "--business-base-url \"$AIMANAGER_BUSINESS_BASE_URL\" --public-admin-url \"$AIMANAGER_PUBLIC_ADMIN_URL\" "
-            "--allowed-sso-redirect-host <sso-host> --require-business-base-url --require-public-admin-url"
+            "--business-base-url \"$AIMANAGER_BUSINESS_BASE_URL\" "
+            "--public-admin-url \"$AIMANAGER_PUBLIC_ADMIN_URL\" "
+            "--require-business-base-url --require-public-admin-url || true) && "
+            "PYTHONPATH=\"$PWD\" uv run --no-project --with pyyaml python -m "
+            "aimanager.scripts.production_readiness_bundle --output-json-file /tmp/aimanager-production-readiness.json"
         ),
-        "next_action": "补齐生产业务 URL、公开管理 URL 和允许的 SSO host，验证业务 URL 不能伪造 role header 解锁管理面。",
+        "next_action": (
+            "补齐生产业务 URL、公开管理 URL；如果公开管理面通过 SSO 302/303 跳转保护，"
+            "用 AIMANAGER_ALLOWED_SSO_REDIRECT_HOSTS 配置允许的 SSO host（逗号分隔）。"
+            "先跑 smoke_admin_boundary 预览逐探测项，再由 production_readiness_bundle 生成统一 JSON 证据；"
+            "验证业务 URL 不能伪造 role header 解锁管理面。"
+        ),
     },
     "AC-16-WECOM": {
         "owner": "ops",
@@ -238,7 +251,12 @@ def _gap_from_check(check: Mapping[str, object]) -> dict[str, object]:
     check_id = str(check["id"])
     catalog = _GAP_CATALOG.get(check_id, {})
     evidence = _mapping(check.get("evidence"))
-    required_env = _string_list(evidence.get("required_env")) or list(catalog.get("required_env", []))
+    required_env = _ordered_unique(
+        [
+            *_string_list(evidence.get("required_env")),
+            *_string_list(catalog.get("required_env")),
+        ]
+    )
     required_files = _string_list(evidence.get("required_files")) or list(catalog.get("required_files", []))
     return {
         "id": check_id,
@@ -340,6 +358,17 @@ def _string_list(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
     return [item.strip() for item in value if isinstance(item, str) and item.strip()]
+
+
+def _ordered_unique(values: Sequence[str]) -> list[str]:
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        ordered.append(value)
+    return ordered
 
 
 def _sanitize_value(value: object) -> object:
