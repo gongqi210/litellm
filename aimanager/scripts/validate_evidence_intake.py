@@ -12,7 +12,14 @@ from typing import Any, Literal, Mapping, Sequence
 
 from pydantic import ValidationError
 
-from aimanager.redaction import build_secret_redactions, contains_secret_like, sanitize_text, sanitize_value
+from aimanager.redaction import (
+    SECRET_BEARING_KEY_NAMES,
+    build_secret_redactions,
+    contains_secret_like,
+    normalize_secret_field_name,
+    sanitize_text,
+    sanitize_value,
+)
 from aimanager.scripts.business_trial_acceptance_bundle import TrialEvidence
 from aimanager.scripts.production_readiness_bundle import production_policy_violations
 from aimanager.validation_errors import compact_validation_errors
@@ -358,10 +365,10 @@ def _forbidden_key_findings(value: Any, *, path: str = "$") -> list[FileFinding]
 
 
 def _is_forbidden_key(key: str) -> bool:
-    normalized = "".join(ch for ch in key.lower() if ch.isalnum())
+    normalized = normalize_secret_field_name(key)
     if normalized in _SAFE_GOVERNANCE_KEYS:
         return False
-    if normalized in _FORBIDDEN_EXACT_KEYS:
+    if normalized in _FORBIDDEN_EXACT_KEYS or normalized in SECRET_BEARING_KEY_NAMES:
         return True
     if normalized.startswith("raw") and any(fragment in normalized for fragment in ("prompt", "request", "response")):
         return True

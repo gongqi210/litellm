@@ -10,6 +10,25 @@ WECOM_WEBHOOK_URL_REDACTION = (
     f"{WECOM_WEBHOOK_REDACTION}"
 )
 SECRET_ENV_NAME_MARKERS = ("TOKEN", "KEY", "SECRET", "WEBHOOK", "PASSWORD")
+SECRET_BEARING_KEY_NAMES = frozenset(
+    {
+        "apikey",
+        "apitoken",
+        "bearer",
+        "employeekey",
+        "litellmmasterkey",
+        "masterkey",
+        "password",
+        "privatekey",
+        "secret",
+        "token",
+        "virtualkey",
+        "ycapiapikey",
+        "ycapiapitoken",
+        "ycapitoken",
+    }
+)
+SECRET_CARRIER_KEY_NAMES = frozenset({"authorization", "cookie", "headers"})
 
 _MIN_SECRET_ENV_VALUE_LENGTH = 8
 _COMMON_NON_SECRET_VALUES = {
@@ -53,6 +72,10 @@ _SECRET_PATTERNS = (
     (_SECRET_KEY_PATTERN, SECRET_LIKE_REDACTION),
     (_DSN_PASSWORD_PATTERN, rf"\1{SECRET_LIKE_REDACTION}\2"),
 )
+
+
+def normalize_secret_field_name(name: str) -> str:
+    return "".join(ch for ch in name.lower() if ch.isalnum())
 
 
 def build_secret_redactions(env: Mapping[str, str] | None) -> dict[str, str]:

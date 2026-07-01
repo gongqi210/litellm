@@ -88,6 +88,103 @@ def test_evidence_intake_fails_bare_environment_secret_value_without_echoing_it(
     assert "YCAPI_API_TOKEN" in serialized
 
 
+def test_evidence_intake_fails_labeled_bare_secret_fields_without_env_secret(tmp_path) -> None:
+    bare_secret = "opaque-employee-virtual-key-value-1234567890"
+    evidence_dir = tmp_path / "evidence"
+    evidence_dir.mkdir()
+    (evidence_dir / "key-inventory.json").write_text(
+        json.dumps(
+            {
+                "keys": [
+                    {
+                        "employee_id": "u_market_1",
+                        "virtual_key": bare_secret,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = validate_evidence_intake(
+        input_dir=evidence_dir,
+        env={},
+        generated_at="2026-07-01T00:00:00Z",
+    )
+
+    serialized = json.dumps(result, ensure_ascii=False)
+    assert result["status"] == "FAIL"
+    assert "forbidden_field" in serialized
+    assert "$.keys[0].virtual_key" in serialized
+    assert bare_secret not in serialized
+
+
+def test_evidence_intake_fails_labeled_secret_csv_headers(tmp_path) -> None:
+    evidence_dir = tmp_path / "evidence"
+    evidence_dir.mkdir()
+    (evidence_dir / "key-inventory.csv").write_text(
+        "\n".join(
+            [
+                "employee_id,token,api_key",
+                "u_market_1,opaque-token-value,opaque-api-key-value",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = validate_evidence_intake(
+        input_dir=evidence_dir,
+        env={},
+        generated_at="2026-07-01T00:00:00Z",
+    )
+
+    serialized = json.dumps(result, ensure_ascii=False)
+    assert result["status"] == "FAIL"
+    assert "CSV header `token` is not allowed in evidence intake" in serialized
+    assert "CSV header `api_key` is not allowed in evidence intake" in serialized
+
+
+def test_evidence_intake_allows_secret_key_alias_and_governance_field_names(tmp_path) -> None:
+    evidence_dir = tmp_path / "evidence"
+    evidence_dir.mkdir()
+    (evidence_dir / "owner-note.json").write_text(
+        json.dumps(
+            {
+                "employee_virtual_key_alias": "marketing-key-alias",
+                "key_alias": "litellm-virtual-key-alias",
+                "shared_key": False,
+                "expected_total_key_count": 42,
+                "ycapi_token_limit": {
+                    "confirmed": True,
+                    "limit_ref": "budget-policy-2026-07",
+                    "monthly_budget_cny": "1000",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (evidence_dir / "owner-summary.csv").write_text(
+        "\n".join(
+            [
+                "employee_virtual_key_alias,key_alias,shared_key,expected_total_key_count",
+                "marketing-key-alias,litellm-virtual-key-alias,false,42",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = validate_evidence_intake(
+        input_dir=evidence_dir,
+        env={},
+        generated_at="2026-07-01T00:00:00Z",
+    )
+
+    assert result["status"] == "PASS"
+    assert result["summary"] == {"PASS": 2, "FAIL": 0, "BLOCKED": 0, "files": 2}
+
+
 def test_evidence_intake_ignores_common_secret_named_env_values(tmp_path) -> None:
     evidence_dir = tmp_path / "evidence"
     evidence_dir.mkdir()

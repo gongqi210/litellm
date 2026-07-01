@@ -190,11 +190,101 @@ def test_final_acceptance_report_blocks_when_launch_gap_plan_has_unresolved_gaps
     assert result["conclusion"] == "CONDITIONAL"
     assert result["summary"]["blockers"] == 4
     assert result["summary"]["unique_blockers"] == 3
+    assert result["summary"]["actionable_blockers"] == 3
+    assert [blocker["id"] for blocker in result["actionable_blockers"]] == ["AC-23", "AC-26", "AC-01"]
+    assert result["actionable_blockers"][0]["source"] == "launch_gap_plan"
+    assert result["actionable_blockers"][0]["sources"] == [
+        "launch_gap_plan",
+        "business_trial_acceptance",
+    ]
+    assert result["actionable_blockers"][0]["source_count"] == 2
+    assert result["actionable_blockers"][0]["owner"] == "business_owner/market/ops"
+    assert result["actionable_blockers"][0]["command"] == "python -m aimanager.scripts.capture_lightweight_trial_evidence"
     assert [blocker["id"] for blocker in result["blockers"][:2]] == ["AC-23", "AC-26"]
     assert result["blockers"][0]["owner"] == "business_owner/market/ops"
     assert result["blockers"][0]["command"] == "python -m aimanager.scripts.capture_lightweight_trial_evidence"
     assert result["blockers"][0]["rerun_command"] == result["blockers"][0]["command"]
+    assert "## Actionable Blockers" in result["markdown"]
     assert "AIMANAGER_EMPLOYEE_ACKNOWLEDGMENT_FILE" in result["markdown"]
+
+
+def test_final_acceptance_report_folds_coverage_aliases_into_launch_gap_actions(tmp_path) -> None:
+    business_file = tmp_path / "business.json"
+    launch_file = tmp_path / "launch.json"
+    coverage_file = tmp_path / "coverage.json"
+    intake_file = tmp_path / "evidence-intake.json"
+    business_file.write_text(json.dumps(_business_bundle("PASS")), encoding="utf-8")
+    launch_file.write_text(
+        json.dumps(
+            _launch_plan(
+                "BLOCKED",
+                gaps=[
+                    {
+                        "id": "AC-12-13-FINANCE",
+                        "name": "finance_export_reconciliation",
+                        "status": "BLOCKED",
+                        "owner": "finance",
+                        "detail": "missing spend and ycapi bill evidence",
+                        "required_env": ["AIMANAGER_SPEND_FILE", "AIMANAGER_YCAPI_BILL_FILE"],
+                        "required_files": [],
+                        "command": "make finance-readiness",
+                        "rerun_command": "make finance-readiness",
+                        "next_action": "collect finance evidence",
+                    }
+                ],
+            )
+        ),
+        encoding="utf-8",
+    )
+    coverage_file.write_text(
+        json.dumps(
+            _coverage_matrix(
+                "BLOCKED",
+                criteria=[
+                    _criterion("AC-12", "finance", "bundle_check"),
+                    _criterion("AC-13", "finance", "bundle_check"),
+                ],
+            )
+        ),
+        encoding="utf-8",
+    )
+    intake_file.write_text(
+        json.dumps(
+            {
+                "status": "BLOCKED",
+                "generated_at": "2026-06-30T00:00:00Z",
+                "summary": {"PASS": 0, "FAIL": 0, "BLOCKED": 1, "files": 1},
+                "checks": [
+                    {
+                        "path": "env:AIMANAGER_*_FILE",
+                        "status": "BLOCKED",
+                        "detail": "no evidence files were configured",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = collect_final_acceptance_report(
+        business_trial_file=business_file,
+        launch_gap_plan_file=launch_file,
+        acceptance_coverage_file=coverage_file,
+        evidence_intake_file=intake_file,
+    )
+
+    assert result["summary"]["blockers"] == 4
+    assert result["summary"]["unique_blockers"] == 4
+    assert result["summary"]["actionable_blockers"] == 1
+    assert result["actionable_blockers"][0]["id"] == "AC-12-13-FINANCE"
+    assert result["actionable_blockers"][0]["related_ids"] == [
+        "AC-12-13-FINANCE",
+        "AC-12",
+        "AC-13",
+    ]
+    assert result["actionable_blockers"][0]["owner"] == "finance"
+    assert result["actionable_blockers"][0]["command"] == "make finance-readiness"
+    assert result["actionable_blockers"][0]["sources"] == ["launch_gap_plan", "acceptance_coverage"]
 
 
 def test_final_acceptance_report_cli_fails_on_malformed_json(tmp_path) -> None:
@@ -320,16 +410,13 @@ def _launch_plan(status: str, *, gaps: list[dict[str, object]]) -> dict[str, obj
     }
 
 
-def _coverage_matrix(status: str, *, blocked: int = 0) -> dict[str, object]:
-    criteria = [
-        {
-            "id": "AC-01",
-            "status": status,
-            "owner": "architecture",
-            "gate_kind": "local_test",
-            "detail": "coverage status",
-        }
-    ]
+def _coverage_matrix(
+    status: str,
+    *,
+    blocked: int = 0,
+    criteria: list[dict[str, object]] | None = None,
+) -> dict[str, object]:
+    criteria = criteria or [_criterion("AC-01", "architecture", "local_test", status=status)]
     return {
         "status": status,
         "generated_at": "2026-06-30T00:00:00Z",
@@ -341,6 +428,22 @@ def _coverage_matrix(status: str, *, blocked: int = 0) -> dict[str, object]:
         },
         "coverage_failures": [],
         "criteria": criteria,
+    }
+
+
+def _criterion(
+    criterion_id: str,
+    owner: str,
+    gate_kind: str,
+    *,
+    status: str = "BLOCKED",
+) -> dict[str, object]:
+    return {
+        "id": criterion_id,
+        "status": status,
+        "owner": owner,
+        "gate_kind": gate_kind,
+        "detail": "coverage status",
     }
 
 

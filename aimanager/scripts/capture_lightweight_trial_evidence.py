@@ -9,26 +9,11 @@ from typing import Any, Mapping, Sequence
 
 from pydantic import ValidationError
 
+from aimanager.redaction import SECRET_BEARING_KEY_NAMES, SECRET_CARRIER_KEY_NAMES, normalize_secret_field_name
 from aimanager.scripts.business_trial_acceptance_bundle import TrialEvidence
 
 
 _EXIT_CODES = {"PASS": 0, "FAIL": 1, "BLOCKED": 2}
-_FORBIDDEN_INPUT_KEYS = {
-    "api_key",
-    "api_token",
-    "authorization",
-    "bearer",
-    "cookie",
-    "employee_key",
-    "headers",
-    "litellm_master_key",
-    "master_key",
-    "token",
-    "virtual_key",
-    "ycapi_api_key",
-    "ycapi_api_token",
-    "ycapi_token",
-}
 _SECRET_VALUE_PATTERNS = (
     re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]+", re.IGNORECASE),
     re.compile(r"\bsk-[A-Za-z0-9][A-Za-z0-9._-]{3,}\b"),
@@ -296,7 +281,8 @@ def _unsafe_input_paths(value: Any, *, path: str = "$") -> list[str]:
         for key, item in value.items():
             key_text = str(key)
             next_path = f"{path}.{key_text}" if path != "$" else key_text
-            if key_text.lower() in _FORBIDDEN_INPUT_KEYS:
+            normalized = normalize_secret_field_name(key_text)
+            if normalized in SECRET_BEARING_KEY_NAMES or normalized in SECRET_CARRIER_KEY_NAMES:
                 violations.append(next_path)
                 continue
             violations.extend(_unsafe_input_paths(item, path=next_path))

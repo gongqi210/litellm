@@ -4,7 +4,7 @@ import argparse
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Iterable, Mapping, Sequence
 
 from aimanager.redaction import sanitize_text as sanitize_secret_text
 from aimanager.redaction import sanitize_value as sanitize_secret_value
@@ -22,6 +22,12 @@ _STAGE_SCORE_LABELS = {
     "launch_gap_plan": "launch_gap_closure",
     "acceptance_coverage": "acceptance_coverage",
     "evidence_intake": "evidence_intake_validation",
+}
+_ACTIONABLE_BLOCKER_ALIASES = {
+    "AC-08": "AC-08-KEY-INVENTORY",
+    "AC-12": "AC-12-13-FINANCE",
+    "AC-13": "AC-12-13-FINANCE",
+    "AC-16": "AC-16-WECOM",
 }
 
 
@@ -73,6 +79,7 @@ def collect_final_acceptance_report(
     if evidence_intake_file is not None:
         inputs["evidence_intake"] = _load_input("evidence_intake", evidence_intake_file)
     blockers = _collect_blockers(inputs)
+    actionable_blockers = _actionable_blockers(blockers)
     statuses = [str(item["load_status"]) for item in inputs.values()]
     statuses.extend(str(item.get("status") or "FAIL") for item in inputs.values() if item["load_status"] == "PASS")
     statuses.extend(str(blocker["status"]) for blocker in blockers)
@@ -90,8 +97,9 @@ def collect_final_acceptance_report(
             }
             for source, input_state in inputs.items()
         },
-        "summary": _summary(inputs, blockers),
+        "summary": _summary(inputs, blockers, actionable_blockers),
         "stage_scores": _stage_scores(inputs),
+        "actionable_blockers": actionable_blockers,
         "blockers": blockers,
     }
     result["markdown"] = _markdown(result)
@@ -392,7 +400,76 @@ def _evidence_intake_blockers(input_state: Mapping[str, object]) -> list[dict[st
     return blockers
 
 
-def _summary(inputs: Mapping[str, Mapping[str, object]], blockers: Sequence[Mapping[str, object]]) -> dict[str, int]:
+def _actionable_blockers(blockers: Sequence[Mapping[str, object]]) -> list[dict[str, object]]:
+    by_id: dict[str, list[Mapping[str, object]]] = {}
+    launch_gap_ids = {
+        _canonical_blocker_id(blocker)
+        for blocker in blockers
+        if str(blocker.get("source") or "") == "launch_gap_plan"
+    }
+    for blocker in blockers:
+        blocker_id = _canonical_blocker_id(blocker)
+        if _skip_actionable_blocker(blocker, launch_gap_ids=launch_gap_ids):
+            continue
+        by_id.setdefault(blocker_id, []).append(blocker)
+    return [_actionable_blocker(blocker_id, blocker_group) for blocker_id, blocker_group in by_id.items()]
+
+
+def _actionable_blocker(blocker_id: str, blockers: Sequence[Mapping[str, object]]) -> dict[str, object]:
+    selected = min(blockers, key=_blocker_source_rank)
+    sources = _dedupe(str(blocker.get("source") or "unknown") for blocker in blockers)
+    related_ids = _dedupe(str(blocker.get("id") or "UNKNOWN") for blocker in blockers)
+    command = _rerun_command(selected, fallback=str(selected.get("command") or ""))
+    return {
+        "id": blocker_id,
+        "name": str(selected.get("name") or "acceptance_blocker"),
+        "source": str(selected.get("source") or "unknown"),
+        "sources": sources,
+        "related_ids": related_ids,
+        "source_count": len(sources),
+        "status": _overall_status(str(blocker.get("status") or "FAIL") for blocker in blockers),
+        "owner": str(selected.get("owner") or "project_owner"),
+        "detail": str(selected.get("detail") or ""),
+        "required_env": _string_list(selected.get("required_env")),
+        "required_files": _string_list(selected.get("required_files")),
+        "command": command,
+        "rerun_command": command,
+        "next_action": str(selected.get("next_action") or "Resolve this blocker and rerun final acceptance."),
+    }
+
+
+def _canonical_blocker_id(blocker: Mapping[str, object]) -> str:
+    blocker_id = str(blocker.get("id") or "UNKNOWN")
+    return _ACTIONABLE_BLOCKER_ALIASES.get(blocker_id, blocker_id)
+
+
+def _skip_actionable_blocker(
+    blocker: Mapping[str, object],
+    *,
+    launch_gap_ids: set[str],
+) -> bool:
+    return (
+        bool(launch_gap_ids)
+        and str(blocker.get("source") or "") == "evidence_intake_validation"
+        and str(blocker.get("id") or "") == "EVIDENCE-INTAKE:env:AIMANAGER_*_FILE"
+    )
+
+
+def _blocker_source_rank(blocker: Mapping[str, object]) -> int:
+    source = str(blocker.get("source") or "")
+    return {
+        "launch_gap_plan": 0,
+        "evidence_intake_validation": 1,
+        "business_trial_acceptance": 2,
+        "acceptance_coverage": 3,
+    }.get(source, 4)
+
+
+def _summary(
+    inputs: Mapping[str, Mapping[str, object]],
+    blockers: Sequence[Mapping[str, object]],
+    actionable_blockers: Sequence[Mapping[str, object]],
+) -> dict[str, int]:
     summary = {status: 0 for status in ("PASS", "FAIL", "BLOCKED")}
     for input_state in inputs.values():
         if input_state["load_status"] == "PASS":
@@ -404,6 +481,7 @@ def _summary(inputs: Mapping[str, Mapping[str, object]], blockers: Sequence[Mapp
         "inputs": len(inputs),
         "blockers": len(blockers),
         "unique_blockers": len({str(blocker.get("id") or "") for blocker in blockers}),
+        "actionable_blockers": len(actionable_blockers),
     }
 
 
@@ -435,6 +513,7 @@ def _markdown(result: Mapping[str, object]) -> str:
         f"- Inputs PASS/FAIL/BLOCKED: {result['summary']['PASS']}/{result['summary']['FAIL']}/{result['summary']['BLOCKED']}",
         f"- Blockers: {result['summary']['blockers']}",
         f"- Unique Blockers: {result['summary']['unique_blockers']}",
+        f"- Actionable Blockers: {result['summary']['actionable_blockers']}",
         "",
         "## Stage Scores",
         "",
@@ -446,6 +525,26 @@ def _markdown(result: Mapping[str, object]) -> str:
     if not isinstance(blockers, list) or not blockers:
         lines.append("No unresolved acceptance blockers remain in the supplied machine-readable gates.")
         return "\n".join(lines) + "\n"
+    actionable_blockers = result.get("actionable_blockers")
+    if isinstance(actionable_blockers, list) and actionable_blockers:
+        lines.extend(["## Actionable Blockers", ""])
+        for blocker in actionable_blockers:
+            if not isinstance(blocker, Mapping):
+                continue
+            lines.extend(
+                [
+                    f"### {blocker['status']} {blocker['id']} - {blocker['name']}",
+                    "",
+                    f"- Owner: {blocker['owner']}",
+                    f"- Sources: {', '.join(blocker['sources']) or 'none'}",
+                    f"- Detail: {_markdown_cell(str(blocker['detail']))}",
+                    f"- Required Env: {', '.join(blocker['required_env']) or 'none'}",
+                    f"- Required Files: {', '.join(blocker['required_files']) or 'none'}",
+                    f"- Command: `{blocker['command']}`",
+                    f"- Next Action: {blocker['next_action']}",
+                    "",
+                ]
+            )
     lines.extend(["## Unresolved Blockers", ""])
     for blocker in blockers:
         if not isinstance(blocker, Mapping):
@@ -517,10 +616,11 @@ def _missing_or_local_artifacts(criterion: Mapping[str, object]) -> list[str]:
     return paths
 
 
-def _overall_status(statuses: Sequence[str]) -> str:
-    if any(status == "FAIL" for status in statuses):
+def _overall_status(statuses: Iterable[str]) -> str:
+    status_list = list(statuses)
+    if any(status == "FAIL" for status in status_list):
         return "FAIL"
-    if any(status == "BLOCKED" for status in statuses):
+    if any(status == "BLOCKED" for status in status_list):
         return "BLOCKED"
     return "PASS"
 
@@ -551,6 +651,17 @@ def _string_list(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
     return [item.strip() for item in value if isinstance(item, str) and item.strip()]
+
+
+def _dedupe(values: Iterable[str]) -> list[str]:
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        deduped.append(value)
+    return deduped
 
 
 def _sanitize_value(value: object) -> object:
