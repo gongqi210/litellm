@@ -276,8 +276,10 @@ def test_launch_gap_plan_assigns_work_context_gap_to_env_driven_smoke_target(tmp
     assert gap["required_env"] == ["AIMANAGER_BUSINESS_BASE_URL", "AIMANAGER_EMPLOYEE_VIRTUAL_KEY"]
     assert gap["command"] == "make work-context-enforcement-readiness"
     assert "<" not in gap["command"]
+    assert "valid-context roundtrip" in gap["next_action"]
     assert "aimanager_work_context_invalid" in gap["next_action"]
     assert "metadata" in gap["next_action"]
+    assert "request id" in gap["next_action"]
 
 
 def test_launch_gap_plan_assigns_policy_gap_to_env_driven_make_target(tmp_path) -> None:

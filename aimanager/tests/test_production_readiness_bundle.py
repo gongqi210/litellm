@@ -83,6 +83,100 @@ def test_production_readiness_runs_work_context_enforcement_smoke_and_redacts_em
     assert ac20["evidence"]["results"][0]["path"] == "/v1/chat/completions"
 
 
+def test_production_readiness_work_context_evidence_includes_valid_roundtrip_metadata() -> None:
+    calls: list[dict[str, object]] = []
+
+    def runner(**kwargs):
+        calls.append(kwargs)
+        return [
+            _work_context_result(path="/v1/chat/completions"),
+            _work_context_result(path="/v1/images/generations", model="ycapi-image-1"),
+            _work_context_result(
+                path="/v1/chat/completions",
+                detail="valid work context chat roundtrip passed",
+                status_code=200,
+                policy_code=None,
+                check_type="valid_context_roundtrip",
+                request_id="chat-call-id",
+                usage_present=True,
+                work_context_present=True,
+            ),
+            _work_context_result(
+                path="/v1/images/generations",
+                model="ycapi-image-1",
+                detail="valid work context image roundtrip passed",
+                status_code=200,
+                policy_code=None,
+                check_type="valid_context_roundtrip",
+                request_id="image-call-id",
+                image_result_count=1,
+                work_context_present=True,
+            ),
+        ]
+
+    bundle = collect_production_readiness(
+        env=_work_context_env(),
+        admin_boundary_runner=lambda **kwargs: [
+            _script_result(status="PASS", detail="business/admin edge checks passed")
+        ],
+        live_ycapi_runner=lambda **kwargs: _script_result(status="PASS", detail="ycapi ok"),
+        wecom_router=lambda **kwargs: _script_result(status="BLOCKED", detail="missing webhook"),
+        finance_runner=lambda **kwargs: CheckResult(
+            id="AC-12-13-FINANCE",
+            name="finance_export_reconciliation",
+            status="BLOCKED",
+            detail="missing files",
+            evidence={},
+        ),
+        work_context_runner=runner,
+    )
+
+    ac20 = next(check for check in bundle["checks"] if check["id"] == "AC-20")
+    serialized = json.dumps(bundle, ensure_ascii=False)
+    assert calls[0]["run_valid_context_roundtrip"] is True
+    assert ac20["status"] == "PASS"
+    assert ac20["evidence"]["result_count"] == 4
+    assert ac20["evidence"]["pass_count"] == 4
+    valid_results = [
+        result
+        for result in ac20["evidence"]["results"]
+        if result["check_type"] == "valid_context_roundtrip"
+    ]
+    assert valid_results == [
+        {
+            "check_type": "valid_context_roundtrip",
+            "method": "POST",
+            "path": "/v1/chat/completions",
+            "model": "gemini-2.5-flash",
+            "status": "PASS",
+            "status_code": 200,
+            "policy_code": None,
+            "request_id": "chat-call-id",
+            "usage_present": True,
+            "image_result_count": 0,
+            "work_context_present": True,
+            "detail": "valid work context chat roundtrip passed",
+        },
+        {
+            "check_type": "valid_context_roundtrip",
+            "method": "POST",
+            "path": "/v1/images/generations",
+            "model": "ycapi-image-1",
+            "status": "PASS",
+            "status_code": 200,
+            "policy_code": None,
+            "request_id": "image-call-id",
+            "usage_present": False,
+            "image_result_count": 1,
+            "work_context_present": True,
+            "detail": "valid work context image roundtrip passed",
+        },
+    ]
+    assert "sk-employee-redaction-value" not in serialized
+    assert "prompt" not in serialized.lower()
+    assert "assistant" not in serialized.lower()
+
+
 def test_production_readiness_live_ycapi_evidence_includes_inference_roundtrip_metadata() -> None:
     calls: list[dict[str, object]] = []
 
@@ -1055,6 +1149,11 @@ def _work_context_result(
     detail: str = "missing work context rejected before provider dispatch",
     status_code: int | None = 400,
     policy_code: str | None = "aimanager_work_context_invalid",
+    check_type: str = "missing_context_block",
+    request_id: str | None = None,
+    usage_present: bool = False,
+    image_result_count: int = 0,
+    work_context_present: bool = False,
 ) -> WorkContextSmokeResult:
     return WorkContextSmokeResult(
         case=WorkContextSmokeCase(
@@ -1062,11 +1161,16 @@ def _work_context_result(
             path=path,
             model=model,
             prompt="DO_NOT_ECHO_WORK_CONTEXT_SMOKE_TEST",
+            check_type=check_type,  # type: ignore[arg-type]
         ),
         passed=passed,
         detail=detail,
         status_code=status_code,
         policy_code=policy_code,
+        request_id=request_id,
+        usage_present=usage_present,
+        image_result_count=image_result_count,
+        work_context_present=work_context_present,
     )
 
 

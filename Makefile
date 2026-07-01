@@ -26,7 +26,7 @@ help:
 	@echo "  make live-ycapi-preflight - Run read-only live ycapi /models preflight for AC-19"
 	@echo "  make live-ycapi-roundtrip - Run live ycapi /models + chat/image roundtrip smoke for AC-19"
 	@echo "  make work-context-enforcement-smoke - Verify business chat/image reject missing work context"
-	@echo "  make work-context-enforcement-readiness - Smoke work-context fail-closed and rerun readiness for AC-20"
+	@echo "  make work-context-enforcement-readiness - Verify AC-20 fail-closed plus valid work-context roundtrip"
 	@echo "  make production-policy-readiness - Rerun production readiness with AC-POLICY attestation"
 	@echo "  make employee-monitoring-validate - Validate AC-26 employee monitoring notice and acknowledgment evidence"
 	@echo "  make lightweight-trial-evidence-capture - Capture AC-23 non-SDK trial evidence from a successful entry result"

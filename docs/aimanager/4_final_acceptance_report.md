@@ -96,6 +96,7 @@ This final report is now the executable go/no-go composition layer. It consumes 
 ## Remaining Blockers
 
 - AC-15: run `smoke_admin_boundary` against real production business/admin URLs and prove trusted headers cannot be spoofed from the public edge.
+- AC-20: run production business-surface work-context smoke with a real employee virtual key; missing metadata must fail closed, and valid metadata chat/image roundtrip must return request id plus usage/image evidence without leaking prompt or response content.
 - AC-19: provide a real `YCAPI_API_TOKEN` in deployment and run live ycapi `/models` plus chat/image roundtrip without leaking the token, prompt, URL, or response body.
 - AC-16: run WeCom alert routing with a real webhook and a real observability report; zero-delivery remains `BLOCKED`.
 - AC-12/13: provide real AiManager spend export and ycapi monthly bill evidence with nonzero billable amounts.

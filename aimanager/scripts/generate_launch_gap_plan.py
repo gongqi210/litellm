@@ -77,8 +77,9 @@ _GAP_CATALOG: dict[str, dict[str, object]] = {
         "required_env": ["AIMANAGER_BUSINESS_BASE_URL", "AIMANAGER_EMPLOYEE_VIRTUAL_KEY"],
         "command": "make work-context-enforcement-readiness",
         "next_action": (
-            "在生产 business surface 用员工 LiteLLM virtual key 跑 work-context fail-closed smoke；"
-            "chat/image 缺 metadata 必须返回 400 aimanager_work_context_invalid，且不能回显 prompt。"
+            "在生产 business surface 用员工 LiteLLM virtual key 跑 work-context fail-closed + valid-context roundtrip；"
+            "chat/image 缺 metadata 必须返回 400 aimanager_work_context_invalid，合法 metadata 必须返回 200、request id、"
+            "usage/image 计数，且不能输出 token、prompt 或响应正文。"
         ),
     },
     "AC-POLICY": {

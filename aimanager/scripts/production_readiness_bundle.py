@@ -160,6 +160,7 @@ def _work_context_enforcement_check(
                 base_url=_env_value(env, "AIMANAGER_BUSINESS_BASE_URL"),
                 employee_key=_env_value(env, "AIMANAGER_EMPLOYEE_VIRTUAL_KEY"),
                 request_marker=_env_value(env, "AIMANAGER_WORK_CONTEXT_SMOKE_MARKER") or "production-readiness",
+                run_valid_context_roundtrip=True,
             )
         )
     except Exception as exc:
@@ -199,12 +200,17 @@ def _work_context_enforcement_check(
 def _work_context_result_evidence(result: object) -> dict[str, object]:
     case = getattr(result, "case", None)
     return {
+        "check_type": getattr(case, "check_type", "missing_context_block"),
         "method": getattr(case, "method", ""),
         "path": getattr(case, "path", ""),
         "model": getattr(case, "model", ""),
         "status": "PASS" if getattr(result, "passed", False) else "FAIL",
         "status_code": getattr(result, "status_code", None),
         "policy_code": getattr(result, "policy_code", None),
+        "request_id": getattr(result, "request_id", None),
+        "usage_present": getattr(result, "usage_present", False),
+        "image_result_count": getattr(result, "image_result_count", 0),
+        "work_context_present": getattr(result, "work_context_present", False),
         "detail": str(getattr(result, "detail", "")),
     }
 
