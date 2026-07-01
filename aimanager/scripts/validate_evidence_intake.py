@@ -39,6 +39,9 @@ _FORBIDDEN_EXACT_KEYS = {
     "assistantresponse",
     "customercontent",
 }
+_SAFE_GOVERNANCE_KEYS = {
+    "rawpromptaccess",
+}
 
 
 @dataclass(frozen=True)
@@ -272,6 +275,8 @@ def _forbidden_key_findings(value: Any, *, path: str = "$") -> list[FileFinding]
 
 def _is_forbidden_key(key: str) -> bool:
     normalized = "".join(ch for ch in key.lower() if ch.isalnum())
+    if normalized in _SAFE_GOVERNANCE_KEYS:
+        return False
     if normalized in _FORBIDDEN_EXACT_KEYS:
         return True
     if normalized.startswith("raw") and any(fragment in normalized for fragment in ("prompt", "request", "response")):

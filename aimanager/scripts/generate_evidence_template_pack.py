@@ -15,7 +15,7 @@ from aimanager.scripts.generate_evidence_handoff import collect_evidence_handoff
 _EXIT_CODES = {"PASS": 0, "FAIL": 1, "BLOCKED": 2}
 _DEFAULT_LAUNCH_GAP_PLAN_FILE = Path("/tmp/aimanager-acceptance-gate/launch-gap-plan.json")
 _DEFAULT_OUTPUT_DIR = Path("/tmp/aimanager-evidence-template-pack")
-_TOKEN_ENV_NAMES = {"YCAPI_API_TOKEN"}
+_TOKEN_ENV_NAMES = {"LITELLM_MASTER_KEY", "YCAPI_API_TOKEN"}
 
 
 def main(argv: Sequence[str] | None = None) -> int:

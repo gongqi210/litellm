@@ -1,7 +1,7 @@
 # LiteLLM Makefile
 # Simple Makefile for running tests and basic development tasks
 
-.PHONY: help policy-check key-inventory-export admin-boundary-smoke finance-export wecom-alert-route live-ycapi-preflight production-policy-readiness employee-monitoring-validate lightweight-trial-evidence-capture acceptance-gate evidence-handoff evidence-template-pack evidence-intake test test-unit test-unit-llms test-unit-proxy-guardrails test-unit-proxy-core test-unit-proxy-misc \
+.PHONY: help policy-check key-inventory-export key-inventory-readiness admin-boundary-smoke admin-boundary-readiness finance-export finance-readiness wecom-alert-route wecom-alert-readiness production-readiness live-ycapi-preflight production-policy-readiness employee-monitoring-validate lightweight-trial-evidence-capture acceptance-gate evidence-handoff evidence-template-pack evidence-intake test test-unit test-unit-llms test-unit-proxy-guardrails test-unit-proxy-core test-unit-proxy-misc \
 	test-unit-integrations test-unit-core-utils test-unit-other test-unit-root \
 	test-proxy-unit-a test-proxy-unit-b test-integration test-unit-helm \
 	info lint lint-dev format \
@@ -15,9 +15,14 @@ help:
 	@echo "Available commands:"
 	@echo "  make policy-check       - Run AiManager project policy gate"
 	@echo "  make key-inventory-export - Export metadata-only LiteLLM virtual-key inventory for AC-08"
+	@echo "  make key-inventory-readiness - Export, validate, and rerun readiness for AC-08"
 	@echo "  make admin-boundary-smoke - Probe production business/admin exposure boundaries for AC-15"
+	@echo "  make admin-boundary-readiness - Preview admin boundary and rerun readiness for AC-15"
 	@echo "  make finance-export     - Export AiManager finance CSVs from LiteLLM spend and ycapi bill evidence"
+	@echo "  make finance-readiness  - Export finance CSVs and rerun readiness for AC-12/13"
 	@echo "  make wecom-alert-route  - Route AiManager observability alerts to WeCom for AC-16"
+	@echo "  make wecom-alert-readiness - Dry-run WeCom payload and rerun live readiness for AC-16"
+	@echo "  make production-readiness - Run AiManager production readiness bundle"
 	@echo "  make live-ycapi-preflight - Run read-only live ycapi /models preflight for AC-19"
 	@echo "  make production-policy-readiness - Rerun production readiness with AC-POLICY attestation"
 	@echo "  make employee-monitoring-validate - Validate AC-26 employee monitoring notice and acknowledgment evidence"
@@ -70,20 +75,42 @@ policy-check:
 key-inventory-export:
 	PYTHONPATH="$$(pwd)" uv run --no-project python -m aimanager.scripts.export_key_inventory --admin-base-url "$${AIMANAGER_ADMIN_BASE_URL:-http://127.0.0.1:4001}" --output-inventory-file "$${AIMANAGER_KEY_INVENTORY_FILE:-/tmp/aimanager-key-inventory.json}" --output-json-file "$${AIMANAGER_KEY_INVENTORY_EXPORT_RESULT_FILE:-/tmp/aimanager-key-inventory-export.json}"
 
+key-inventory-readiness:
+	AIMANAGER_KEY_INVENTORY_FILE="$${AIMANAGER_KEY_INVENTORY_FILE:-/tmp/aimanager-key-inventory.json}" $(MAKE) key-inventory-export
+	AIMANAGER_KEY_INVENTORY_FILE="$${AIMANAGER_KEY_INVENTORY_FILE:-/tmp/aimanager-key-inventory.json}" PYTHONPATH="$$(pwd)" uv run --no-project python -m aimanager.scripts.validate_key_inventory --inventory-file "$${AIMANAGER_KEY_INVENTORY_FILE:-/tmp/aimanager-key-inventory.json}" --output-json-file "$${AIMANAGER_KEY_INVENTORY_VALIDATION_RESULT_FILE:-/tmp/aimanager-key-inventory-validation.json}"
+	AIMANAGER_KEY_INVENTORY_FILE="$${AIMANAGER_KEY_INVENTORY_FILE:-/tmp/aimanager-key-inventory.json}" $(MAKE) production-readiness
+
 admin-boundary-smoke:
 	AIMANAGER_ALLOWED_SSO_REDIRECT_HOSTS="$${AIMANAGER_ALLOWED_SSO_REDIRECT_HOSTS:-}" PYTHONPATH="$$(pwd)" uv run --no-project python -m aimanager.scripts.smoke_admin_boundary --business-base-url "$${AIMANAGER_BUSINESS_BASE_URL}" --public-admin-url "$${AIMANAGER_PUBLIC_ADMIN_URL}" --require-business-base-url --require-public-admin-url
+
+admin-boundary-readiness:
+	$(MAKE) admin-boundary-smoke || true
+	$(MAKE) production-readiness
 
 finance-export:
 	PYTHONPATH="$$(pwd)" uv run --no-project python -m aimanager.scripts.export_finance --spend-file "$${AIMANAGER_SPEND_FILE}" --ycapi-bill-file "$${AIMANAGER_YCAPI_BILL_FILE}" --output-dir "$${AIMANAGER_FINANCE_OUTPUT_DIR:-/tmp/aimanager-finance-export}"
 
+finance-readiness:
+	$(MAKE) finance-export
+	$(MAKE) production-readiness
+
 wecom-alert-route:
-	PYTHONPATH="$$(pwd)" uv run --no-project python -m aimanager.scripts.route_observability_alerts --report-file "$${AIMANAGER_OBSERVABILITY_REPORT_FILE}" --webhook-url "$${AIMANAGER_WECOM_WEBHOOK_URL}" --min-severity "$${AIMANAGER_WECOM_MIN_SEVERITY:-warning}" --title "AiManager production readiness alerts" --output-payload-file /tmp/aimanager-wecom-alert-payload.json
+	@dry_run_arg=""; \
+	if [ "$${AIMANAGER_WECOM_DRY_RUN}" = "true" ]; then dry_run_arg="--dry-run"; fi; \
+	PYTHONPATH="$$(pwd)" uv run --no-project python -m aimanager.scripts.route_observability_alerts --report-file "$${AIMANAGER_OBSERVABILITY_REPORT_FILE}" --webhook-url "$${AIMANAGER_WECOM_WEBHOOK_URL}" $$dry_run_arg --min-severity "$${AIMANAGER_WECOM_MIN_SEVERITY:-warning}" --title "AiManager production readiness alerts" --output-payload-file /tmp/aimanager-wecom-alert-payload.json
+
+wecom-alert-readiness:
+	$(MAKE) wecom-alert-route AIMANAGER_WECOM_DRY_RUN=true || true
+	$(MAKE) production-readiness
+
+production-readiness:
+	PYTHONPATH="$$(pwd)" uv run --no-project --with pyyaml python -m aimanager.scripts.production_readiness_bundle --output-json-file "$${AIMANAGER_PRODUCTION_READINESS_OUTPUT_FILE:-/tmp/aimanager-production-readiness.json}"
 
 live-ycapi-preflight:
 	PYTHONPATH="$$(pwd)" uv run --no-project python -m aimanager.scripts.smoke_live_ycapi --expect-model gemini-2.5-flash --expect-model deepseek-chat --expect-model ycapi-image-1
 
 production-policy-readiness:
-	AIMANAGER_PRODUCTION_POLICY_ATTESTATION_FILE="$${AIMANAGER_PRODUCTION_POLICY_ATTESTATION_FILE}" PYTHONPATH="$$(pwd)" uv run --no-project --with pyyaml python -m aimanager.scripts.production_readiness_bundle --output-json-file "$${AIMANAGER_PRODUCTION_READINESS_OUTPUT_FILE:-/tmp/aimanager-production-readiness.json}"
+	AIMANAGER_PRODUCTION_POLICY_ATTESTATION_FILE="$${AIMANAGER_PRODUCTION_POLICY_ATTESTATION_FILE}" $(MAKE) production-readiness
 
 employee-monitoring-validate:
 	PYTHONPATH="$$(pwd)" uv run --no-project --with pyyaml python -m aimanager.scripts.validate_employee_monitoring_policy --policy-file "$${AIMANAGER_EMPLOYEE_MONITORING_POLICY_FILE:-docs/aimanager/aimanager-employee-monitoring-policy.json}" --employee-roster-file "$${AIMANAGER_EMPLOYEE_ROSTER_FILE}" --acknowledgment-file "$${AIMANAGER_EMPLOYEE_ACKNOWLEDGMENT_FILE}" --output-json-file "$${AIMANAGER_EMPLOYEE_MONITORING_RESULT_FILE:-/tmp/aimanager-employee-monitoring.json}" --output-markdown-file "$${AIMANAGER_EMPLOYEE_MONITORING_MARKDOWN_FILE:-/tmp/aimanager-employee-monitoring.md}"

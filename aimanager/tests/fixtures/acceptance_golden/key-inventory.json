@@ -1,0 +1,32 @@
+{
+  "exported_at": "2026-06-30T02:30:00Z",
+  "export_source": "litellm-management-api:/key/list",
+  "export_scope": "all_virtual_keys",
+  "exported_by": "security-ops",
+  "expected_total_key_count": 1,
+  "keys": [
+    {
+      "key_alias": "market-campaign-key",
+      "blocked": false,
+      "user_id": "u_market_1",
+      "team_id": "team-marketing",
+      "models": [
+        "gemini-2.5-flash"
+      ],
+      "max_budget": 100,
+      "rpm_limit": 60,
+      "tpm_limit": 120000,
+      "duration": "30d",
+      "metadata": {
+        "owner": "market-ops",
+        "department_id": "dept_market",
+        "project_id": "proj_launch",
+        "cost_center_id": "cc_growth",
+        "scenario_l1": "marketing",
+        "scenario_l2": "campaign_brief",
+        "approver": "finance-controller",
+        "internal_or_external": "internal"
+      }
+    }
+  ]
+}

@@ -15,16 +15,8 @@ _STATUS_ORDER = {"FAIL": 0, "BLOCKED": 1, "PASS": 2}
 _GAP_CATALOG: dict[str, dict[str, object]] = {
     "AC-08-KEY-INVENTORY": {
         "owner": "security/ops",
-        "required_env": ["AIMANAGER_KEY_INVENTORY_FILE"],
-        "command": (
-            "LITELLM_MASTER_KEY=\"$LITELLM_MASTER_KEY\" PYTHONPATH=\"$PWD\" uv run --no-project "
-            "python -m aimanager.scripts.export_key_inventory "
-            "--admin-base-url \"${AIMANAGER_ADMIN_BASE_URL:-http://127.0.0.1:4001}\" "
-            "--output-inventory-file \"$AIMANAGER_KEY_INVENTORY_FILE\" "
-            "--output-json-file /tmp/aimanager-key-inventory-export.json && "
-            "PYTHONPATH=\"$PWD\" uv run --no-project python -m aimanager.scripts.validate_key_inventory "
-            "--inventory-file \"$AIMANAGER_KEY_INVENTORY_FILE\" --output-json-file /tmp/aimanager-key-inventory.json"
-        ),
+        "required_env": ["AIMANAGER_KEY_INVENTORY_FILE", "LITELLM_MASTER_KEY"],
+        "command": "make key-inventory-readiness",
         "next_action": (
             "用 export_key_inventory 导出 24 小时内的生产 LiteLLM virtual key metadata-only 全量 inventory，并提供 exported_at、export_source、"
             "export_scope=all_virtual_keys、exported_by、expected_total_key_count；确认所有 active key 都有员工/团队、"
@@ -38,15 +30,7 @@ _GAP_CATALOG: dict[str, dict[str, object]] = {
             "AIMANAGER_PUBLIC_ADMIN_URL",
             "AIMANAGER_ALLOWED_SSO_REDIRECT_HOSTS",
         ],
-        "command": (
-            "(AIMANAGER_ALLOWED_SSO_REDIRECT_HOSTS=\"${AIMANAGER_ALLOWED_SSO_REDIRECT_HOSTS:-}\" "
-            "PYTHONPATH=\"$PWD\" uv run --no-project python -m aimanager.scripts.smoke_admin_boundary "
-            "--business-base-url \"$AIMANAGER_BUSINESS_BASE_URL\" "
-            "--public-admin-url \"$AIMANAGER_PUBLIC_ADMIN_URL\" "
-            "--require-business-base-url --require-public-admin-url || true) && "
-            "PYTHONPATH=\"$PWD\" uv run --no-project --with pyyaml python -m "
-            "aimanager.scripts.production_readiness_bundle --output-json-file /tmp/aimanager-production-readiness.json"
-        ),
+        "command": "make admin-boundary-readiness",
         "next_action": (
             "补齐生产业务 URL、公开管理 URL；如果公开管理面通过 SSO 302/303 跳转保护，"
             "用 AIMANAGER_ALLOWED_SSO_REDIRECT_HOSTS 配置允许的 SSO host（逗号分隔）。"
@@ -57,17 +41,7 @@ _GAP_CATALOG: dict[str, dict[str, object]] = {
     "AC-16-WECOM": {
         "owner": "ops",
         "required_env": ["AIMANAGER_OBSERVABILITY_REPORT_FILE", "AIMANAGER_WECOM_WEBHOOK_URL"],
-        "command": (
-            "(PYTHONPATH=\"$PWD\" uv run --no-project python -m aimanager.scripts.route_observability_alerts "
-            "--report-file \"$AIMANAGER_OBSERVABILITY_REPORT_FILE\" "
-            "--webhook-url \"$AIMANAGER_WECOM_WEBHOOK_URL\" "
-            "--dry-run "
-            "--min-severity \"${AIMANAGER_WECOM_MIN_SEVERITY:-warning}\" "
-            "--title \"AiManager production readiness alerts\" "
-            "--output-payload-file /tmp/aimanager-wecom-alert-payload.json || true) && "
-            "PYTHONPATH=\"$PWD\" uv run --no-project --with pyyaml python -m "
-            "aimanager.scripts.production_readiness_bundle --output-json-file /tmp/aimanager-production-readiness.json"
-        ),
+        "command": "make wecom-alert-readiness",
         "next_action": (
             "先用 route_observability_alerts dry-run 渲染企业微信 payload，再由 production_readiness_bundle 做唯一一次 live 投递；"
             "delivered_count=0 仍保持 BLOCKED。"
@@ -76,13 +50,7 @@ _GAP_CATALOG: dict[str, dict[str, object]] = {
     "AC-12-13-FINANCE": {
         "owner": "finance",
         "required_env": ["AIMANAGER_SPEND_FILE", "AIMANAGER_YCAPI_BILL_FILE"],
-        "command": (
-            "PYTHONPATH=\"$PWD\" uv run --no-project python -m aimanager.scripts.export_finance "
-            "--spend-file \"$AIMANAGER_SPEND_FILE\" --ycapi-bill-file \"$AIMANAGER_YCAPI_BILL_FILE\" "
-            "--output-dir \"${AIMANAGER_FINANCE_OUTPUT_DIR:-/tmp/aimanager-finance-export}\" && "
-            "PYTHONPATH=\"$PWD\" uv run --no-project --with pyyaml python -m "
-            "aimanager.scripts.production_readiness_bundle --output-json-file /tmp/aimanager-production-readiness.json"
-        ),
+        "command": "make finance-readiness",
         "next_action": (
             "用 export_finance 从真实 LiteLLM spend 导出和 ycapi 月账单生成 usage/monthly/reconciliation CSV；"
             "两侧都必须有非零计费金额，空表头或占位行不能解除 BLOCKED。"

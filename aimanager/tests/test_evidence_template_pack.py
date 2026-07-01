@@ -31,7 +31,7 @@ def test_evidence_template_pack_writes_safe_templates_without_secret_echo(tmp_pa
                         "AC-08-KEY-INVENTORY",
                         "production_key_inventory_governance",
                         "security/ops",
-                        required_env=["AIMANAGER_KEY_INVENTORY_FILE"],
+                        required_env=["AIMANAGER_KEY_INVENTORY_FILE", "LITELLM_MASTER_KEY"],
                     ),
                     _gap(
                         "AC-15",
@@ -123,6 +123,8 @@ def test_evidence_template_pack_writes_safe_templates_without_secret_echo(tmp_pa
     assert "export AIMANAGER_ALLOWED_SSO_REDIRECT_HOSTS=\"\"" in env_template
     assert "export AIMANAGER_KEY_INVENTORY_FILE=" in env_template
     assert "export AIMANAGER_WECOM_WEBHOOK_URL=\"\"" in env_template
+    assert "# LITELLM_MASTER_KEY must be injected by a secret manager or secure shell" in env_template
+    assert "export LITELLM_MASTER_KEY" not in env_template
     assert "export AIMANAGER_LIGHTWEIGHT_TRIAL_OPERATOR_ROLE=\"marketing\"" in env_template
     assert "export AIMANAGER_LIGHTWEIGHT_TRIAL_IDENTITY_SOURCE=\"sso\"" in env_template
     assert "# YCAPI_API_TOKEN must be injected by a secret manager or secure shell" in env_template

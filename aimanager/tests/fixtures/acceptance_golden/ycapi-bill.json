@@ -1,0 +1,13 @@
+[
+  {
+    "billing_month": "2026-06",
+    "model_name": "gemini-2.5-flash",
+    "api_path": "/v1/chat/completions",
+    "prompt_tokens": 150,
+    "completion_tokens": 40,
+    "total_tokens": 190,
+    "image_count": 0,
+    "amount": "2.10",
+    "currency": "CNY"
+  }
+]

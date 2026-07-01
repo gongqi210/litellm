@@ -1,0 +1,3 @@
+employee_id,notice_version,acknowledged_at,channel,understood_purpose,understood_scope,understood_appeal,understood_no_raw_content
+u_market_1,2026-06,2026-06-30T10:00:00+08:00,wecom,true,true,true,true
+u_sales_1,2026-06,2026-06-30T10:05:00+08:00,employee-handbook,true,true,true,true

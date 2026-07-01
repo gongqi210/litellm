@@ -2,13 +2,18 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
+from aimanager.scripts.business_trial_acceptance_bundle import collect_business_trial_acceptance
+from aimanager.scripts.production_readiness_bundle import collect_production_readiness
 from aimanager.scripts.run_acceptance_gate import collect_acceptance_gate, main
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 GENERATED_AT = "2026-06-30T00:00:00Z"
+GOLDEN_GENERATED_AT = "2026-06-30T03:00:00Z"
+GOLDEN_FIXTURE_DIR = PROJECT_ROOT / "aimanager/tests/fixtures/acceptance_golden"
 M1_CHECK_IDS = (
     "AC-15",
     "AC-19",
@@ -131,6 +136,51 @@ def test_acceptance_gate_overwrites_stale_artifacts_and_can_reach_green_path(tmp
     assert result["status"] == "PASS"
     assert business["status"] == "PASS"
     assert "POISON" not in json.dumps(business)
+    assert final_report["status"] == "PASS"
+    assert final_report["summary"]["blockers"] == 0
+
+
+def test_acceptance_gate_reaches_pass_with_real_collectors_and_golden_evidence(tmp_path: Path) -> None:
+    production_calls: list[str] = []
+
+    def production_collector(**kwargs: object) -> dict[str, Any]:
+        production_calls.append(str(kwargs.get("generated_at")))
+        return collect_production_readiness(
+            **kwargs,
+            admin_boundary_runner=_passing_admin_boundary_runner,
+            live_ycapi_runner=_passing_live_ycapi_runner,
+            wecom_router=_passing_wecom_router,
+        )
+
+    result = collect_acceptance_gate(
+        output_dir=tmp_path,
+        project_directory=PROJECT_ROOT,
+        acceptance_doc_file=PROJECT_ROOT / "docs/aimanager/1_acceptance_criteria.md",
+        generated_at=GOLDEN_GENERATED_AT,
+        env=_golden_acceptance_env(tmp_path),
+        production_readiness_collector=production_collector,
+        business_trial_collector=collect_business_trial_acceptance,
+    )
+
+    production = json.loads((tmp_path / "production-readiness.json").read_text(encoding="utf-8"))
+    business = json.loads((tmp_path / "business-trial-acceptance.json").read_text(encoding="utf-8"))
+    launch = json.loads((tmp_path / "launch-gap-plan.json").read_text(encoding="utf-8"))
+    intake = json.loads((tmp_path / "evidence-intake.json").read_text(encoding="utf-8"))
+    final_report = json.loads((tmp_path / "final-acceptance-report.json").read_text(encoding="utf-8"))
+
+    assert production_calls == [GOLDEN_GENERATED_AT]
+    assert result["status"] == "PASS"
+    assert production["status"] == "PASS"
+    assert business["status"] == "PASS"
+    assert {check["id"]: check["status"] for check in production["checks"]} == {
+        check_id: "PASS" for check_id in M1_CHECK_IDS
+    }
+    assert {check["id"]: check["status"] for check in business["checks"]} == {
+        check_id: "PASS" for check_id in M2_CHECK_IDS
+    }
+    assert launch["gaps"] == []
+    assert intake["status"] == "PASS"
+    assert intake["summary"]["files"] >= 9
     assert final_report["status"] == "PASS"
     assert final_report["summary"]["blockers"] == 0
 
@@ -432,6 +482,74 @@ def _check(check_id: str, name: str, status: str, detail: str) -> dict[str, Any]
         "detail": detail,
         "evidence": {},
     }
+
+
+def _golden_acceptance_env(tmp_path: Path) -> dict[str, str]:
+    finance_output_dir = tmp_path / "finance-output"
+    return {
+        "AIMANAGER_BUSINESS_BASE_URL": "https://aimanager-business.internal.invalid",
+        "AIMANAGER_PUBLIC_ADMIN_URL": "https://aimanager-admin.internal.invalid",
+        "AIMANAGER_ALLOWED_SSO_REDIRECT_HOSTS": "sso.company.internal",
+        "YCAPI_API_TOKEN": "synthetic-ycapi-credential-from-secure-env",
+        "AIMANAGER_KEY_INVENTORY_FILE": str(GOLDEN_FIXTURE_DIR / "key-inventory.json"),
+        "AIMANAGER_OBSERVABILITY_REPORT_FILE": str(GOLDEN_FIXTURE_DIR / "observability.json"),
+        "AIMANAGER_WECOM_WEBHOOK_URL": "https://wecom.internal.invalid/aimanager-alerts",
+        "AIMANAGER_SPEND_FILE": str(GOLDEN_FIXTURE_DIR / "spend.json"),
+        "AIMANAGER_YCAPI_BILL_FILE": str(GOLDEN_FIXTURE_DIR / "ycapi-bill.json"),
+        "AIMANAGER_FINANCE_OUTPUT_DIR": str(finance_output_dir),
+        "AIMANAGER_PRODUCTION_POLICY_ATTESTATION_FILE": str(
+            GOLDEN_FIXTURE_DIR / "production-policy-attestation.json"
+        ),
+        "AIMANAGER_LIGHTWEIGHT_TRIAL_EVIDENCE_FILE": str(GOLDEN_FIXTURE_DIR / "lightweight-trial.json"),
+        "AIMANAGER_EMPLOYEE_MONITORING_POLICY_FILE": str(GOLDEN_FIXTURE_DIR / "employee-monitoring-policy.json"),
+        "AIMANAGER_EMPLOYEE_ROSTER_FILE": str(GOLDEN_FIXTURE_DIR / "employee-roster.csv"),
+        "AIMANAGER_EMPLOYEE_ACKNOWLEDGMENT_FILE": str(GOLDEN_FIXTURE_DIR / "employee-acknowledgments.csv"),
+    }
+
+
+def _passing_admin_boundary_runner(**_: object) -> list[SimpleNamespace]:
+    return [
+        SimpleNamespace(
+            name="business_admin_route_blocked",
+            surface="business",
+            method="GET",
+            path="/ui",
+            status="PASS",
+            status_code=403,
+            policy_code="aimanager_route_not_allowed",
+            detail="business surface blocks admin UI and management routes",
+        ),
+        SimpleNamespace(
+            name="public_admin_sso_protected",
+            surface="public_admin",
+            method="GET",
+            path="/ui",
+            status="PASS",
+            status_code=302,
+            policy_code="sso_redirect",
+            detail="public admin URL redirects only to allowlisted SSO host",
+        ),
+    ]
+
+
+def _passing_live_ycapi_runner(**_: object) -> SimpleNamespace:
+    return SimpleNamespace(
+        status="PASS",
+        detail="ycapi /models returned all expected models",
+        status_code=200,
+        model_count=3,
+        observed_models=("gemini-2.5-flash", "deepseek-chat", "ycapi-image-1"),
+    )
+
+
+def _passing_wecom_router(**_: object) -> SimpleNamespace:
+    return SimpleNamespace(
+        status="PASS",
+        detail="sent 1 alert to WeCom webhook",
+        alert_count=1,
+        delivered_count=1,
+        payload=None,
+    )
 
 
 def _step_by_id(result: dict[str, object], step_id: str) -> dict[str, Any]:

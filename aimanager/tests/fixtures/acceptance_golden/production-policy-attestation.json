@@ -1,0 +1,54 @@
+{
+  "policy_id": "aimanager-production-policy",
+  "policy_version": "2026-06",
+  "approved_at": "2026-06-30T09:00:00+08:00",
+  "chargeback": {
+    "mode": "showback",
+    "confirmed": true,
+    "policy_ref": "FIN-AI-2026-06",
+    "effective_month": "2026-06"
+  },
+  "pricing_approval": {
+    "confirmed": true,
+    "pricing_version": "m1-2026-06",
+    "approval_ref": "FIN-PRICE-2026-06",
+    "approver": "finance-controller"
+  },
+  "ycapi_token_limit": {
+    "confirmed": true,
+    "limit_ref": "YCAPI-LIMIT-2026-06",
+    "monthly_budget_cny": "10000",
+    "rpm_limit": 600
+  },
+  "employee_virtual_key_only": {
+    "confirmed": true,
+    "distribution_channel": "aimanager-admin",
+    "ycapi_token_visible_to_employee": false
+  },
+  "data_boundaries": {
+    "confirmed": true,
+    "policy_ref": "SEC-DATA-AI-2026-06",
+    "categories": [
+      "personal_information",
+      "customer_data",
+      "trade_secret"
+    ]
+  },
+  "approvals": [
+    {
+      "role": "finance",
+      "approver": "finance-controller",
+      "approval_ref": "FIN-APPROVED"
+    },
+    {
+      "role": "security",
+      "approver": "security-owner",
+      "approval_ref": "SEC-APPROVED"
+    },
+    {
+      "role": "legal",
+      "approver": "legal-owner",
+      "approval_ref": "LEGAL-APPROVED"
+    }
+  ]
+}

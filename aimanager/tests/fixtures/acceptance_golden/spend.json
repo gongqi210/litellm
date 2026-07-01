@@ -1,0 +1,23 @@
+[
+  {
+    "started_at": "2026-06-30T10:15:00+08:00",
+    "request_id": "req_chat_1",
+    "user_id": "u_market_1",
+    "key_alias": "market-campaign-key",
+    "model": "gemini-2.5-flash",
+    "endpoint": "/v1/chat/completions",
+    "status": "success",
+    "prompt_tokens": 150,
+    "completion_tokens": 40,
+    "total_tokens": 190,
+    "image_count": 0,
+    "spend": "2.00",
+    "currency": "CNY",
+    "pricing_version": "m1-2026-06",
+    "metadata": {
+      "department_id": "dept_market",
+      "project_id": "proj_launch",
+      "cost_center_id": "cc_growth"
+    }
+  }
+]

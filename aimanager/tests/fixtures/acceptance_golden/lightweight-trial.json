@@ -1,0 +1,47 @@
+{
+  "trial_id": "trial-20260630-001",
+  "ac": "AC-23",
+  "entry_channel": "lightweight_web",
+  "operator": {
+    "employee_id": "emp_market_001",
+    "department_id": "dept_marketing",
+    "role": "marketing",
+    "uses_sdk": false
+  },
+  "identity_injection": {
+    "source": "sso",
+    "employee_virtual_key_used": true,
+    "employee_virtual_key_alias": "market-trial-key",
+    "ycapi_token_exposed": false
+  },
+  "work_context": {
+    "scenario_l1": "marketing",
+    "scenario_l2": "campaign_brief",
+    "project_id": "proj_launch",
+    "cost_center_id": "cc_growth"
+  },
+  "request_evidence": {
+    "request_id": "req-trial-001",
+    "model": "gemini-2.5-flash",
+    "endpoint": "/v1/chat/completions",
+    "http_status": 200,
+    "spend": 0.12,
+    "currency": "CNY",
+    "pricing_version": "m2-2026-06"
+  },
+  "timing": {
+    "started_at": "2026-06-30T10:00:00+08:00",
+    "completed_at": "2026-06-30T10:04:30+08:00"
+  },
+  "compliance": {
+    "work_context_status": "PASS",
+    "brand_safety_confirmed": true,
+    "no_secret_echo": true,
+    "html_escaped": true
+  },
+  "live_ycapi": true,
+  "attestation": {
+    "observer": "ops-manager",
+    "captured_at": "2026-06-30T10:05:00+08:00"
+  }
+}

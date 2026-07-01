@@ -91,7 +91,11 @@ def test_aimanager_cli_entry_emits_machine_readable_status() -> None:
     assert "--require-business-base-url" in admin_boundary_smoke
     assert "--require-public-admin-url" in admin_boundary_smoke
     assert "<sso-host>" not in admin_boundary_smoke
-    assert "production_readiness" in payload["commands"]
+    assert payload["commands"]["production_readiness"] == "make production-readiness"
+    assert payload["commands"]["key_inventory_readiness"] == "make key-inventory-readiness"
+    assert payload["commands"]["finance_readiness"] == "make finance-readiness"
+    assert payload["commands"]["admin_boundary_readiness"] == "make admin-boundary-readiness"
+    assert payload["commands"]["wecom_alert_readiness"] == "make wecom-alert-readiness"
     assert payload["commands"]["live_ycapi_preflight"] == "make live-ycapi-preflight"
     assert payload["commands"]["production_policy_readiness"] == "make production-policy-readiness"
     assert payload["commands"]["employee_monitoring_validate"] == "make employee-monitoring-validate"
@@ -107,6 +111,28 @@ def test_makefile_exposes_finance_export_operator_target() -> None:
     assert "--spend-file \"$${AIMANAGER_SPEND_FILE}\"" in makefile
     assert "--ycapi-bill-file \"$${AIMANAGER_YCAPI_BILL_FILE}\"" in makefile
     assert "--output-dir \"$${AIMANAGER_FINANCE_OUTPUT_DIR:-/tmp/aimanager-finance-export}\"" in makefile
+
+
+def test_makefile_exposes_remaining_production_readiness_operator_targets() -> None:
+    makefile = MAKEFILE.read_text(encoding="utf-8")
+
+    assert "production-readiness:" in makefile
+    assert "aimanager.scripts.production_readiness_bundle" in makefile
+
+    assert "key-inventory-readiness:" in makefile
+    assert "$(MAKE) key-inventory-export" in makefile
+    assert "aimanager.scripts.validate_key_inventory" in makefile
+    assert "--inventory-file \"$${AIMANAGER_KEY_INVENTORY_FILE:-/tmp/aimanager-key-inventory.json}\"" in makefile
+
+    assert "finance-readiness:" in makefile
+    assert "$(MAKE) finance-export" in makefile
+    assert "$(MAKE) production-readiness" in makefile
+
+    assert "admin-boundary-readiness:" in makefile
+    assert "$(MAKE) admin-boundary-smoke || true" in makefile
+
+    assert "wecom-alert-readiness:" in makefile
+    assert "$(MAKE) wecom-alert-route AIMANAGER_WECOM_DRY_RUN=true || true" in makefile
 
 
 def test_makefile_exposes_wecom_alert_route_operator_target() -> None:

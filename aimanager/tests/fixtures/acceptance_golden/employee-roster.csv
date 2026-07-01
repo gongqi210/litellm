@@ -1,0 +1,4 @@
+employee_id,department_id,status
+u_market_1,dept_market,active
+u_sales_1,dept_sales,active
+u_left_1,dept_sales,inactive

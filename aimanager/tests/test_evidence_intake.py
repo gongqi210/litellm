@@ -50,6 +50,7 @@ def test_evidence_intake_fails_secret_like_and_raw_prompt_without_echoing_secret
             {
                 "trial_id": "trial-1",
                 "prompt": "raw prompt must not be accepted",
+                "raw_prompt": "raw prompt field must not be accepted",
                 "request": {"Authorization": "Bearer should-not-leak"},
             }
         ),
@@ -61,8 +62,30 @@ def test_evidence_intake_fails_secret_like_and_raw_prompt_without_echoing_secret
     serialized = json.dumps(result, ensure_ascii=False)
     assert result["status"] == "FAIL"
     assert "prompt" in serialized
+    assert "raw_prompt" in serialized
     assert "should-not-leak" not in serialized
     assert "Bearer [redacted:secret-like-value]" in serialized
+
+
+def test_evidence_intake_allows_policy_boundaries_that_prohibit_raw_content_access(tmp_path) -> None:
+    evidence_dir = tmp_path / "evidence"
+    evidence_dir.mkdir()
+    (evidence_dir / "employee-monitoring-policy.json").write_text(
+        json.dumps(
+            {
+                "permission_boundary": {
+                    "raw_prompt_access": "prohibited",
+                    "customer_content_access": "prohibited",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = validate_evidence_intake(input_dir=evidence_dir, generated_at="2026-07-01T00:00:00Z")
+
+    assert result["status"] == "PASS"
+    assert result["summary"] == {"PASS": 1, "FAIL": 0, "BLOCKED": 0, "files": 1}
 
 
 def test_evidence_intake_passes_filled_safe_files(tmp_path) -> None:

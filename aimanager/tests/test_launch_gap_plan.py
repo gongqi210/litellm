@@ -55,7 +55,7 @@ def test_launch_gap_plan_dedupes_production_checks_and_groups_actionable_gaps(tm
         "AIMANAGER_ALLOWED_SSO_REDIRECT_HOSTS",
     ]
     assert ac15["sources"] == ["business_trial", "production_readiness"]
-    assert "smoke_admin_boundary" in ac15["command"]
+    assert ac15["command"] == "make admin-boundary-readiness"
     assert "生产业务 URL" in ac15["next_action"]
     assert "AC-26" in result["markdown"]
     assert "HR/legal/security" in result["markdown"]
@@ -116,10 +116,9 @@ def test_launch_gap_plan_assigns_key_inventory_gap_to_security_ops(tmp_path) -> 
     gap = result["gaps"][0]
     assert gap["id"] == "AC-08-KEY-INVENTORY"
     assert gap["owner"] == "security/ops"
-    assert gap["required_env"] == ["AIMANAGER_KEY_INVENTORY_FILE"]
-    assert "export_key_inventory" in gap["command"]
-    assert "validate_key_inventory" in gap["command"]
-    assert gap["command"].index("export_key_inventory") < gap["command"].index("validate_key_inventory")
+    assert gap["required_env"] == ["AIMANAGER_KEY_INVENTORY_FILE", "LITELLM_MASTER_KEY"]
+    assert gap["command"] == "make key-inventory-readiness"
+    assert "<" not in gap["command"]
     assert "export_key_inventory" in gap["next_action"]
     assert "virtual key" in gap["next_action"]
     assert "expected_total_key_count" in gap["next_action"]
@@ -151,12 +150,8 @@ def test_launch_gap_plan_assigns_finance_gap_to_export_before_readiness(tmp_path
     assert gap["id"] == "AC-12-13-FINANCE"
     assert gap["owner"] == "finance"
     assert gap["required_env"] == ["AIMANAGER_SPEND_FILE", "AIMANAGER_YCAPI_BILL_FILE"]
-    assert "aimanager.scripts.export_finance" in gap["command"]
-    assert "--spend-file \"$AIMANAGER_SPEND_FILE\"" in gap["command"]
-    assert "--ycapi-bill-file \"$AIMANAGER_YCAPI_BILL_FILE\"" in gap["command"]
-    assert "--output-dir \"${AIMANAGER_FINANCE_OUTPUT_DIR:-/tmp/aimanager-finance-export}\"" in gap["command"]
-    assert "aimanager.scripts.production_readiness_bundle" in gap["command"]
-    assert gap["command"].index("export_finance") < gap["command"].index("production_readiness_bundle")
+    assert gap["command"] == "make finance-readiness"
+    assert "<" not in gap["command"]
     assert "export_finance" in gap["next_action"]
     assert "非零计费金额" in gap["next_action"]
 
@@ -187,16 +182,8 @@ def test_launch_gap_plan_assigns_wecom_gap_to_route_alerts_before_readiness(tmp_
     assert gap["id"] == "AC-16-WECOM"
     assert gap["owner"] == "ops"
     assert gap["required_env"] == ["AIMANAGER_OBSERVABILITY_REPORT_FILE", "AIMANAGER_WECOM_WEBHOOK_URL"]
-    assert "aimanager.scripts.route_observability_alerts" in gap["command"]
-    assert "--report-file \"$AIMANAGER_OBSERVABILITY_REPORT_FILE\"" in gap["command"]
-    assert "--webhook-url \"$AIMANAGER_WECOM_WEBHOOK_URL\"" in gap["command"]
-    assert "--dry-run" in gap["command"]
-    assert "--min-severity \"${AIMANAGER_WECOM_MIN_SEVERITY:-warning}\"" in gap["command"]
-    assert "--title \"AiManager production readiness alerts\"" in gap["command"]
-    assert "--output-payload-file /tmp/aimanager-wecom-alert-payload.json" in gap["command"]
-    assert "aimanager.scripts.production_readiness_bundle" in gap["command"]
-    assert gap["command"].index("route_observability_alerts") < gap["command"].index("production_readiness_bundle")
-    assert gap["command"].index("|| true") < gap["command"].index("production_readiness_bundle")
+    assert gap["command"] == "make wecom-alert-readiness"
+    assert "<" not in gap["command"]
     assert "route_observability_alerts" in gap["next_action"]
     assert "企业微信" in gap["next_action"]
 
@@ -231,16 +218,8 @@ def test_launch_gap_plan_assigns_admin_boundary_gap_to_smoke_before_readiness(tm
         "AIMANAGER_PUBLIC_ADMIN_URL",
         "AIMANAGER_ALLOWED_SSO_REDIRECT_HOSTS",
     ]
-    assert "aimanager.scripts.smoke_admin_boundary" in gap["command"]
-    assert "--business-base-url \"$AIMANAGER_BUSINESS_BASE_URL\"" in gap["command"]
-    assert "--public-admin-url \"$AIMANAGER_PUBLIC_ADMIN_URL\"" in gap["command"]
-    assert "AIMANAGER_ALLOWED_SSO_REDIRECT_HOSTS=\"${AIMANAGER_ALLOWED_SSO_REDIRECT_HOSTS:-}\"" in gap["command"]
-    assert "--require-business-base-url" in gap["command"]
-    assert "--require-public-admin-url" in gap["command"]
-    assert "<sso-host>" not in gap["command"]
-    assert "aimanager.scripts.production_readiness_bundle" in gap["command"]
-    assert gap["command"].index("smoke_admin_boundary") < gap["command"].index("production_readiness_bundle")
-    assert gap["command"].index("|| true") < gap["command"].index("production_readiness_bundle")
+    assert gap["command"] == "make admin-boundary-readiness"
+    assert "<" not in gap["command"]
     assert "AIMANAGER_ALLOWED_SSO_REDIRECT_HOSTS" in gap["next_action"]
 
 

@@ -1,0 +1,79 @@
+{
+  "policy_id": "aimanager-employee-monitoring-v1",
+  "version": "2026-06",
+  "title": "AiManager employee monitoring notice and permission boundary",
+  "published_at": "2026-06-30",
+  "effective_at": "2026-07-01",
+  "owner": "ai-platform",
+  "notice_url": "https://intranet.internal/policies/aimanager-employee-monitoring-v1",
+  "notice_channels": [
+    "wecom",
+    "employee-handbook"
+  ],
+  "monitored_metadata_fields": [
+    "request_id",
+    "timestamp",
+    "employee_id",
+    "department_id",
+    "key_alias",
+    "model",
+    "endpoint",
+    "scenario_l1",
+    "scenario_l2",
+    "project_id",
+    "cost_center_id",
+    "currency",
+    "spend",
+    "ip_hash",
+    "user_agent_hash"
+  ],
+  "prohibited_monitoring_fields": [
+    "prompt_text",
+    "response_text",
+    "raw_ip",
+    "raw_user_agent",
+    "customer_content"
+  ],
+  "retention_days": 90,
+  "rules": [
+    {
+      "rule_id": "off-hours-usage-v1",
+      "type": "off_hours_usage",
+      "enabled": true,
+      "severity": "warning",
+      "timezone": "Asia/Shanghai",
+      "workday_start": "09:00",
+      "workday_end": "18:30",
+      "threshold_request_count": 20,
+      "threshold_spend": "50",
+      "lookback_hours": 24,
+      "requires_exception_ticket": true
+    },
+    {
+      "rule_id": "key-sharing-v1",
+      "type": "key_sharing",
+      "enabled": true,
+      "severity": "high",
+      "lookback_hours": 24,
+      "distinct_ip_hash_threshold": 3,
+      "distinct_user_agent_hash_threshold": 3,
+      "requires_disposition": true
+    }
+  ],
+  "permission_boundary": {
+    "allowed_review_roles": [
+      "ai_platform_admin",
+      "security",
+      "audit",
+      "hr",
+      "legal"
+    ],
+    "prohibited_roles": [
+      "direct_manager"
+    ],
+    "raw_prompt_access": "prohibited",
+    "customer_content_access": "prohibited",
+    "requires_hr_or_legal_for_disciplinary_action": true,
+    "employee_appeal_channel": "wecom://ai-compliance-helpdesk"
+  }
+}
