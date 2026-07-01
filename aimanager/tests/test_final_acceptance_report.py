@@ -157,7 +157,8 @@ def test_final_acceptance_report_blocks_when_launch_gap_plan_has_unresolved_gaps
                         "sources": ["business_trial"],
                         "required_env": ["AIMANAGER_LIGHTWEIGHT_TRIAL_EVIDENCE_FILE"],
                         "required_files": [],
-                        "command": "python -m aimanager.scripts.capture_lightweight_trial_evidence",
+                        "command": "legacy trial command",
+                        "rerun_command": "python -m aimanager.scripts.capture_lightweight_trial_evidence",
                         "next_action": "run a 0-300 second nontechnical trial",
                     },
                     {
@@ -192,6 +193,7 @@ def test_final_acceptance_report_blocks_when_launch_gap_plan_has_unresolved_gaps
     assert [blocker["id"] for blocker in result["blockers"][:2]] == ["AC-23", "AC-26"]
     assert result["blockers"][0]["owner"] == "business_owner/market/ops"
     assert result["blockers"][0]["command"] == "python -m aimanager.scripts.capture_lightweight_trial_evidence"
+    assert result["blockers"][0]["rerun_command"] == result["blockers"][0]["command"]
     assert "AIMANAGER_EMPLOYEE_ACKNOWLEDGMENT_FILE" in result["markdown"]
 
 

@@ -7,18 +7,21 @@ from aimanager.scripts.generate_evidence_handoff import collect_evidence_handoff
 
 def test_evidence_handoff_groups_launch_gaps_by_owner_without_unblocking_them(tmp_path) -> None:
     launch_file = tmp_path / "launch-gap-plan.json"
+    finance_gap = _gap(
+        "AC-12-13-FINANCE",
+        "finance_export_reconciliation",
+        "BLOCKED",
+        "finance",
+        required_files=["/secure/spend.csv", "/secure/ycapi-bill.csv"],
+    )
+    finance_gap["command"] = "legacy finance command"
+    finance_gap["rerun_command"] = "make finance-readiness"
     launch_file.write_text(
         json.dumps(
             _launch_plan(
                 status="FAIL",
                 gaps=[
-                    _gap(
-                        "AC-12-13-FINANCE",
-                        "finance_export_reconciliation",
-                        "BLOCKED",
-                        "finance",
-                        required_files=["/secure/spend.csv", "/secure/ycapi-bill.csv"],
-                    ),
+                    finance_gap,
                     _gap(
                         "AC-23",
                         "nontechnical_lightweight_trial",
@@ -43,8 +46,11 @@ def test_evidence_handoff_groups_launch_gaps_by_owner_without_unblocking_them(tm
     finance = next(owner for owner in result["owners"] if owner["owner"] == "finance")
     assert finance["status"] == "BLOCKED"
     assert finance["gaps"][0]["required_files"] == ["/secure/spend.csv", "/secure/ycapi-bill.csv"]
+    assert finance["gaps"][0]["command"] == "make finance-readiness"
+    assert finance["gaps"][0]["rerun_command"] == "make finance-readiness"
     assert "Evidence request only" in result["markdown"]
     assert "not a PASS artifact" in result["markdown"]
+    assert "`make finance-readiness`" in finance["markdown"]
 
 
 def test_evidence_handoff_cli_writes_manifest_and_owner_markdown_with_redaction(tmp_path, capsys) -> None:

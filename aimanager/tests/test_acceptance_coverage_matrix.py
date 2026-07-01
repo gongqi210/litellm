@@ -231,6 +231,78 @@ def test_acceptance_coverage_matrix_detects_missing_local_artifacts(tmp_path) ->
     assert result["criteria"][0]["missing_artifacts"] == ["missing_test.py"]
 
 
+def test_acceptance_coverage_matrix_fails_when_mapped_local_test_result_fails(tmp_path) -> None:
+    doc_file = tmp_path / "acceptance.md"
+    artifact = tmp_path / "test_contract.py"
+    local_results_file = tmp_path / "local-test-results.json"
+    artifact.write_text("# test placeholder\n", encoding="utf-8")
+    doc_file.write_text("| AC-99 | synthetic | test |\n", encoding="utf-8")
+    local_results_file.write_text(
+        json.dumps(
+            _local_test_results(
+                [
+                    {
+                        "id": "AC-99",
+                        "status": "FAIL",
+                        "detail": "pytest failed for AC-99",
+                        "targets": ["test_contract.py"],
+                    }
+                ]
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    result = collect_acceptance_coverage_matrix(
+        acceptance_doc_file=doc_file,
+        project_directory=tmp_path,
+        local_test_results_file=local_results_file,
+        gate_registry=[
+            AcceptanceGate(
+                criterion_id="AC-99",
+                owner="qa",
+                gate_kind="local_test",
+                local_artifacts=("test_contract.py",),
+            )
+        ],
+        generated_at="2026-06-30T00:00:00Z",
+    )
+
+    assert result["status"] == "FAIL"
+    assert result["criteria"][0]["status"] == "FAIL"
+    assert result["criteria"][0]["detail"] == "pytest failed for AC-99"
+    assert result["criteria"][0]["local_test_result"]["status"] == "FAIL"
+    assert "local_test_results" in result["criteria"][0]["sources"]
+
+
+def test_acceptance_coverage_matrix_fails_when_local_test_result_is_missing_for_local_gate(tmp_path) -> None:
+    doc_file = tmp_path / "acceptance.md"
+    artifact = tmp_path / "test_contract.py"
+    local_results_file = tmp_path / "local-test-results.json"
+    artifact.write_text("# test placeholder\n", encoding="utf-8")
+    doc_file.write_text("| AC-99 | synthetic | test |\n", encoding="utf-8")
+    local_results_file.write_text(json.dumps(_local_test_results([])), encoding="utf-8")
+
+    result = collect_acceptance_coverage_matrix(
+        acceptance_doc_file=doc_file,
+        project_directory=tmp_path,
+        local_test_results_file=local_results_file,
+        gate_registry=[
+            AcceptanceGate(
+                criterion_id="AC-99",
+                owner="qa",
+                gate_kind="runtime_smoke",
+                local_artifacts=("test_contract.py",),
+            )
+        ],
+        generated_at="2026-06-30T00:00:00Z",
+    )
+
+    assert result["status"] == "FAIL"
+    assert result["criteria"][0]["status"] == "FAIL"
+    assert "local test result is absent" in result["criteria"][0]["detail"]
+
+
 def test_acceptance_coverage_matrix_redacts_secret_like_bundle_details(tmp_path) -> None:
     production_file = tmp_path / "production-readiness.json"
     production_file.write_text(
@@ -330,4 +402,18 @@ def _check(check_id: str, name: str, status: str, detail: str) -> dict[str, obje
         "status": status,
         "detail": detail,
         "evidence": {},
+    }
+
+
+def _local_test_results(criteria: list[dict[str, object]]) -> dict[str, object]:
+    return {
+        "status": "FAIL" if any(item["status"] == "FAIL" for item in criteria) else "PASS",
+        "generated_at": "2026-06-30T00:00:00Z",
+        "summary": {
+            "criteria": len(criteria),
+            "PASS": sum(1 for item in criteria if item["status"] == "PASS"),
+            "FAIL": sum(1 for item in criteria if item["status"] == "FAIL"),
+            "BLOCKED": sum(1 for item in criteria if item["status"] == "BLOCKED"),
+        },
+        "criteria": criteria,
     }

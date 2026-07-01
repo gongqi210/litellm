@@ -147,6 +147,7 @@ def _gap_list(launch: Mapping[str, object], source_file: Path) -> list[dict[str,
         status = _coerce_status(item.get("status"))
         if status == "PASS":
             continue
+        command = _rerun_command(item)
         gaps.append(
             {
                 "id": str(item.get("id") or "UNKNOWN"),
@@ -156,7 +157,8 @@ def _gap_list(launch: Mapping[str, object], source_file: Path) -> list[dict[str,
                 "detail": str(item.get("detail") or ""),
                 "required_env": _string_list(item.get("required_env")),
                 "required_files": _string_list(item.get("required_files")),
-                "command": str(item.get("command") or ""),
+                "command": command,
+                "rerun_command": command,
                 "next_action": str(item.get("next_action") or ""),
                 "sources": _string_list(item.get("sources")),
             }
@@ -292,6 +294,10 @@ def _write_json(path: Path, payload: Mapping[str, object]) -> None:
 
 def _write_text(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
+
+
+def _rerun_command(source: Mapping[str, object]) -> str:
+    return str(source.get("rerun_command") or source.get("command") or "")
 
 
 def _overall_status(statuses: Sequence[str]) -> str:

@@ -56,6 +56,7 @@ def test_launch_gap_plan_dedupes_production_checks_and_groups_actionable_gaps(tm
     ]
     assert ac15["sources"] == ["business_trial", "production_readiness"]
     assert ac15["command"] == "make admin-boundary-readiness"
+    assert ac15["rerun_command"] == ac15["command"]
     assert "生产业务 URL" in ac15["next_action"]
     assert "AC-26" in result["markdown"]
     assert "HR/legal/security" in result["markdown"]
@@ -421,6 +422,7 @@ def test_launch_gap_plan_cli_writes_blocked_plan_without_input_files(tmp_path, c
     assert "BLOCKED launch gap plan" in output
     assert result["status"] == "BLOCKED"
     assert result["gaps"][0]["id"] == "INPUT"
+    assert result["gaps"][0]["rerun_command"] == result["gaps"][0]["command"]
     assert "production_readiness" in output_markdown.read_text(encoding="utf-8")
 
 

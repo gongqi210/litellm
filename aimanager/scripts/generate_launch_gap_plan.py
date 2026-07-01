@@ -241,6 +241,7 @@ def _gap_from_check(check: Mapping[str, object]) -> dict[str, object]:
         ]
     )
     required_files = _string_list(evidence.get("required_files")) or list(catalog.get("required_files", []))
+    command = str(catalog.get("command") or "rerun the corresponding AiManager gate command and inspect this check")
     return {
         "id": check_id,
         "name": str(check.get("name") or "launch_gate_check"),
@@ -250,12 +251,17 @@ def _gap_from_check(check: Mapping[str, object]) -> dict[str, object]:
         "sources": list(check.get("sources", [])),
         "required_env": required_env,
         "required_files": required_files,
-        "command": str(catalog.get("command") or "rerun the corresponding AiManager gate command and inspect this check"),
+        "command": command,
+        "rerun_command": command,
         "next_action": str(catalog.get("next_action") or "inspect the failed or blocked check and provide the missing evidence"),
     }
 
 
 def _input_gap(detail: str, *, source: str) -> dict[str, object]:
+    command = (
+        "PYTHONPATH=\"$PWD\" uv run --no-project --with pyyaml python -m "
+        "aimanager.scripts.production_readiness_bundle --output-json-file /tmp/aimanager-production-readiness.json"
+    )
     return {
         "id": "INPUT",
         "name": "launch_gap_plan_input",
@@ -265,10 +271,8 @@ def _input_gap(detail: str, *, source: str) -> dict[str, object]:
         "sources": [source],
         "required_env": [],
         "required_files": ["production_readiness", "business_trial"],
-        "command": (
-            "PYTHONPATH=\"$PWD\" uv run --no-project --with pyyaml python -m "
-            "aimanager.scripts.production_readiness_bundle --output-json-file /tmp/aimanager-production-readiness.json"
-        ),
+        "command": command,
+        "rerun_command": command,
         "next_action": "先运行 production_readiness_bundle；业务试点前再运行 business_trial_acceptance_bundle。",
     }
 

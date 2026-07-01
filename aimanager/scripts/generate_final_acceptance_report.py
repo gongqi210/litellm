@@ -170,6 +170,7 @@ def _collect_blockers(inputs: Mapping[str, Mapping[str, object]]) -> list[dict[s
 
 def _input_blocker(input_state: Mapping[str, object]) -> dict[str, object]:
     source = str(input_state["source"])
+    command = _input_command(source)
     return {
         "id": f"INPUT:{source}",
         "name": "final_acceptance_input",
@@ -179,7 +180,8 @@ def _input_blocker(input_state: Mapping[str, object]) -> dict[str, object]:
         "detail": str(input_state.get("detail") or ""),
         "required_env": [],
         "required_files": [_SOURCE_LABELS[source]],
-        "command": _input_command(source),
+        "command": command,
+        "rerun_command": command,
         "next_action": f"Generate and supply the {_SOURCE_LABELS[source]} JSON before final acceptance.",
     }
 
@@ -188,6 +190,7 @@ def _launch_gap_blockers(input_state: Mapping[str, object]) -> list[dict[str, ob
     data = _mapping(input_state.get("data"))
     gaps = data.get("gaps")
     if not isinstance(gaps, list):
+        command = _input_command("launch_gap_plan")
         return [
             {
                 "id": "LAUNCH-GAPS",
@@ -198,7 +201,8 @@ def _launch_gap_blockers(input_state: Mapping[str, object]) -> list[dict[str, ob
                 "detail": "launch_gap_plan gaps must be a list",
                 "required_env": [],
                 "required_files": [],
-                "command": _input_command("launch_gap_plan"),
+                "command": command,
+                "rerun_command": command,
                 "next_action": "Regenerate the launch gap plan JSON.",
             }
         ]
@@ -209,6 +213,7 @@ def _launch_gap_blockers(input_state: Mapping[str, object]) -> list[dict[str, ob
         status = _coerce_status(gap.get("status"))
         if status == "PASS":
             continue
+        command = _rerun_command(gap, fallback=_input_command("launch_gap_plan"))
         blockers.append(
             {
                 "id": str(gap.get("id") or "UNKNOWN"),
@@ -219,7 +224,8 @@ def _launch_gap_blockers(input_state: Mapping[str, object]) -> list[dict[str, ob
                 "detail": str(gap.get("detail") or ""),
                 "required_env": _string_list(gap.get("required_env")),
                 "required_files": _string_list(gap.get("required_files")),
-                "command": str(gap.get("command") or _input_command("launch_gap_plan")),
+                "command": command,
+                "rerun_command": command,
                 "next_action": str(gap.get("next_action") or "Resolve this launch gap and rerun final acceptance."),
             }
         )
@@ -487,9 +493,14 @@ def _input_command(source: str) -> str:
         "PYTHONPATH=\"$PWD\" uv run --no-project python -m aimanager.scripts.acceptance_coverage_matrix "
         "--production-readiness-file /tmp/aimanager-production-readiness.json "
         "--business-trial-file /tmp/aimanager-business-trial-acceptance.json "
+        "--local-test-results-file /tmp/aimanager-local-test-results.json "
         "--output-json-file /tmp/aimanager-acceptance-coverage.json "
         "--output-markdown-file /tmp/aimanager-acceptance-coverage.md"
     )
+
+
+def _rerun_command(source: Mapping[str, object], *, fallback: str) -> str:
+    return str(source.get("rerun_command") or source.get("command") or fallback)
 
 
 def _missing_or_local_artifacts(criterion: Mapping[str, object]) -> list[str]:

@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+from aimanager.scripts.acceptance_coverage_matrix import DEFAULT_GATE_REGISTRY
 from aimanager.scripts.business_trial_acceptance_bundle import collect_business_trial_acceptance
 from aimanager.scripts.production_readiness_bundle import collect_production_readiness
 from aimanager.scripts.run_acceptance_gate import collect_acceptance_gate, main
@@ -51,6 +52,7 @@ def test_acceptance_gate_writes_run_scoped_artifacts_and_reuses_production_readi
         env={},
         production_readiness_collector=production_collector,
         business_trial_collector=business_collector,
+        local_test_results_collector=_passing_local_test_results_collector,
     )
 
     assert production_calls == [GENERATED_AT]
@@ -58,8 +60,8 @@ def test_acceptance_gate_writes_run_scoped_artifacts_and_reuses_production_readi
         json.loads((tmp_path / "production-readiness.json").read_text(encoding="utf-8"))
     ]
     assert result["status"] == "BLOCKED"
-    assert result["summary"]["steps"] == 6
-    assert result["summary"]["PASS"] == 0
+    assert result["summary"]["steps"] == 7
+    assert result["summary"]["PASS"] == 1
     assert result["summary"]["FAIL"] == 0
     assert result["summary"]["BLOCKED"] == 6
     assert result["evidence_intake"]["status"] == "BLOCKED"
@@ -73,6 +75,7 @@ def test_acceptance_gate_writes_run_scoped_artifacts_and_reuses_production_readi
         "business_trial_acceptance",
         "launch_gap_plan",
         "evidence_intake",
+        "local_acceptance_tests",
         "acceptance_coverage_matrix",
         "final_acceptance_report",
     ]
@@ -93,6 +96,7 @@ def test_acceptance_gate_writes_run_scoped_artifacts_and_reuses_production_readi
         "evidence-template-pack/README.md",
         "evidence-intake.json",
         "evidence-intake.md",
+        "local-test-results.json",
         "acceptance-gate.json",
         "acceptance-gate.md",
     ):
@@ -132,6 +136,7 @@ def test_acceptance_gate_overwrites_stale_artifacts_and_can_reach_green_path(tmp
             "PASS",
             production_checks=kwargs["production_readiness_collector"]()["checks"],
         ),
+        local_test_results_collector=_passing_local_test_results_collector,
     )
 
     business = json.loads((tmp_path / "business-trial-acceptance.json").read_text(encoding="utf-8"))
@@ -164,6 +169,7 @@ def test_acceptance_gate_reaches_pass_with_real_collectors_and_golden_evidence(t
         env=_golden_acceptance_env(tmp_path),
         production_readiness_collector=production_collector,
         business_trial_collector=collect_business_trial_acceptance,
+        local_test_results_collector=_passing_local_test_results_collector,
     )
 
     production = json.loads((tmp_path / "production-readiness.json").read_text(encoding="utf-8"))
@@ -285,6 +291,7 @@ def test_acceptance_gate_fails_when_env_pointed_evidence_fails_intake(tmp_path: 
             "PASS",
             production_checks=kwargs["production_readiness_collector"]()["checks"],
         ),
+        local_test_results_collector=_passing_local_test_results_collector,
     )
 
     intake_step = _step_by_id(result, "evidence_intake")
@@ -332,6 +339,7 @@ def test_acceptance_gate_intake_scans_env_pointed_key_inventory(tmp_path: Path) 
             "PASS",
             production_checks=kwargs["production_readiness_collector"]()["checks"],
         ),
+        local_test_results_collector=_passing_local_test_results_collector,
     )
 
     intake = json.loads((artifact_dir / "evidence-intake.json").read_text(encoding="utf-8"))
@@ -371,6 +379,7 @@ def test_acceptance_gate_passes_safe_env_pointed_evidence_without_validating_gen
             "PASS",
             production_checks=kwargs["production_readiness_collector"]()["checks"],
         ),
+        local_test_results_collector=_passing_local_test_results_collector,
     )
 
     intake_step = _step_by_id(result, "evidence_intake")
@@ -380,6 +389,47 @@ def test_acceptance_gate_passes_safe_env_pointed_evidence_without_validating_gen
     assert intake_step["status"] == "PASS"
     assert intake["summary"] == {"PASS": 1, "FAIL": 0, "BLOCKED": 0, "files": 1}
     assert template_pack["status"] == "PASS"
+
+
+def test_acceptance_gate_fails_when_mapped_local_acceptance_test_fails(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifacts"
+    owner_dir = tmp_path / "owner-evidence"
+    owner_dir.mkdir()
+    safe_spend = owner_dir / "safe-spend.csv"
+    safe_spend.write_text(
+        "\n".join(
+            [
+                "startTime,status,model,call_type,user,key_alias,spend,currency,metadata",
+                "2026-07-01T09:00:00Z,success,openai/gemini-2.5-flash,completion,u1,key-alias,1.23,CNY,{}",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = collect_acceptance_gate(
+        output_dir=artifact_dir,
+        project_directory=PROJECT_ROOT,
+        acceptance_doc_file=PROJECT_ROOT / "docs/aimanager/1_acceptance_criteria.md",
+        generated_at=GENERATED_AT,
+        env={"AIMANAGER_SPEND_FILE": str(safe_spend)},
+        production_readiness_collector=lambda **_: _production_bundle("PASS"),
+        business_trial_collector=lambda **kwargs: _business_bundle(
+            "PASS",
+            production_checks=kwargs["production_readiness_collector"]()["checks"],
+        ),
+        local_test_results_collector=lambda **_: _local_test_results_with_failure("AC-10"),
+    )
+
+    local_results = json.loads((artifact_dir / "local-test-results.json").read_text(encoding="utf-8"))
+    coverage = json.loads((artifact_dir / "acceptance-coverage.json").read_text(encoding="utf-8"))
+    final_report = json.loads((artifact_dir / "final-acceptance-report.json").read_text(encoding="utf-8"))
+    assert result["status"] == "FAIL"
+    assert _step_by_id(result, "local_acceptance_tests")["status"] == "FAIL"
+    assert local_results["status"] == "FAIL"
+    assert _criterion_by_id(coverage, "AC-10")["status"] == "FAIL"
+    assert final_report["status"] == "FAIL"
+    assert "AC-10" in [blocker["id"] for blocker in final_report["blockers"]]
 
 
 def test_acceptance_gate_redacts_secret_like_values_in_all_written_artifacts(tmp_path: Path) -> None:
@@ -401,6 +451,7 @@ def test_acceptance_gate_redacts_secret_like_values_in_all_written_artifacts(tmp
             production_checks=kwargs["production_readiness_collector"]()["checks"],
             detail=secret_detail,
         ),
+        local_test_results_collector=_passing_local_test_results_collector,
     )
 
     serialized = json.dumps(result, ensure_ascii=False)
@@ -430,6 +481,7 @@ def test_acceptance_gate_redacts_secret_env_values_and_common_dsn_passwords(tmp_
             production_checks=kwargs["production_readiness_collector"]()["checks"],
             detail=secret_detail,
         ),
+        local_test_results_collector=_passing_local_test_results_collector,
     )
 
     serialized = ""
@@ -453,6 +505,7 @@ def test_acceptance_gate_folds_fail_ahead_of_blocked_when_steps_are_mixed(tmp_pa
             "BLOCKED",
             production_checks=kwargs["production_readiness_collector"]()["checks"],
         ),
+        local_test_results_collector=_passing_local_test_results_collector,
     )
 
     assert result["status"] == "FAIL"
@@ -490,6 +543,9 @@ def test_acceptance_gate_cli_runs_empty_env_without_production_secrets(tmp_path:
         "YCAPI_API_TOKEN",
     ):
         monkeypatch.delenv(name, raising=False)
+    supplied_local_results = tmp_path / "supplied-local-test-results.json"
+    supplied_local_results.write_text(json.dumps(_local_test_results_with_failure()), encoding="utf-8")
+    monkeypatch.setenv("AIMANAGER_LOCAL_TEST_RESULTS_FILE", str(supplied_local_results))
 
     exit_code = main(
         [
@@ -621,6 +677,7 @@ def _collect_real_golden_acceptance_gate(tmp_path: Path, *, fixture_dir: Path) -
         env=_golden_acceptance_env_for_fixtures(tmp_path, fixture_dir),
         production_readiness_collector=production_collector,
         business_trial_collector=collect_business_trial_acceptance,
+        local_test_results_collector=_passing_local_test_results_collector,
     )
 
 
@@ -702,6 +759,50 @@ def _passing_wecom_router(**_: object) -> SimpleNamespace:
         delivered_count=1,
         payload=None,
     )
+
+
+def _local_test_results_with_failure(failed_id: str | None = None) -> dict[str, object]:
+    criteria: list[dict[str, object]] = []
+    for gate in DEFAULT_GATE_REGISTRY:
+        if gate.gate_kind not in {"local_test", "runtime_smoke"}:
+            continue
+        status = "FAIL" if gate.criterion_id == failed_id else "PASS"
+        criteria.append(
+            {
+                "id": gate.criterion_id,
+                "status": status,
+                "detail": f"synthetic local tests {status.lower()} for {gate.criterion_id}",
+                "targets": [
+                    artifact
+                    for artifact in gate.local_artifacts
+                    if artifact.startswith("aimanager/tests/") and artifact.endswith(".py")
+                ],
+                "command": "synthetic pytest",
+                "returncode": 1 if status == "FAIL" else 0,
+            }
+        )
+    return {
+        "status": "FAIL" if failed_id else "PASS",
+        "generated_at": GENERATED_AT,
+        "summary": {
+            "criteria": len(criteria),
+            "PASS": sum(1 for item in criteria if item["status"] == "PASS"),
+            "FAIL": sum(1 for item in criteria if item["status"] == "FAIL"),
+            "BLOCKED": 0,
+        },
+        "criteria": criteria,
+    }
+
+
+def _passing_local_test_results_collector(**_: object) -> dict[str, object]:
+    return _local_test_results_with_failure()
+
+
+def _criterion_by_id(coverage: dict[str, Any], criterion_id: str) -> dict[str, Any]:
+    for criterion in coverage["criteria"]:
+        if isinstance(criterion, dict) and criterion.get("id") == criterion_id:
+            return criterion
+    raise AssertionError(f"missing criterion {criterion_id}")
 
 
 def _step_by_id(result: dict[str, object], step_id: str) -> dict[str, Any]:

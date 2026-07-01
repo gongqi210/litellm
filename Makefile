@@ -141,7 +141,7 @@ lightweight-trial-evidence-capture:
 	PYTHONPATH="$$(pwd)" uv run --no-project --with pyyaml python -m aimanager.scripts.capture_lightweight_trial_evidence --lightweight-entry-result-file "$${AIMANAGER_LIGHTWEIGHT_ENTRY_RESULT_FILE:-/tmp/aimanager-lightweight-entry-submit.json}" --request-id "$${AIMANAGER_LIGHTWEIGHT_TRIAL_REQUEST_ID}" --spend "$${AIMANAGER_LIGHTWEIGHT_TRIAL_SPEND}" --operator-role "$${AIMANAGER_LIGHTWEIGHT_TRIAL_OPERATOR_ROLE:-marketing}" --identity-source "$${AIMANAGER_LIGHTWEIGHT_TRIAL_IDENTITY_SOURCE:-sso}" --employee-virtual-key-alias "$${AIMANAGER_LIGHTWEIGHT_TRIAL_KEY_ALIAS}" --started-at "$${AIMANAGER_LIGHTWEIGHT_TRIAL_STARTED_AT}" --completed-at "$${AIMANAGER_LIGHTWEIGHT_TRIAL_COMPLETED_AT}" --observer "$${AIMANAGER_LIGHTWEIGHT_TRIAL_OBSERVER}" --captured-at "$${AIMANAGER_LIGHTWEIGHT_TRIAL_CAPTURED_AT}" $$confirm_args --output-json-file "$${AIMANAGER_LIGHTWEIGHT_TRIAL_EVIDENCE_FILE:-/tmp/aimanager-ac23-trial-evidence.json}"
 
 acceptance-gate:
-	PYTHONPATH="$$(pwd)" uv run --no-project --with pyyaml python -m aimanager.scripts.run_acceptance_gate --output-dir "$${AIMANAGER_ACCEPTANCE_GATE_OUTPUT_DIR:-/tmp/aimanager-acceptance-gate}"
+	PYTHONPATH="$$(pwd)" uv run --no-project --with pytest --with pyyaml --with pydantic python -m aimanager.scripts.run_acceptance_gate --output-dir "$${AIMANAGER_ACCEPTANCE_GATE_OUTPUT_DIR:-/tmp/aimanager-acceptance-gate}"
 
 evidence-handoff:
 	PYTHONPATH="$$(pwd)" uv run --no-project python -m aimanager.scripts.generate_evidence_handoff --launch-gap-plan-file "$${AIMANAGER_ACCEPTANCE_GATE_OUTPUT_DIR:-/tmp/aimanager-acceptance-gate}/launch-gap-plan.json" --output-dir "$${AIMANAGER_EVIDENCE_HANDOFF_OUTPUT_DIR:-/tmp/aimanager-evidence-handoff}"

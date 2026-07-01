@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -13,7 +14,7 @@ from aimanager.redaction import (
     sanitize_text as sanitize_secret_text,
     sanitize_value as sanitize_secret_value,
 )
-from aimanager.scripts.acceptance_coverage_matrix import collect_acceptance_coverage_matrix
+from aimanager.scripts.acceptance_coverage_matrix import DEFAULT_GATE_REGISTRY, AcceptanceGate, collect_acceptance_coverage_matrix
 from aimanager.scripts.business_trial_acceptance_bundle import collect_business_trial_acceptance
 from aimanager.scripts.generate_evidence_handoff import collect_evidence_handoff
 from aimanager.scripts.generate_evidence_template_pack import collect_evidence_template_pack
@@ -39,6 +40,7 @@ _EVIDENCE_FILE_ENV_NAMES = (
 
 ProductionReadinessCollector = Callable[..., dict[str, Any]]
 BusinessTrialCollector = Callable[..., dict[str, Any]]
+LocalTestResultsCollector = Callable[..., dict[str, Any]]
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -82,6 +84,7 @@ def collect_acceptance_gate(
     generated_at: str | None = None,
     production_readiness_collector: ProductionReadinessCollector = collect_production_readiness,
     business_trial_collector: BusinessTrialCollector = collect_business_trial_acceptance,
+    local_test_results_collector: LocalTestResultsCollector | None = None,
 ) -> dict[str, object]:
     current_env = os.environ if env is None else env
     gate_generated_at = generated_at or _now_iso()
@@ -148,12 +151,24 @@ def collect_acceptance_gate(
     _write_json(paths["evidence_intake_json"], evidence_intake)
     _write_text(paths["evidence_intake_markdown"], str(_mapping(evidence_intake).get("markdown") or ""))
 
+    local_test_results = _sanitize_value(
+        _collect_local_test_results(
+            current_env,
+            project_directory=project_directory,
+            generated_at=gate_generated_at,
+            collector=local_test_results_collector,
+        ),
+        redactions,
+    )
+    _write_json(paths["local_test_results_json"], local_test_results)
+
     coverage = _sanitize_value(
         collect_acceptance_coverage_matrix(
             acceptance_doc_file=acceptance_doc_file,
             project_directory=project_directory,
             production_readiness_file=paths["production_json"],
             business_trial_file=paths["business_json"],
+            local_test_results_file=paths["local_test_results_json"],
             generated_at=gate_generated_at,
         ),
         redactions,
@@ -183,6 +198,7 @@ def collect_acceptance_gate(
         evidence_handoff=evidence_handoff,
         evidence_template_pack=evidence_template_pack,
         evidence_intake=evidence_intake,
+        local_test_results=local_test_results,
         coverage=coverage,
         final_report=final_report,
         paths=paths,
@@ -203,6 +219,7 @@ def _manifest(
     evidence_handoff: object,
     evidence_template_pack: object,
     evidence_intake: object,
+    local_test_results: object,
     coverage: object,
     final_report: object,
     paths: Mapping[str, Path],
@@ -225,6 +242,12 @@ def _manifest(
             evidence_intake,
             json_file=paths["evidence_intake_json"],
             markdown_file=paths["evidence_intake_markdown"],
+        ),
+        _step(
+            "local_acceptance_tests",
+            "local acceptance tests",
+            local_test_results,
+            json_file=paths["local_test_results_json"],
         ),
         _step(
             "acceptance_coverage_matrix",
@@ -273,6 +296,11 @@ def _manifest(
             "json_file": str(paths["evidence_intake_json"]),
             "markdown_file": str(paths["evidence_intake_markdown"]),
             "summary": _mapping(_mapping(evidence_intake).get("summary")),
+        },
+        "local_acceptance_tests": {
+            "status": _coerce_status(_mapping(local_test_results).get("status")),
+            "json_file": str(paths["local_test_results_json"]),
+            "summary": _mapping(_mapping(local_test_results).get("summary")),
         },
         "final_report": {
             "status": _coerce_status(_mapping(final_report).get("status")),
@@ -402,6 +430,7 @@ def _artifact_paths(output_dir: Path) -> dict[str, Path]:
         "template_pack_markdown": output_dir / "evidence-template-pack" / "evidence-template-pack.md",
         "evidence_intake_json": output_dir / "evidence-intake.json",
         "evidence_intake_markdown": output_dir / "evidence-intake.md",
+        "local_test_results_json": output_dir / "local-test-results.json",
         "coverage_json": output_dir / "acceptance-coverage.json",
         "coverage_markdown": output_dir / "acceptance-coverage.md",
         "final_json": output_dir / "final-acceptance-report.json",
@@ -439,6 +468,114 @@ def _collect_evidence_intake(env: Mapping[str, str], *, generated_at: str) -> di
         if value
     ]
     return validate_evidence_intake(input_files=files, generated_at=generated_at)
+
+
+def _collect_local_test_results(
+    env: Mapping[str, str],
+    *,
+    project_directory: Path,
+    generated_at: str,
+    collector: LocalTestResultsCollector | None,
+) -> dict[str, object]:
+    supplied_results_file = str(env.get("AIMANAGER_LOCAL_TEST_RESULTS_FILE") or "").strip()
+    if supplied_results_file:
+        return _load_supplied_local_test_results(Path(supplied_results_file))
+    runner = collector or collect_local_acceptance_test_results
+    return runner(project_directory=project_directory, generated_at=generated_at)
+
+
+def collect_local_acceptance_test_results(
+    *,
+    project_directory: Path,
+    generated_at: str,
+    gate_registry: Sequence[AcceptanceGate] = DEFAULT_GATE_REGISTRY,
+) -> dict[str, object]:
+    criteria = [
+        _run_local_acceptance_gate_tests(gate, project_directory=project_directory)
+        for gate in sorted(gate_registry, key=lambda item: item.criterion_id)
+        if gate.gate_kind in {"local_test", "runtime_smoke"}
+    ]
+    result = {
+        "status": _overall_status(str(item["status"]) for item in criteria),
+        "generated_at": generated_at,
+        "summary": {
+            "criteria": len(criteria),
+            "PASS": sum(1 for item in criteria if item["status"] == "PASS"),
+            "FAIL": sum(1 for item in criteria if item["status"] == "FAIL"),
+            "BLOCKED": sum(1 for item in criteria if item["status"] == "BLOCKED"),
+        },
+        "criteria": criteria,
+    }
+    return result
+
+
+def _run_local_acceptance_gate_tests(gate: AcceptanceGate, *, project_directory: Path) -> dict[str, object]:
+    targets = [
+        artifact
+        for artifact in gate.local_artifacts
+        if artifact.startswith("aimanager/tests/") and artifact.endswith(".py")
+    ]
+    command = [sys.executable, "-m", "pytest", *targets, "-q"]
+    if not targets:
+        return {
+            "id": gate.criterion_id,
+            "status": "BLOCKED",
+            "detail": "no mapped pytest targets are registered for this local acceptance gate",
+            "targets": [],
+            "command": " ".join(command),
+            "returncode": 2,
+        }
+    test_env = dict(os.environ)
+    existing_pythonpath = test_env.get("PYTHONPATH")
+    test_env["PYTHONPATH"] = (
+        str(project_directory)
+        if not existing_pythonpath
+        else f"{project_directory}{os.pathsep}{existing_pythonpath}"
+    )
+    completed = subprocess.run(
+        command,
+        cwd=project_directory,
+        env=test_env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    return {
+        "id": gate.criterion_id,
+        "status": "PASS" if completed.returncode == 0 else "FAIL",
+        "detail": (
+            f"pytest passed for {gate.criterion_id}"
+            if completed.returncode == 0
+            else f"pytest failed for {gate.criterion_id} with exit code {completed.returncode}"
+        ),
+        "targets": targets,
+        "command": " ".join(command),
+        "returncode": completed.returncode,
+    }
+
+
+def _load_supplied_local_test_results(path: Path) -> dict[str, object]:
+    if not path.exists():
+        return {
+            "status": "BLOCKED",
+            "generated_at": _now_iso(),
+            "summary": {"criteria": 0, "PASS": 0, "FAIL": 0, "BLOCKED": 1},
+            "criteria": [
+                {
+                    "id": "LOCAL-TEST-RESULTS",
+                    "status": "BLOCKED",
+                    "detail": f"supplied local test results file does not exist: {path}",
+                    "targets": [],
+                    "command": "",
+                    "returncode": 2,
+                }
+            ],
+        }
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, Mapping):
+        raise ValueError(f"{path} must contain a JSON object")
+    return dict(data)
 
 
 def _sanitize_value(value: object, redactions: Mapping[str, str]) -> object:

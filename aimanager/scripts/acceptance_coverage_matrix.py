@@ -163,6 +163,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--project-directory", default=".")
     parser.add_argument("--production-readiness-file", help="JSON output from production_readiness_bundle.")
     parser.add_argument("--business-trial-file", help="JSON output from business_trial_acceptance_bundle.")
+    parser.add_argument("--local-test-results-file", help="JSON output from run_acceptance_gate local acceptance tests.")
     parser.add_argument("--output-json-file", required=True)
     parser.add_argument("--output-markdown-file")
     parser.add_argument("--generated-at", help="Override generated_at timestamp for deterministic tests.")
@@ -173,6 +174,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         project_directory=Path(args.project_directory),
         production_readiness_file=Path(args.production_readiness_file) if args.production_readiness_file else None,
         business_trial_file=Path(args.business_trial_file) if args.business_trial_file else None,
+        local_test_results_file=Path(args.local_test_results_file) if args.local_test_results_file else None,
         generated_at=args.generated_at,
     )
     _write_json(Path(args.output_json_file), result)
@@ -193,6 +195,7 @@ def collect_acceptance_coverage_matrix(
     project_directory: Path,
     production_readiness_file: Path | None = None,
     business_trial_file: Path | None = None,
+    local_test_results_file: Path | None = None,
     generated_at: str | None = None,
     gate_registry: Sequence[AcceptanceGate] | None = None,
 ) -> dict[str, object]:
@@ -209,9 +212,15 @@ def collect_acceptance_coverage_matrix(
         "production_readiness": _load_bundle(production_readiness_file),
         "business_trial": _load_bundle(business_trial_file),
     }
+    local_test_results = _load_local_test_results(local_test_results_file)
 
     criteria = [
-        _evaluate_gate(gate, project_directory=project_directory, bundles=bundles)
+        _evaluate_gate(
+            gate,
+            project_directory=project_directory,
+            bundles=bundles,
+            local_test_results=local_test_results,
+        )
         for gate in sorted(registry, key=lambda item: _criterion_sort_key(item.criterion_id))
     ]
     coverage_failures = []
@@ -243,6 +252,7 @@ def collect_acceptance_coverage_matrix(
         "generated_at": generated_at or datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         "summary": _summary(criteria, coverage_failures),
         "doc_coverage": doc_coverage,
+        "local_test_results": _public_local_test_results(local_test_results),
         "coverage_failures": coverage_failures,
         "criteria": criteria,
     }
@@ -255,6 +265,7 @@ def _evaluate_gate(
     *,
     project_directory: Path,
     bundles: Mapping[str, Mapping[str, object]],
+    local_test_results: Mapping[str, object],
 ) -> dict[str, object]:
     artifacts = [
         {
@@ -269,10 +280,29 @@ def _evaluate_gate(
     bundle_name = gate.bundle_source
     bundle_check_id = gate.bundle_check_id
     bundle_detail = ""
+    local_test_detail = ""
+    local_test_result: Mapping[str, object] | None = None
     sources = ["registry", "filesystem"]
     if missing_artifacts:
         status = "FAIL"
         detail = f"missing registered local artifacts: {', '.join(missing_artifacts)}"
+
+    if gate.gate_kind in {"local_test", "runtime_smoke"} and local_test_results.get("supplied"):
+        sources.append("local_test_results")
+        load_status = _coerce_status(local_test_results.get("load_status"))
+        if load_status != "PASS":
+            status = _worst_status(status, load_status)
+            local_test_detail = str(local_test_results.get("detail") or "local test results could not be loaded")
+        else:
+            result = _mapping(local_test_results.get("criteria_by_id")).get(gate.criterion_id)
+            if not isinstance(result, Mapping):
+                status = _worst_status(status, "FAIL")
+                local_test_detail = f"local test result is absent for {gate.criterion_id}"
+            else:
+                local_test_result = result
+                local_status = _coerce_status(result.get("status"))
+                status = _worst_status(status, local_status)
+                local_test_detail = str(result.get("detail") or f"local acceptance tests {local_status}")
 
     if bundle_name and bundle_check_id:
         sources.append(bundle_name)
@@ -296,9 +326,11 @@ def _evaluate_gate(
                 status = _worst_status(status, check_status)
                 bundle_detail = str(check.get("detail") or "")
 
+    if local_test_detail and not missing_artifacts:
+        detail = local_test_detail
     if bundle_detail and not missing_artifacts:
         detail = bundle_detail
-    return {
+    criterion = {
         "id": gate.criterion_id,
         "status": status,
         "owner": gate.owner,
@@ -311,6 +343,15 @@ def _evaluate_gate(
         "missing_artifacts": missing_artifacts,
         "sources": sources,
     }
+    if local_test_result is not None:
+        criterion["local_test_result"] = {
+            "status": _coerce_status(local_test_result.get("status")),
+            "detail": str(local_test_result.get("detail") or ""),
+            "targets": _string_list(local_test_result.get("targets")),
+            "command": str(local_test_result.get("command") or ""),
+            "returncode": int(local_test_result.get("returncode") or 0),
+        }
+    return criterion
 
 
 def _load_bundle(path: Path | None) -> dict[str, object]:
@@ -376,6 +417,90 @@ def _load_bundle(path: Path | None) -> dict[str, object]:
         "bundle_status": _coerce_status(data.get("status")),
         "checks_by_id": checks_by_id,
         "detail": "",
+    }
+
+
+def _load_local_test_results(path: Path | None) -> dict[str, object]:
+    if path is None:
+        return {
+            "supplied": False,
+            "load_status": "PASS",
+            "results_status": "PASS",
+            "criteria_by_id": {},
+            "summary": {},
+            "detail": "local test results file was not supplied",
+        }
+    if not path.exists():
+        return {
+            "supplied": True,
+            "load_status": "BLOCKED",
+            "results_status": "BLOCKED",
+            "criteria_by_id": {},
+            "summary": {},
+            "detail": f"local test results file does not exist: {path}",
+        }
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return {
+            "supplied": True,
+            "load_status": "FAIL",
+            "results_status": "FAIL",
+            "criteria_by_id": {},
+            "summary": {},
+            "detail": f"local test results could not be loaded: {type(exc).__name__}",
+        }
+    if not isinstance(data, Mapping):
+        return {
+            "supplied": True,
+            "load_status": "FAIL",
+            "results_status": "FAIL",
+            "criteria_by_id": {},
+            "summary": {},
+            "detail": "local test results root must be a JSON object",
+        }
+    criteria = data.get("criteria")
+    if not isinstance(criteria, list):
+        return {
+            "supplied": True,
+            "load_status": "FAIL",
+            "results_status": "FAIL",
+            "criteria_by_id": {},
+            "summary": {},
+            "detail": "local test results criteria must be a list",
+        }
+    criteria_by_id: dict[str, dict[str, object]] = {}
+    for item in criteria:
+        if not isinstance(item, Mapping):
+            continue
+        criterion_id = str(item.get("id") or "")
+        if not criterion_id:
+            continue
+        criteria_by_id[criterion_id] = {
+            "id": criterion_id,
+            "status": _coerce_status(item.get("status")),
+            "detail": str(item.get("detail") or ""),
+            "targets": _string_list(item.get("targets")),
+            "command": str(item.get("command") or ""),
+            "returncode": int(item.get("returncode") or 0),
+        }
+    return {
+        "supplied": True,
+        "load_status": "PASS",
+        "results_status": _coerce_status(data.get("status")),
+        "criteria_by_id": criteria_by_id,
+        "summary": _mapping(data.get("summary")),
+        "detail": "",
+    }
+
+
+def _public_local_test_results(results: Mapping[str, object]) -> dict[str, object]:
+    return {
+        "supplied": bool(results.get("supplied")),
+        "load_status": _coerce_status(results.get("load_status")),
+        "results_status": _coerce_status(results.get("results_status")),
+        "summary": _mapping(results.get("summary")),
+        "detail": str(results.get("detail") or ""),
     }
 
 
@@ -514,6 +639,16 @@ def _overall_status(statuses: Sequence[str]) -> Status:
 
 def _mapping(value: object) -> Mapping[str, object]:
     return value if isinstance(value, Mapping) else {}
+
+
+def _string_list(value: object) -> list[str]:
+    if isinstance(value, list):
+        return [str(item) for item in value if str(item)]
+    if isinstance(value, tuple):
+        return [str(item) for item in value if str(item)]
+    if isinstance(value, str) and value:
+        return [value]
+    return []
 
 
 def _sanitize_value(value: object) -> object:
