@@ -67,6 +67,14 @@ def test_aimanager_cli_entry_emits_machine_readable_status() -> None:
     assert "--spend-file \"$AIMANAGER_SPEND_FILE\"" in finance_export
     assert "--ycapi-bill-file \"$AIMANAGER_YCAPI_BILL_FILE\"" in finance_export
     assert "--output-dir \"${AIMANAGER_FINANCE_OUTPUT_DIR:-/tmp/aimanager-finance-export}\"" in finance_export
+    assert "wecom_alert_route" in payload["commands"]
+    wecom_alert_route = payload["commands"]["wecom_alert_route"]
+    assert "aimanager.scripts.route_observability_alerts" in wecom_alert_route
+    assert "--report-file \"$AIMANAGER_OBSERVABILITY_REPORT_FILE\"" in wecom_alert_route
+    assert "--webhook-url \"$AIMANAGER_WECOM_WEBHOOK_URL\"" in wecom_alert_route
+    assert "--min-severity \"${AIMANAGER_WECOM_MIN_SEVERITY:-warning}\"" in wecom_alert_route
+    assert "--title \"AiManager production readiness alerts\"" in wecom_alert_route
+    assert "--output-payload-file /tmp/aimanager-wecom-alert-payload.json" in wecom_alert_route
     assert "production_readiness" in payload["commands"]
     assert "acceptance_gate" in payload["commands"]
 
@@ -79,3 +87,15 @@ def test_makefile_exposes_finance_export_operator_target() -> None:
     assert "--spend-file \"$${AIMANAGER_SPEND_FILE}\"" in makefile
     assert "--ycapi-bill-file \"$${AIMANAGER_YCAPI_BILL_FILE}\"" in makefile
     assert "--output-dir \"$${AIMANAGER_FINANCE_OUTPUT_DIR:-/tmp/aimanager-finance-export}\"" in makefile
+
+
+def test_makefile_exposes_wecom_alert_route_operator_target() -> None:
+    makefile = MAKEFILE.read_text(encoding="utf-8")
+
+    assert "wecom-alert-route:" in makefile
+    assert "aimanager.scripts.route_observability_alerts" in makefile
+    assert "--report-file \"$${AIMANAGER_OBSERVABILITY_REPORT_FILE}\"" in makefile
+    assert "--webhook-url \"$${AIMANAGER_WECOM_WEBHOOK_URL}\"" in makefile
+    assert "--min-severity \"$${AIMANAGER_WECOM_MIN_SEVERITY:-warning}\"" in makefile
+    assert "--title \"AiManager production readiness alerts\"" in makefile
+    assert "--output-payload-file /tmp/aimanager-wecom-alert-payload.json" in makefile

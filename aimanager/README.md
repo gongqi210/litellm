@@ -202,14 +202,13 @@ WeCom alert routing from an exported report:
 PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.route_observability_alerts \
   --report-file /tmp/aimanager-observability.json \
   --dry-run \
+  --title "AiManager production readiness alerts" \
   --output-payload-file /tmp/aimanager-wecom-alert-payload.json
 
-PYTHONPATH="$PWD" uv run --no-project python -m aimanager.scripts.route_observability_alerts \
-  --report-file /tmp/aimanager-observability.json \
-  --min-severity warning
+make wecom-alert-route
 ```
 
-The dry-run command renders the exact WeCom markdown payload without sending it. The live command reads `AIMANAGER_WECOM_WEBHOOK_URL` from the environment or accepts `--webhook-url`; it returns `BLOCKED` when alerts exist but no webhook is configured. The script never prints the webhook URL.
+The dry-run command renders the exact WeCom markdown payload without sending it. `make wecom-alert-route` reads `AIMANAGER_OBSERVABILITY_REPORT_FILE`, `AIMANAGER_WECOM_WEBHOOK_URL`, and optional `AIMANAGER_WECOM_MIN_SEVERITY`; the AC-16 launch gap command dry-runs this payload first, then lets production readiness perform the single live delivery. It returns `BLOCKED` when alerts exist but no webhook is configured. The script never prints the webhook URL.
 
 ## Business Overview
 

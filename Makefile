@@ -1,7 +1,7 @@
 # LiteLLM Makefile
 # Simple Makefile for running tests and basic development tasks
 
-.PHONY: help policy-check key-inventory-export finance-export acceptance-gate evidence-handoff evidence-template-pack evidence-intake test test-unit test-unit-llms test-unit-proxy-guardrails test-unit-proxy-core test-unit-proxy-misc \
+.PHONY: help policy-check key-inventory-export finance-export wecom-alert-route acceptance-gate evidence-handoff evidence-template-pack evidence-intake test test-unit test-unit-llms test-unit-proxy-guardrails test-unit-proxy-core test-unit-proxy-misc \
 	test-unit-integrations test-unit-core-utils test-unit-other test-unit-root \
 	test-proxy-unit-a test-proxy-unit-b test-integration test-unit-helm \
 	info lint lint-dev format \
@@ -16,6 +16,7 @@ help:
 	@echo "  make policy-check       - Run AiManager project policy gate"
 	@echo "  make key-inventory-export - Export metadata-only LiteLLM virtual-key inventory for AC-08"
 	@echo "  make finance-export     - Export AiManager finance CSVs from LiteLLM spend and ycapi bill evidence"
+	@echo "  make wecom-alert-route  - Route AiManager observability alerts to WeCom for AC-16"
 	@echo "  make acceptance-gate    - Run AiManager one-command acceptance gate into /tmp or AIMANAGER_ACCEPTANCE_GATE_OUTPUT_DIR"
 	@echo "  make evidence-handoff   - Generate owner-specific evidence requests from the latest acceptance gate"
 	@echo "  make evidence-template-pack - Generate safe external evidence input templates from the latest acceptance gate"
@@ -66,6 +67,9 @@ key-inventory-export:
 
 finance-export:
 	PYTHONPATH="$$(pwd)" uv run --no-project python -m aimanager.scripts.export_finance --spend-file "$${AIMANAGER_SPEND_FILE}" --ycapi-bill-file "$${AIMANAGER_YCAPI_BILL_FILE}" --output-dir "$${AIMANAGER_FINANCE_OUTPUT_DIR:-/tmp/aimanager-finance-export}"
+
+wecom-alert-route:
+	PYTHONPATH="$$(pwd)" uv run --no-project python -m aimanager.scripts.route_observability_alerts --report-file "$${AIMANAGER_OBSERVABILITY_REPORT_FILE}" --webhook-url "$${AIMANAGER_WECOM_WEBHOOK_URL}" --min-severity "$${AIMANAGER_WECOM_MIN_SEVERITY:-warning}" --title "AiManager production readiness alerts" --output-payload-file /tmp/aimanager-wecom-alert-payload.json
 
 acceptance-gate:
 	PYTHONPATH="$$(pwd)" uv run --no-project --with pyyaml python -m aimanager.scripts.run_acceptance_gate --output-dir "$${AIMANAGER_ACCEPTANCE_GATE_OUTPUT_DIR:-/tmp/aimanager-acceptance-gate}"

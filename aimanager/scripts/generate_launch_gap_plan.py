@@ -45,10 +45,20 @@ _GAP_CATALOG: dict[str, dict[str, object]] = {
         "owner": "ops",
         "required_env": ["AIMANAGER_OBSERVABILITY_REPORT_FILE", "AIMANAGER_WECOM_WEBHOOK_URL"],
         "command": (
+            "(PYTHONPATH=\"$PWD\" uv run --no-project python -m aimanager.scripts.route_observability_alerts "
+            "--report-file \"$AIMANAGER_OBSERVABILITY_REPORT_FILE\" "
+            "--webhook-url \"$AIMANAGER_WECOM_WEBHOOK_URL\" "
+            "--dry-run "
+            "--min-severity \"${AIMANAGER_WECOM_MIN_SEVERITY:-warning}\" "
+            "--title \"AiManager production readiness alerts\" "
+            "--output-payload-file /tmp/aimanager-wecom-alert-payload.json || true) && "
             "PYTHONPATH=\"$PWD\" uv run --no-project --with pyyaml python -m "
             "aimanager.scripts.production_readiness_bundle --output-json-file /tmp/aimanager-production-readiness.json"
         ),
-        "next_action": "用真实 observability alert report 和企业微信 webhook 跑一次 live 投递；delivered_count=0 仍保持 BLOCKED。",
+        "next_action": (
+            "先用 route_observability_alerts dry-run 渲染企业微信 payload，再由 production_readiness_bundle 做唯一一次 live 投递；"
+            "delivered_count=0 仍保持 BLOCKED。"
+        ),
     },
     "AC-12-13-FINANCE": {
         "owner": "finance",

@@ -157,6 +157,46 @@ def test_launch_gap_plan_assigns_finance_gap_to_export_before_readiness(tmp_path
     assert "非零计费金额" in gap["next_action"]
 
 
+def test_launch_gap_plan_assigns_wecom_gap_to_route_alerts_before_readiness(tmp_path) -> None:
+    production_file = tmp_path / "production-readiness.json"
+    production_file.write_text(
+        json.dumps(
+            _bundle(
+                checks=[
+                    _check(
+                        "AC-16-WECOM",
+                        "wecom_alert_routing",
+                        "BLOCKED",
+                        "missing live WeCom alert-routing evidence",
+                        {"required_env": ["AIMANAGER_OBSERVABILITY_REPORT_FILE", "AIMANAGER_WECOM_WEBHOOK_URL"]},
+                    )
+                ]
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    result = collect_launch_gap_plan(production_readiness_file=production_file)
+
+    assert result["status"] == "BLOCKED"
+    gap = result["gaps"][0]
+    assert gap["id"] == "AC-16-WECOM"
+    assert gap["owner"] == "ops"
+    assert gap["required_env"] == ["AIMANAGER_OBSERVABILITY_REPORT_FILE", "AIMANAGER_WECOM_WEBHOOK_URL"]
+    assert "aimanager.scripts.route_observability_alerts" in gap["command"]
+    assert "--report-file \"$AIMANAGER_OBSERVABILITY_REPORT_FILE\"" in gap["command"]
+    assert "--webhook-url \"$AIMANAGER_WECOM_WEBHOOK_URL\"" in gap["command"]
+    assert "--dry-run" in gap["command"]
+    assert "--min-severity \"${AIMANAGER_WECOM_MIN_SEVERITY:-warning}\"" in gap["command"]
+    assert "--title \"AiManager production readiness alerts\"" in gap["command"]
+    assert "--output-payload-file /tmp/aimanager-wecom-alert-payload.json" in gap["command"]
+    assert "aimanager.scripts.production_readiness_bundle" in gap["command"]
+    assert gap["command"].index("route_observability_alerts") < gap["command"].index("production_readiness_bundle")
+    assert gap["command"].index("|| true") < gap["command"].index("production_readiness_bundle")
+    assert "route_observability_alerts" in gap["next_action"]
+    assert "企业微信" in gap["next_action"]
+
+
 def test_launch_gap_plan_keeps_worst_duplicate_status_and_preserves_existing_evidence(tmp_path) -> None:
     production_file = tmp_path / "production-readiness.json"
     business_file = tmp_path / "business-trial.json"
