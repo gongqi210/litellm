@@ -88,6 +88,128 @@ def test_evidence_intake_allows_policy_boundaries_that_prohibit_raw_content_acce
     assert result["summary"] == {"PASS": 1, "FAIL": 0, "BLOCKED": 0, "files": 1}
 
 
+def test_evidence_intake_fails_schema_invalid_ac23_trial_evidence(tmp_path) -> None:
+    evidence_dir = tmp_path / "evidence"
+    evidence_dir.mkdir()
+    (evidence_dir / "ac23-trial-evidence.json").write_text(
+        json.dumps(
+            {
+                "trial_id": "trial-1",
+                "ac": "AC-23",
+                "entry_channel": "lightweight_web",
+                "operator": {
+                    "employee_id": "u_market_1",
+                    "department_id": "dept_market",
+                    "role": "marketing",
+                    "uses_sdk": True,
+                },
+                "identity_injection": {
+                    "source": "sso",
+                    "employee_virtual_key_used": True,
+                    "employee_virtual_key_alias": "marketing-key-alias",
+                    "ycapi_token_exposed": False,
+                },
+                "work_context": {
+                    "scenario_l1": "marketing",
+                    "scenario_l2": "external_copy_review",
+                    "project_id": "proj_campaign",
+                    "customer_id": "",
+                    "cost_center_id": "cc_market",
+                },
+                "request_evidence": {
+                    "request_id": "req-1",
+                    "model": "gemini-2.5-flash",
+                    "endpoint": "/v1/chat/completions",
+                    "http_status": 200,
+                    "spend": "0",
+                    "currency": "CNY",
+                    "pricing_version": "m1",
+                },
+                "timing": {
+                    "started_at": "2026-07-01T10:00:00+08:00",
+                    "completed_at": "2026-07-01T10:00:00+08:00",
+                },
+                "compliance": {
+                    "work_context_status": "PASS",
+                    "brand_safety_confirmed": False,
+                    "no_secret_echo": True,
+                    "html_escaped": True,
+                },
+                "live_ycapi": True,
+                "attestation": {
+                    "observer": "ops-reviewer",
+                    "captured_at": "2026-07-01T10:01:00+08:00",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = validate_evidence_intake(input_dir=evidence_dir, generated_at="2026-07-01T00:00:00Z")
+
+    serialized = json.dumps(result, ensure_ascii=False)
+    assert result["status"] == "FAIL"
+    assert "schema_validation" in serialized
+    assert "AC-23 trial evidence invalid" in serialized
+    assert "operator.uses_sdk" in serialized
+
+
+def test_evidence_intake_fails_schema_invalid_production_policy_attestation(tmp_path) -> None:
+    evidence_dir = tmp_path / "evidence"
+    evidence_dir.mkdir()
+    (evidence_dir / "production-policy-attestation.json").write_text(
+        json.dumps(
+            {
+                "policy_id": "policy-1",
+                "policy_version": "2026-07",
+                "approved_at": "2026-07-01T10:00:00+08:00",
+                "chargeback": {
+                    "mode": "showback",
+                    "confirmed": False,
+                    "policy_ref": "policy-doc-1",
+                    "effective_month": "2026-07",
+                },
+                "pricing_approval": {
+                    "confirmed": True,
+                    "pricing_version": "m1",
+                    "approval_ref": "pricing-approval-1",
+                    "approver": "Finance A",
+                },
+                "ycapi_token_limit": {
+                    "confirmed": True,
+                    "limit_ref": "limit-1",
+                    "monthly_budget_cny": "0",
+                    "rpm_limit": 0,
+                },
+                "employee_virtual_key_only": {
+                    "confirmed": True,
+                    "distribution_channel": "wecom",
+                    "ycapi_token_visible_to_employee": True,
+                },
+                "data_boundaries": {
+                    "confirmed": True,
+                    "policy_ref": "data-policy-1",
+                    "categories": ["metadata-only"],
+                },
+                "approvals": [
+                    {"role": "finance", "approver": "Finance A", "approval_ref": "finance-1"},
+                    {"role": "security", "approver": "Security B", "approval_ref": "security-1"},
+                    {"role": "legal", "approver": "Legal C", "approval_ref": "legal-1"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = validate_evidence_intake(input_dir=evidence_dir, generated_at="2026-07-01T00:00:00Z")
+
+    serialized = json.dumps(result, ensure_ascii=False)
+    assert result["status"] == "FAIL"
+    assert "schema_validation" in serialized
+    assert "production policy attestation invalid" in serialized
+    assert "employee_virtual_key_only.ycapi_token_visible_to_employee" in serialized
+
+
 def test_evidence_intake_passes_filled_safe_files(tmp_path) -> None:
     evidence_dir = tmp_path / "evidence"
     evidence_dir.mkdir()

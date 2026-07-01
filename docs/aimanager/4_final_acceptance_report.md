@@ -19,7 +19,7 @@ This is not a full production PASS yet. Production rollout remains blocked until
 | Business surface blocks provider/native/config/model bypass | PASS | policy tests and runtime blocked-route smoke |
 | Employee access uses governed LiteLLM virtual keys | PASS locally | key governance, SDK smoke, lifecycle smoke; production identity still pending |
 | Budget and nonzero spend enforcement | PASS locally | mock ycapi spend smoke and budget-block smoke |
-| Finance export and ycapi reconciliation contract | PASS locally | finance tests and export scripts; real monthly bill evidence pending |
+| Finance export and ycapi reconciliation contract | PASS locally | finance tests, export scripts, and production readiness rejection of `needs_review`; real monthly bill evidence pending |
 | Audit, metrics, and WeCom alert route | PASS locally / BLOCKED production | observability tests and router; live webhook delivery pending |
 | Non-SDK business entry | PASS locally / BLOCKED production | lightweight CLI/Web tests; timed live nontechnical trial pending |
 | Employee monitoring governance | PASS contract / BLOCKED production | validator and policy doc; HR/legal publication and all-employee acknowledgment pending |
@@ -47,7 +47,7 @@ PYTHONPATH="$PWD" uv run --no-project --with pyyaml python -m aimanager.scripts.
   --output-dir /tmp/aimanager-acceptance-gate
 ```
 
-This is the preferred final go/no-go entrypoint. It runs production readiness once, reuses that exact bundle inside business-trial acceptance, writes launch gap, evidence handoff, evidence template pack, evidence intake, coverage, final report, and gate manifest artifacts into one run-scoped directory, and avoids composing stale `/tmp` files from earlier rehearsals. After owners fill evidence templates, run `make evidence-intake` before rerunning the final gate so unchanged templates, header-only CSV files, raw prompt/response/header fields, cookies, Authorization values, and secret-like strings are rejected before they enter readiness bundles and final report blockers.
+This is the preferred final go/no-go entrypoint. It runs production readiness once, reuses that exact bundle inside business-trial acceptance, writes launch gap, evidence handoff, evidence template pack, evidence intake, coverage, final report, and gate manifest artifacts into one run-scoped directory, and avoids composing stale `/tmp` files from earlier rehearsals. After owners fill evidence templates, run `make evidence-intake` before rerunning the final gate so unchanged templates, key-inventory template markers, header-only CSV files, raw prompt/response/header fields, cookies, Authorization values, and secret-like strings are rejected before they enter readiness bundles and final report blockers.
 
 Business trial acceptance gate:
 
@@ -99,7 +99,7 @@ This final report is now the executable go/no-go composition layer. It consumes 
 - AC-20: run production business-surface work-context smoke with a real employee virtual key; missing metadata must fail closed, and valid metadata chat/image roundtrip must return request id plus usage/image evidence without leaking prompt or response content.
 - AC-19: provide a real `YCAPI_API_TOKEN` in deployment and run live ycapi `/models` plus chat/image roundtrip without leaking the token, prompt, URL, or response body.
 - AC-16: run WeCom alert routing with a real webhook and a real observability report; zero-delivery remains `BLOCKED`.
-- AC-12/13: provide real AiManager spend export and ycapi monthly bill evidence with nonzero billable amounts.
+- AC-12/13: provide real AiManager spend export and ycapi monthly bill evidence with nonzero billable amounts and no unresolved `needs_review` reconciliation rows.
 - AC-23: run a timed 5-minute nontechnical trial with live ycapi, controlled identity injection, and a governed employee virtual key.
 - AC-26: provide HR/legal-approved policy publication, roster, and latest-version acknowledgment export.
 - Final gate: rerun `make acceptance-gate`; require every leaf check, launch gap, mapped AC row, final report blocker, and `acceptance-gate.json` step to be `PASS` or empty.

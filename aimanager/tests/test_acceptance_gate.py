@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import shutil
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -185,6 +187,76 @@ def test_acceptance_gate_reaches_pass_with_real_collectors_and_golden_evidence(t
     assert intake["summary"]["files"] >= 9
     assert final_report["status"] == "PASS"
     assert final_report["summary"]["blockers"] == 0
+
+
+def test_acceptance_gate_fails_when_ycapi_bill_amount_diverges_from_golden_spend(tmp_path: Path) -> None:
+    fixture_dir = tmp_path / "mutated-golden-evidence"
+    shutil.copytree(GOLDEN_FIXTURE_DIR, fixture_dir)
+    bill_file = fixture_dir / "ycapi-bill.json"
+    bill = json.loads(bill_file.read_text(encoding="utf-8"))
+    bill[0]["amount"] = "999.99"
+    bill_file.write_text(json.dumps(bill), encoding="utf-8")
+
+    result = _collect_real_golden_acceptance_gate(tmp_path, fixture_dir=fixture_dir)
+
+    production = json.loads((tmp_path / "production-readiness.json").read_text(encoding="utf-8"))
+    finance_check = _check_by_id(production, "AC-12-13-FINANCE")
+    reconciliation = (tmp_path / "finance-output/aimanager_reconciliation.csv").read_text(encoding="utf-8")
+    assert result["status"] == "FAIL"
+    assert production["status"] == "FAIL"
+    assert finance_check["status"] == "FAIL"
+    assert "needs_review" in finance_check["detail"]
+    assert "needs_review" in reconciliation
+
+
+def test_acceptance_gate_fails_when_key_inventory_user_is_not_in_employee_roster(tmp_path: Path) -> None:
+    def mutate(fixture_dir: Path) -> None:
+        inventory_file = fixture_dir / "key-inventory.json"
+        inventory = json.loads(inventory_file.read_text(encoding="utf-8"))
+        inventory["keys"][0]["user_id"] = "u_unknown"
+        inventory_file.write_text(json.dumps(inventory), encoding="utf-8")
+
+    _assert_rejected_golden_mutation(tmp_path, mutate, expected_check_id="AC-08-KEY-INVENTORY")
+
+
+def test_acceptance_gate_fails_when_production_policy_lacks_legal_approval(tmp_path: Path) -> None:
+    def mutate(fixture_dir: Path) -> None:
+        policy_file = fixture_dir / "production-policy-attestation.json"
+        policy = json.loads(policy_file.read_text(encoding="utf-8"))
+        policy["approvals"] = [approval for approval in policy["approvals"] if approval["role"] != "legal"]
+        policy_file.write_text(json.dumps(policy), encoding="utf-8")
+
+    _assert_rejected_golden_mutation(tmp_path, mutate, expected_check_id="AC-POLICY")
+
+
+def test_acceptance_gate_fails_when_trial_attestation_is_after_gate_run(tmp_path: Path) -> None:
+    def mutate(fixture_dir: Path) -> None:
+        trial_file = fixture_dir / "lightweight-trial.json"
+        trial = json.loads(trial_file.read_text(encoding="utf-8"))
+        trial["attestation"]["captured_at"] = "2026-06-30T12:00:00+08:00"
+        trial_file.write_text(json.dumps(trial), encoding="utf-8")
+
+    _assert_rejected_golden_mutation(tmp_path, mutate, expected_check_id="AC-23")
+
+
+def test_acceptance_gate_fails_when_employee_acknowledgment_predates_policy(tmp_path: Path) -> None:
+    def mutate(fixture_dir: Path) -> None:
+        acknowledgment_file = fixture_dir / "employee-acknowledgments.csv"
+        rows = acknowledgment_file.read_text(encoding="utf-8").splitlines()
+        acknowledgment_file.write_text(
+            rows[0]
+            + "\n"
+            + "\n".join(
+                ",".join(
+                    [fields[0], fields[1], "2026-06-29T23:00:00+08:00", *fields[3:]]
+                )
+                for fields in (row.split(",") for row in rows[1:])
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+    _assert_rejected_golden_mutation(tmp_path, mutate, expected_check_id="AC-26")
 
 
 def test_acceptance_gate_fails_when_env_pointed_evidence_fails_intake(tmp_path: Path) -> None:
@@ -511,6 +583,63 @@ def _golden_acceptance_env(tmp_path: Path) -> dict[str, str]:
     }
 
 
+def _golden_acceptance_env_for_fixtures(tmp_path: Path, fixture_dir: Path) -> dict[str, str]:
+    env = _golden_acceptance_env(tmp_path)
+    env.update(
+        {
+            "AIMANAGER_KEY_INVENTORY_FILE": str(fixture_dir / "key-inventory.json"),
+            "AIMANAGER_OBSERVABILITY_REPORT_FILE": str(fixture_dir / "observability.json"),
+            "AIMANAGER_SPEND_FILE": str(fixture_dir / "spend.json"),
+            "AIMANAGER_YCAPI_BILL_FILE": str(fixture_dir / "ycapi-bill.json"),
+            "AIMANAGER_PRODUCTION_POLICY_ATTESTATION_FILE": str(
+                fixture_dir / "production-policy-attestation.json"
+            ),
+            "AIMANAGER_LIGHTWEIGHT_TRIAL_EVIDENCE_FILE": str(fixture_dir / "lightweight-trial.json"),
+            "AIMANAGER_EMPLOYEE_MONITORING_POLICY_FILE": str(fixture_dir / "employee-monitoring-policy.json"),
+            "AIMANAGER_EMPLOYEE_ROSTER_FILE": str(fixture_dir / "employee-roster.csv"),
+            "AIMANAGER_EMPLOYEE_ACKNOWLEDGMENT_FILE": str(fixture_dir / "employee-acknowledgments.csv"),
+        }
+    )
+    return env
+
+
+def _collect_real_golden_acceptance_gate(tmp_path: Path, *, fixture_dir: Path) -> dict[str, object]:
+    def production_collector(**kwargs: object) -> dict[str, Any]:
+        return collect_production_readiness(
+            **kwargs,
+            admin_boundary_runner=_passing_admin_boundary_runner,
+            work_context_runner=_passing_work_context_runner,
+            live_ycapi_runner=_passing_live_ycapi_runner,
+            wecom_router=_passing_wecom_router,
+        )
+
+    return collect_acceptance_gate(
+        output_dir=tmp_path,
+        project_directory=PROJECT_ROOT,
+        acceptance_doc_file=PROJECT_ROOT / "docs/aimanager/1_acceptance_criteria.md",
+        generated_at=GOLDEN_GENERATED_AT,
+        env=_golden_acceptance_env_for_fixtures(tmp_path, fixture_dir),
+        production_readiness_collector=production_collector,
+        business_trial_collector=collect_business_trial_acceptance,
+    )
+
+
+def _assert_rejected_golden_mutation(
+    tmp_path: Path, mutate: Callable[[Path], None], *, expected_check_id: str
+) -> None:
+    fixture_dir = tmp_path / "mutated-golden-evidence"
+    shutil.copytree(GOLDEN_FIXTURE_DIR, fixture_dir)
+    mutate(fixture_dir)
+
+    result = _collect_real_golden_acceptance_gate(tmp_path, fixture_dir=fixture_dir)
+
+    business = json.loads((tmp_path / "business-trial-acceptance.json").read_text(encoding="utf-8"))
+    check = _check_by_id(business, expected_check_id)
+    assert result["status"] == "FAIL"
+    assert business["status"] == "FAIL"
+    assert check["status"] == "FAIL"
+
+
 def _passing_admin_boundary_runner(**_: object) -> list[SimpleNamespace]:
     return [
         SimpleNamespace(
@@ -580,3 +709,10 @@ def _step_by_id(result: dict[str, object], step_id: str) -> dict[str, Any]:
         if isinstance(step, dict) and step.get("id") == step_id:
             return step
     raise AssertionError(f"missing step {step_id}")
+
+
+def _check_by_id(bundle: dict[str, Any], check_id: str) -> dict[str, Any]:
+    for check in bundle["checks"]:
+        if isinstance(check, dict) and check.get("id") == check_id:
+            return check
+    raise AssertionError(f"missing check {check_id}")

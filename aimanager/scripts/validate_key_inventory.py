@@ -177,6 +177,22 @@ def collect_key_inventory_validation(
     if not isinstance(payload, Mapping):
         return _result(status="FAIL", detail="key inventory root must be a JSON object", generated_at=generated_at)
 
+    template_fields = _template_placeholder_fields(payload)
+    if template_fields:
+        return _result(
+            status="FAIL",
+            detail="key inventory contains unresolved evidence template markers",
+            generated_at=generated_at,
+            violations=[
+                {
+                    "key_ref": "input",
+                    "reason": "key inventory contains unresolved evidence template markers",
+                    "fields": template_fields[:20],
+                }
+            ],
+            raw_preview=str(sanitized_raw)[:240],
+        )
+
     keys = _extract_keys(payload)
     if keys is None:
         return _result(status="FAIL", detail="key inventory must contain a keys or data list", generated_at=generated_at)
@@ -569,6 +585,34 @@ def _extract_keys(payload: Mapping[str, Any]) -> list[Any] | None:
         if isinstance(value, list):
             return value
     return None
+
+
+def _template_placeholder_fields(payload: Any) -> list[str]:
+    return list(dict.fromkeys(_iter_template_placeholder_fields(payload, prefix="")))
+
+
+def _iter_template_placeholder_fields(payload: Any, *, prefix: str) -> list[str]:
+    if isinstance(payload, Mapping):
+        fields: list[str] = []
+        for key, value in payload.items():
+            path = f"{prefix}.{key}" if prefix else str(key)
+            if str(key) == "template_marker" and _text_value(value):
+                fields.append(path)
+                continue
+            fields.extend(_iter_template_placeholder_fields(value, prefix=path))
+        return fields
+
+    if isinstance(payload, list):
+        fields = []
+        for index, value in enumerate(payload):
+            path = f"{prefix}[{index}]" if prefix else f"[{index}]"
+            fields.extend(_iter_template_placeholder_fields(value, prefix=path))
+        return fields
+
+    text = _text_value(payload)
+    if text == "TEMPLATE_DO_NOT_SUBMIT" or text.startswith("replace-with-"):
+        return [prefix or "$"]
+    return []
 
 
 def _validate_export_metadata(

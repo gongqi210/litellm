@@ -771,6 +771,75 @@ def test_finance_evidence_passes_with_real_export_files(tmp_path) -> None:
     ]
 
 
+def test_finance_evidence_fails_when_reconciliation_needs_review(tmp_path) -> None:
+    spend_file = tmp_path / "spend.json"
+    bill_file = tmp_path / "ycapi_bill.json"
+    output_dir = tmp_path / "finance"
+    spend_file.write_text(
+        json.dumps(
+            [
+                {
+                    "startTime": "2026-06-30T02:15:00Z",
+                    "call_type": "completion",
+                    "user": "u_market_1",
+                    "model": "openai/gemini-2.5-flash",
+                    "prompt_tokens": 150,
+                    "completion_tokens": 40,
+                    "total_tokens": 190,
+                    "spend": "2.00",
+                    "currency": "CNY",
+                    "metadata": {
+                        "user_api_key_alias": "market-campaign-key",
+                        "user_api_key_metadata": {
+                            "department_id": "dept_market",
+                            "project_id": "proj_launch",
+                            "cost_center_id": "cc_growth",
+                            "pricing_version": "m1-2026-06",
+                        },
+                    },
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    bill_file.write_text(
+        json.dumps(
+            [
+                {
+                    "billing_month": "2026-06",
+                    "model_name": "gemini-2.5-flash",
+                    "api_path": "/v1/chat/completions",
+                    "prompt_tokens": "150",
+                    "completion_tokens": "40",
+                    "total_tokens": "190",
+                    "amount": "999.99",
+                    "currency": "CNY",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    bundle = collect_production_readiness(
+        env={
+            "AIMANAGER_SPEND_FILE": str(spend_file),
+            "AIMANAGER_YCAPI_BILL_FILE": str(bill_file),
+            "AIMANAGER_FINANCE_OUTPUT_DIR": str(output_dir),
+        },
+        admin_boundary_runner=lambda **kwargs: [
+            _script_result(status="PASS", detail="business/admin edge checks passed")
+        ],
+        live_ycapi_runner=lambda **kwargs: _script_result(status="PASS", detail="ycapi /models returned 3 models"),
+        wecom_router=lambda **kwargs: _script_result(status="PASS", detail="sent 1 alert to WeCom webhook"),
+    )
+
+    finance_check = next(check for check in bundle["checks"] if check["id"] == "AC-12-13-FINANCE")
+    assert finance_check["status"] == "FAIL"
+    assert bundle["status"] == "FAIL"
+    assert "needs_review" in finance_check["detail"]
+    assert finance_check["evidence"]["reconciliation_needs_review_count"] == 1
+
+
 def test_production_policy_attestation_passes_with_required_manual_checks(tmp_path) -> None:
     policy_file = tmp_path / "production_policy_attestation.json"
     report_file = tmp_path / "observability.json"

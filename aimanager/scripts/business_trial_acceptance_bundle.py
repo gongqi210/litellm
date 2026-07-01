@@ -12,6 +12,7 @@ from typing import Any, Callable, Literal, Mapping, Sequence
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, model_validator
 
 from aimanager.redaction import contains_secret_like
+from aimanager.validation_errors import compact_validation_errors
 from aimanager.scripts.production_readiness_bundle import (
     DEFAULT_EXPECTED_MODELS,
     CheckResult,
@@ -409,7 +410,7 @@ def _lightweight_trial_check(
             id="AC-23",
             name="nontechnical_lightweight_trial",
             status="FAIL",
-            detail="invalid AC-23 trial evidence: " + _compact_validation_errors(exc),
+            detail="invalid AC-23 trial evidence: " + compact_validation_errors(exc),
         )
 
     try:
@@ -625,19 +626,6 @@ def _is_forbidden_evidence_key(key: str) -> bool:
 
 def _contains_secret_like_value(value: str) -> bool:
     return contains_secret_like(value)
-
-
-def _compact_validation_errors(exc: ValidationError) -> str:
-    messages: list[str] = []
-    for error in exc.errors(include_input=False, include_url=False):
-        location = ".".join(str(part) for part in error.get("loc", ()) if part != "__root__")
-        message = str(error.get("msg") or "invalid")
-        messages.append(f"{location}: {message}" if location else message)
-    if not messages:
-        return "validation failed"
-    if len(messages) <= 3:
-        return "; ".join(messages)
-    return f"{messages[0]}; {messages[1]}; {messages[2]}; ... {len(messages) - 3} more"
 
 
 def _parse_iso_datetime(value: str) -> datetime:

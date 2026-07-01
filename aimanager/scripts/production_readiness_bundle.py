@@ -467,6 +467,26 @@ def _finance_evidence_check(*, env: Mapping[str, str]) -> CheckResult:
                 "output_files": artifacts.output_files,
             },
         )
+    if artifacts.reconciliation_needs_review_count > 0:
+        return CheckResult(
+            id="AC-12-13-FINANCE",
+            name="finance_export_reconciliation",
+            status="FAIL",
+            detail=(
+                f"finance reconciliation contains {artifacts.reconciliation_needs_review_count} "
+                "needs_review row(s); resolve ycapi bill vs AiManager spend differences"
+            ),
+            evidence={
+                "spend_row_count": artifacts.spend_row_count,
+                "ycapi_bill_row_count": artifacts.ycapi_bill_row_count,
+                "aimanager_billable_row_count": artifacts.aimanager_billable_row_count,
+                "ycapi_billable_row_count": artifacts.ycapi_billable_row_count,
+                "reconciliation_row_count": artifacts.reconciliation_row_count,
+                "reconciliation_needs_review_count": artifacts.reconciliation_needs_review_count,
+                "output_dir": str(output_dir),
+                "output_files": artifacts.output_files,
+            },
+        )
 
     return CheckResult(
         id="AC-12-13-FINANCE",
@@ -478,6 +498,8 @@ def _finance_evidence_check(*, env: Mapping[str, str]) -> CheckResult:
             "ycapi_bill_row_count": artifacts.ycapi_bill_row_count,
             "aimanager_billable_row_count": artifacts.aimanager_billable_row_count,
             "ycapi_billable_row_count": artifacts.ycapi_billable_row_count,
+            "reconciliation_row_count": artifacts.reconciliation_row_count,
+            "reconciliation_needs_review_count": artifacts.reconciliation_needs_review_count,
             "output_dir": str(output_dir),
             "output_files": artifacts.output_files,
         },
@@ -524,7 +546,7 @@ def _production_policy_attestation_check(env: Mapping[str, str]) -> CheckResult:
             evidence={"redaction_marker": _SECRET_LIKE_REDACTION},
         )
 
-    violations = _production_policy_violations(payload)
+    violations = production_policy_violations(payload)
     if violations:
         return CheckResult(
             id="AC-POLICY",
@@ -651,7 +673,7 @@ def _load_json_object(path: Path) -> dict[str, Any]:
     return payload
 
 
-def _production_policy_violations(payload: Mapping[str, Any]) -> list[str]:
+def production_policy_violations(payload: Mapping[str, Any]) -> list[str]:
     violations: list[str] = []
     for field_name in ("policy_id", "policy_version", "approved_at"):
         if not _text(payload.get(field_name)):

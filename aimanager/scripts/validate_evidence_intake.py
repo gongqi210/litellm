@@ -9,7 +9,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, Mapping, Sequence
 
+from pydantic import ValidationError
+
 from aimanager.redaction import contains_secret_like, sanitize_text, sanitize_value
+from aimanager.scripts.business_trial_acceptance_bundle import TrialEvidence
+from aimanager.scripts.production_readiness_bundle import production_policy_violations
+from aimanager.validation_errors import compact_validation_errors
 
 EvidenceStatus = Literal["PASS", "FAIL", "BLOCKED"]
 
@@ -209,7 +214,58 @@ def _json_findings(path: Path, content: str) -> list[FileFinding]:
             findings.append(_finding("BLOCKED", "template_marker", "JSON still contains template_marker"))
         if str(payload.get("status") or "").strip().upper() == "TEMPLATE":
             findings.append(_finding("BLOCKED", "template_status", "JSON status is TEMPLATE"))
+        if not any(finding.status == "BLOCKED" for finding in findings):
+            findings.extend(_schema_findings(path, payload))
     return findings
+
+
+def _schema_findings(path: Path, payload: Mapping[str, Any]) -> list[FileFinding]:
+    if _looks_like_ac23_trial_evidence(path, payload):
+        try:
+            TrialEvidence.model_validate(payload)
+        except ValidationError as exc:
+            return [
+                _finding(
+                    "FAIL",
+                    "schema_validation",
+                    "AC-23 trial evidence invalid: " + compact_validation_errors(exc),
+                )
+            ]
+    if _looks_like_production_policy_attestation(path, payload):
+        violations = production_policy_violations(payload)
+        if violations:
+            return [
+                _finding(
+                    "FAIL",
+                    "schema_validation",
+                    "production policy attestation invalid: " + ", ".join(violations[:5]),
+                )
+            ]
+    return []
+
+
+def _looks_like_ac23_trial_evidence(path: Path, payload: Mapping[str, Any]) -> bool:
+    filename = path.name.lower()
+    return (
+        payload.get("ac") == "AC-23"
+        or "ac23" in filename
+        or ("trial" in filename and "evidence" in filename)
+    )
+
+
+def _looks_like_production_policy_attestation(path: Path, payload: Mapping[str, Any]) -> bool:
+    filename = path.name.lower()
+    if "production-policy" in filename or "policy-attestation" in filename:
+        return True
+    policy_fields = {
+        "chargeback",
+        "pricing_approval",
+        "ycapi_token_limit",
+        "employee_virtual_key_only",
+        "data_boundaries",
+        "approvals",
+    }
+    return len(policy_fields.intersection(payload.keys())) >= 3
 
 
 def _csv_findings(path: Path) -> list[FileFinding]:

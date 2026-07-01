@@ -251,6 +251,26 @@ def test_key_inventory_fails_raw_secret_values_without_echoing_them(tmp_path) ->
     assert "[redacted:secret-like-value]" in payload
 
 
+def test_key_inventory_fails_unresolved_evidence_template_markers(tmp_path) -> None:
+    inventory_file = tmp_path / "keys.json"
+    inventory_file.write_text(
+        json.dumps(
+            {
+                "template_marker": "TEMPLATE_DO_NOT_SUBMIT",
+                "keys": [_governed_key("template-looking-key")],
+                **_trusted_export_metadata(expected_total_key_count=1),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = collect_key_inventory_validation(inventory_file=inventory_file, generated_at=GENERATED_AT)
+
+    assert result["status"] == "FAIL"
+    assert "template" in result["detail"]
+    assert result["violations"][0]["fields"] == ["template_marker"]
+
+
 def test_key_inventory_cli_writes_json_and_returns_blocked_for_missing_input(tmp_path, capsys) -> None:
     output_file = tmp_path / "result.json"
 

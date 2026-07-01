@@ -79,6 +79,8 @@ class FinanceExportArtifacts:
     ycapi_bill_row_count: int
     aimanager_billable_row_count: int
     ycapi_billable_row_count: int
+    reconciliation_row_count: int
+    reconciliation_needs_review_count: int
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -112,6 +114,7 @@ def export_finance_csvs(*, spend_file: Path, ycapi_bill_file: Path, output_dir: 
     output_dir.mkdir(parents=True, exist_ok=True)
 
     bundle = build_finance_export_bundle(spend_rows=spend_rows, ycapi_bill_rows=ycapi_bill_rows)
+    reconciliation_rows = bundle["aimanager_reconciliation.csv"]
     for filename, rows in bundle.items():
         _write_csv(output_dir / filename, rows, _FIELDNAMES[filename])
     return FinanceExportArtifacts(
@@ -119,10 +122,14 @@ def export_finance_csvs(*, spend_file: Path, ycapi_bill_file: Path, output_dir: 
         spend_row_count=len(spend_rows),
         ycapi_bill_row_count=len(ycapi_bill_rows),
         aimanager_billable_row_count=sum(
-            1 for row in bundle["aimanager_reconciliation.csv"] if _is_positive_decimal(row.get("aimanager_amount"))
+            1 for row in reconciliation_rows if _is_positive_decimal(row.get("aimanager_amount"))
         ),
         ycapi_billable_row_count=sum(
-            1 for row in bundle["aimanager_reconciliation.csv"] if _is_positive_decimal(row.get("ycapi_amount"))
+            1 for row in reconciliation_rows if _is_positive_decimal(row.get("ycapi_amount"))
+        ),
+        reconciliation_row_count=len(reconciliation_rows),
+        reconciliation_needs_review_count=sum(
+            1 for row in reconciliation_rows if str(row.get("status") or "").strip() == "needs_review"
         ),
     )
 
