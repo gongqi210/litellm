@@ -11,7 +11,10 @@ ALLOWED_BUSINESS_ROUTES = {
     ("GET", "/v1/models"),
     ("POST", "/v1/chat/completions"),
     ("POST", "/v1/images/generations"),
+    ("POST", "/v1/videos"),
 }
+
+VIDEO_READ_RESERVED_SEGMENTS = frozenset({"characters", "edits", "extensions"})
 
 ALLOWED_HEALTH_ROUTES = {
     ("GET", "/health"),
@@ -132,6 +135,8 @@ def evaluate_route(
         return _allowed()
     if (normalized_method, normalized_path) in ALLOWED_HEALTH_ROUTES:
         return _allowed()
+    if is_business_video_read_route(normalized_method, normalized_path):
+        return _allowed()
 
     if _is_google_native_route(normalized_path):
         return RouteDecision(
@@ -203,6 +208,21 @@ def _normalize_surface(surface: str) -> RouteSurface:
     if surface == "management":
         return "management"
     return "business"
+
+
+def is_business_video_read_route(method: str, path: str) -> bool:
+    if method.upper() != "GET":
+        return False
+    normalized = _normalize_path(path)
+    if not normalized.startswith("/v1/videos/"):
+        return False
+    segments = normalized[len("/v1/videos/") :].split("/")
+    head = segments[0]
+    if not head or head in VIDEO_READ_RESERVED_SEGMENTS:
+        return False
+    if len(segments) == 1:
+        return True
+    return len(segments) == 2 and segments[1] == "content"
 
 
 def _is_google_native_route(path: str) -> bool:

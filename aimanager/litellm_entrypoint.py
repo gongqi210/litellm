@@ -68,6 +68,22 @@ def register_aimanager_image_model_costs(
     return model_cost
 
 
+def register_aimanager_video_model_costs(
+    config_path: str | PathLike[str] | None = None,
+    *,
+    register_model: Callable[..., None] | None = None,
+) -> dict[str, dict[str, Any]]:
+    model_cost = _load_video_generation_model_costs(config_path)
+    if not model_cost:
+        return {}
+
+    if register_model is None:
+        from litellm import register_model as register_model
+
+    register_model(model_cost=model_cost)
+    return model_cost
+
+
 def register_aimanager_enforced_params_guard(*, litellm_module: Any | None = None) -> object:
     if litellm_module is None:
         import litellm as litellm_module
@@ -126,12 +142,30 @@ def _config_path_from_argv(argv: Sequence[str]) -> str:
 def _load_image_generation_model_costs(
     config_path: str | PathLike[str] | None = None,
 ) -> dict[str, dict[str, Any]]:
-    resolved_path = Path(config_path or os.environ.get(CONFIG_FILE_PATH_ENV, ""))
-    if not str(resolved_path):
+    return _load_generation_model_costs(config_path, mode="image_generation", cost_field="input_cost_per_image")
+
+
+def _load_video_generation_model_costs(
+    config_path: str | PathLike[str] | None = None,
+) -> dict[str, dict[str, Any]]:
+    return _load_generation_model_costs(
+        config_path, mode="video_generation", cost_field="output_cost_per_video_per_second"
+    )
+
+
+def _load_generation_model_costs(
+    config_path: str | PathLike[str] | None,
+    *,
+    mode: str,
+    cost_field: str,
+) -> dict[str, dict[str, Any]]:
+    raw_path = str(config_path or os.environ.get(CONFIG_FILE_PATH_ENV, "")).strip()
+    if not raw_path:
         return {}
+    resolved_path = Path(raw_path)
     if not resolved_path.exists():
         raise RuntimeEnvironmentError(
-            f"AiManager image cost registration requires readable {CONFIG_FILE_PATH_ENV}: {resolved_path}"
+            f"AiManager model cost registration requires readable {CONFIG_FILE_PATH_ENV}: {resolved_path}"
         )
 
     import yaml
@@ -148,10 +182,10 @@ def _load_image_generation_model_costs(
         model_info = item.get("model_info")
         if not isinstance(params, dict) or not isinstance(model_info, dict):
             continue
-        if model_info.get("mode") != "image_generation":
+        if model_info.get("mode") != mode:
             continue
         model = params.get("model")
-        cost = model_info.get("input_cost_per_image")
+        cost = model_info.get(cost_field)
         if (
             isinstance(model, str)
             and model.strip()
@@ -161,8 +195,8 @@ def _load_image_generation_model_costs(
             and cost > 0
         ):
             model_cost[model.strip()] = {
-                "mode": "image_generation",
-                "input_cost_per_image": float(cost),
+                "mode": mode,
+                cost_field: float(cost),
             }
     return model_cost
 

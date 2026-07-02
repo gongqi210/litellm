@@ -13,6 +13,7 @@ from aimanager.litellm_entrypoint import (
     install_aimanager_app_override,
     register_aimanager_enforced_params_guard,
     register_aimanager_image_model_costs,
+    register_aimanager_video_model_costs,
     validate_required_runtime_env,
 )
 
@@ -116,6 +117,70 @@ model_list:
         }
     }
     assert registered == [returned]
+
+
+def test_register_aimanager_video_model_costs_uses_provider_prefixed_model(tmp_path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+model_list:
+  - model_name: ycapi-image-1
+    litellm_params:
+      model: openai/ycapi-image-1
+      input_cost_per_image: 0.01
+    model_info:
+      mode: image_generation
+      input_cost_per_image: 0.01
+  - model_name: ycapi-video-1
+    litellm_params:
+      model: openai/ycapi-video-1
+      output_cost_per_video_per_second: 0.5
+    model_info:
+      mode: video_generation
+      output_cost_per_video_per_second: 0.5
+""",
+        encoding="utf-8",
+    )
+    registered: list[dict[str, dict[str, object]]] = []
+
+    returned = register_aimanager_video_model_costs(
+        config_path,
+        register_model=lambda *, model_cost: registered.append(model_cost),
+    )
+
+    assert returned == {
+        "openai/ycapi-video-1": {
+            "mode": "video_generation",
+            "output_cost_per_video_per_second": 0.5,
+        }
+    }
+    assert registered == [returned]
+
+
+def test_register_aimanager_video_model_costs_noop_without_video_model(tmp_path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+model_list:
+  - model_name: ycapi-image-1
+    litellm_params:
+      model: openai/ycapi-image-1
+      input_cost_per_image: 0.01
+    model_info:
+      mode: image_generation
+      input_cost_per_image: 0.01
+""",
+        encoding="utf-8",
+    )
+    calls: list[object] = []
+
+    returned = register_aimanager_video_model_costs(
+        config_path,
+        register_model=lambda *, model_cost: calls.append(model_cost),
+    )
+
+    assert returned == {}
+    assert calls == []
 
 
 def test_register_aimanager_enforced_params_guard_registers_proxy_callback_once() -> None:

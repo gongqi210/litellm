@@ -29,6 +29,11 @@ def test_lazy_proxy_registers_aimanager_hooks_after_litellm_proxy_import(monkeyp
     )
     monkeypatch.setattr(
         litellm_entrypoint,
+        "register_aimanager_video_model_costs",
+        lambda: registrations.append("video-costs"),
+    )
+    monkeypatch.setattr(
+        litellm_entrypoint,
         "register_aimanager_enforced_params_guard",
         lambda: registrations.append("enforced-params-guard"),
     )
@@ -38,7 +43,7 @@ def test_lazy_proxy_registers_aimanager_hooks_after_litellm_proxy_import(monkeyp
     asyncio.run(_call_asgi(app))
 
     assert messages[0]["status"] == 204
-    assert registrations == ["image-costs", "enforced-params-guard"]
+    assert registrations == ["image-costs", "video-costs", "enforced-params-guard"]
 
 
 async def _call_asgi(app):
@@ -52,3 +57,16 @@ async def _call_asgi(app):
 
     await app({"type": "http", "method": "GET", "path": "/health/liveliness"}, receive, send)
     return messages
+
+
+def test_video_create_enforces_work_context_and_reads_enforce_key_disposition() -> None:
+    from aimanager.asgi import _requires_business_work_context, _requires_key_disposition_check
+
+    assert _requires_business_work_context("POST", "/v1/videos") is True
+    assert _requires_business_work_context("GET", "/v1/videos/video_abc") is False
+    assert _requires_business_work_context("GET", "/v1/videos/video_abc/content") is False
+
+    assert _requires_key_disposition_check("POST", "/v1/videos") is True
+    assert _requires_key_disposition_check("GET", "/v1/videos/video_abc") is True
+    assert _requires_key_disposition_check("GET", "/v1/videos/video_abc/content") is True
+    assert _requires_key_disposition_check("GET", "/v1/videos/characters") is False

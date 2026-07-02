@@ -8,7 +8,7 @@ AiManager is the company-facing LiteLLM management layer for ycapi. It keeps Lit
 - Upstream credential: `YCAPI_API_TOKEN`.
 - Do not add direct provider keys such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, Azure, Bedrock, or Vertex credentials to this deployment.
 - `STORE_MODEL_IN_DB` is disabled by default so the YAML model list stays the source of truth for the ycapi-only boundary.
-- `ycapi-video-1` is not exposed in this first config because LiteLLM's built-in video route expects vendor-specific schemas. Add a ycapi video adapter or audited authenticated passthrough route before enabling it.
+- `ycapi-video-1` is exposed as an audited authenticated passthrough over LiteLLM's OpenAI-compatible async video routes (`POST /v1/videos` create, `GET /v1/videos/{id}` poll, `GET /v1/videos/{id}/content` retrieve), with virtual-key auth, mandatory work-context on create, per-second billing, and audit. Live ycapi video connectivity is not yet verified: it assumes ycapi mirrors the OpenAI video contract and surfaces `usage.duration_seconds` for nonzero spend, so treat it like AC-19 (`BLOCKED` for production) until a real token confirms the ycapi video API and a live roundtrip passes.
 
 ## Enabled Models
 
@@ -17,6 +17,7 @@ AiManager is the company-facing LiteLLM management layer for ycapi. It keeps Lit
 | `gemini-2.5-flash` | `openai/gemini-2.5-flash` | chat / vision |
 | `deepseek-chat` | `openai/deepseek-chat` | chat |
 | `ycapi-image-1` | `openai/ycapi-image-1` | image generation |
+| `ycapi-video-1` | `openai/ycapi-video-1` | video generation (async, live-unverified) |
 
 Pricing fields are explicit and nonzero so LiteLLM cannot silently inherit same-named public model prices or record zero image spend. Current values are M1 technical guardrail prices; finance-approved transfer prices still need a recorded `pricing_version`, approver, currency, tax mode, and effective date before production chargeback.
 

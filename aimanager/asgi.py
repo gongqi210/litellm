@@ -13,7 +13,13 @@ from uuid import uuid4
 
 from aimanager.audit import build_audit_event
 from aimanager.governance import KeyGovernanceError, normalize_key_request
-from aimanager.policy import ALLOWED_BUSINESS_ROUTES, RouteDecision, build_policy_error_body, evaluate_route
+from aimanager.policy import (
+    ALLOWED_BUSINESS_ROUTES,
+    RouteDecision,
+    build_policy_error_body,
+    evaluate_route,
+    is_business_video_read_route,
+)
 from aimanager.runtime_metrics import DEFAULT_AIMANAGER_METRICS, AiManagerMetrics
 from aimanager.work_context import validate_work_context
 
@@ -286,9 +292,11 @@ class _LazyLiteLLMProxyApp:
             from aimanager.litellm_entrypoint import (
                 register_aimanager_enforced_params_guard,
                 register_aimanager_image_model_costs,
+                register_aimanager_video_model_costs,
             )
 
             register_aimanager_image_model_costs()
+            register_aimanager_video_model_costs()
             register_aimanager_enforced_params_guard()
             self._app = litellm_proxy_app
         await self._app(scope, receive, send)
@@ -317,8 +325,17 @@ def _is_image_generation_route(method: str, path: str) -> bool:
     return method.upper() == "POST" and normalized_path == "/v1/images/generations"
 
 
+def _is_video_create_route(method: str, path: str) -> bool:
+    normalized_path = _normalized_request_path(path)
+    return method.upper() == "POST" and normalized_path == "/v1/videos"
+
+
 def _requires_business_work_context(method: str, path: str) -> bool:
-    return _is_chat_completion_route(method, path) or _is_image_generation_route(method, path)
+    return (
+        _is_chat_completion_route(method, path)
+        or _is_image_generation_route(method, path)
+        or _is_video_create_route(method, path)
+    )
 
 
 def _is_key_lifecycle_route(method: str, path: str) -> bool:
@@ -341,7 +358,11 @@ def _requires_database_ready(method: str, path: str) -> bool:
 
 
 def _requires_key_disposition_check(method: str, path: str) -> bool:
-    return (method.upper(), _normalized_request_path(path)) in ALLOWED_BUSINESS_ROUTES
+    normalized_method = method.upper()
+    normalized_path = _normalized_request_path(path)
+    if (normalized_method, normalized_path) in ALLOWED_BUSINESS_ROUTES:
+        return True
+    return is_business_video_read_route(normalized_method, normalized_path)
 
 
 def _litellm_credential_token_from_scope(scope: Scope) -> str:

@@ -25,6 +25,16 @@ model_list:
       mode: image_generation
       input_cost_per_image: 0.01
 
+  - model_name: ycapi-video-1
+    litellm_params:
+      model: openai/ycapi-video-1
+      api_base: os.environ/YCAPI_BASE_URL
+      api_key: os.environ/YCAPI_API_TOKEN
+      output_cost_per_video_per_second: 0.5
+    model_info:
+      mode: video_generation
+      output_cost_per_video_per_second: 0.5
+
 litellm_settings:
   drop_params: true
   request_timeout: 600

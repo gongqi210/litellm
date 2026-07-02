@@ -30,6 +30,7 @@ FORBIDDEN_CONFIG_MARKERS = (
 )
 
 IMAGE_MODEL_NAME = "ycapi-image-1"
+VIDEO_MODEL_NAME = "ycapi-video-1"
 MAX_USER_API_KEY_CACHE_TTL_SECONDS = 5
 
 
@@ -95,18 +96,16 @@ def _validate_model_list(config: dict[str, Any]) -> None:
             raise ConfigValidationError(f"{model_name}: upstream model must use openai/<ycapi-model>")
         if upstream_model == "openai/*":
             raise ConfigValidationError(f"{model_name}: openai/* wildcard is not allowed")
-        if "ycapi-video-1" in (model_name, upstream_model):
-            raise ConfigValidationError(
-                "ycapi-video-1 must not be exposed through LiteLLM's OpenAI model_list until "
-                "a ycapi video adapter or audited passthrough route is added"
-            )
 
         if params.get("api_base") != "os.environ/YCAPI_BASE_URL":
             raise ConfigValidationError(f"{model_name}: api_base must be os.environ/YCAPI_BASE_URL")
         if params.get("api_key") != "os.environ/YCAPI_API_TOKEN":
             raise ConfigValidationError(f"{model_name}: api_key must be os.environ/YCAPI_API_TOKEN")
 
-        if model_name == IMAGE_MODEL_NAME:
+        if model_name == VIDEO_MODEL_NAME:
+            _validate_positive_number(params, model_name, "output_cost_per_video_per_second")
+            _validate_video_model_info(item, model_name, params["output_cost_per_video_per_second"])
+        elif model_name == IMAGE_MODEL_NAME:
             if "output_cost_per_image" in params:
                 raise ConfigValidationError(
                     f"{model_name}: output_cost_per_image is not used by LiteLLM image pricing; "
@@ -129,6 +128,22 @@ def _validate_image_model_info(item: dict[str, Any], model_name: str, expected_p
     if model_info["input_cost_per_image"] != expected_price:
         raise ConfigValidationError(
             f"{model_name}: model_info.input_cost_per_image must match litellm_params.input_cost_per_image"
+        )
+
+
+def _validate_video_model_info(item: dict[str, Any], model_name: str, expected_price: float) -> None:
+    model_info = item.get("model_info")
+    if not isinstance(model_info, dict):
+        raise ConfigValidationError(f"{model_name}: model_info.mode must be video_generation")
+    if model_info.get("mode") != "video_generation":
+        raise ConfigValidationError(f"{model_name}: model_info.mode must be video_generation")
+    _validate_positive_number(
+        {"model_info": model_info}, model_name, "model_info.output_cost_per_video_per_second"
+    )
+    if model_info["output_cost_per_video_per_second"] != expected_price:
+        raise ConfigValidationError(
+            f"{model_name}: model_info.output_cost_per_video_per_second must match "
+            "litellm_params.output_cost_per_video_per_second"
         )
 
 

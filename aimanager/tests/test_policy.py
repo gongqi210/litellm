@@ -13,6 +13,22 @@ def test_business_routes_are_allowed() -> None:
     assert evaluate_route("POST", "/v1/images/generations").allowed is True
 
 
+def test_business_video_lifecycle_routes_are_allowed() -> None:
+    assert evaluate_route("POST", "/v1/videos").allowed is True
+    assert evaluate_route("GET", "/v1/videos/video_abc123").allowed is True
+    assert evaluate_route("GET", "/v1/videos/video_abc123/content").allowed is True
+
+
+def test_business_video_extras_and_writes_are_blocked() -> None:
+    assert evaluate_route("GET", "/v1/videos").allowed is False
+    assert evaluate_route("GET", "/v1/videos/characters").allowed is False
+    assert evaluate_route("GET", "/v1/videos/edits").allowed is False
+    assert evaluate_route("GET", "/v1/videos/extensions").allowed is False
+    assert evaluate_route("GET", "/v1/videos/video_abc123/extra").allowed is False
+    assert evaluate_route("POST", "/v1/videos/video_abc123/remix").allowed is False
+    assert evaluate_route("DELETE", "/v1/videos/video_abc123").allowed is False
+
+
 def test_method_mismatch_is_blocked() -> None:
     decision = evaluate_route("GET", "/v1/chat/completions")
 

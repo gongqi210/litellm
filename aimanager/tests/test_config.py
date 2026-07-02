@@ -40,6 +40,11 @@ def test_aimanager_config_is_locked_to_ycapi() -> None:
             assert "output_cost_per_image" not in params
             assert params["input_cost_per_image"] > 0
             assert model_info["input_cost_per_image"] == params["input_cost_per_image"]
+        elif model["model_name"] == "ycapi-video-1":
+            model_info = model["model_info"]
+            assert model_info["mode"] == "video_generation"
+            assert params["output_cost_per_video_per_second"] > 0
+            assert model_info["output_cost_per_video_per_second"] == params["output_cost_per_video_per_second"]
         else:
             assert params["input_cost_per_token"] > 0
             assert params["output_cost_per_token"] > 0
@@ -229,6 +234,56 @@ general_settings:
     )
 
     with pytest.raises(ConfigValidationError, match="input_cost_per_token"):
+        validate_aimanager_config(bad_config)
+
+
+def test_validator_rejects_video_model_info_price_mismatch(tmp_path: Path) -> None:
+    bad_config = tmp_path / "bad-video-price.yaml"
+    bad_config.write_text(
+        """
+model_list:
+  - model_name: ycapi-video-1
+    litellm_params:
+      model: openai/ycapi-video-1
+      api_base: os.environ/YCAPI_BASE_URL
+      api_key: os.environ/YCAPI_API_TOKEN
+      output_cost_per_video_per_second: 0.5
+    model_info:
+      mode: video_generation
+      output_cost_per_video_per_second: 0.25
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  store_model_in_db: false
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigValidationError, match="output_cost_per_video_per_second"):
+        validate_aimanager_config(bad_config)
+
+
+def test_validator_rejects_zero_video_pricing(tmp_path: Path) -> None:
+    bad_config = tmp_path / "bad-video-zero.yaml"
+    bad_config.write_text(
+        """
+model_list:
+  - model_name: ycapi-video-1
+    litellm_params:
+      model: openai/ycapi-video-1
+      api_base: os.environ/YCAPI_BASE_URL
+      api_key: os.environ/YCAPI_API_TOKEN
+      output_cost_per_video_per_second: 0.0
+    model_info:
+      mode: video_generation
+      output_cost_per_video_per_second: 0.0
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  store_model_in_db: false
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigValidationError, match="output_cost_per_video_per_second"):
         validate_aimanager_config(bad_config)
 
 

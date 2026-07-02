@@ -225,8 +225,6 @@ def _ycapi_boundary(project_root: Path) -> CheckResult:
     missing = [marker for marker in required if marker not in raw]
     if missing:
         return _result("FAIL", "ycapi_boundary", "missing ycapi invariant(s): " + ", ".join(missing))
-    if "ycapi-video-1" in raw:
-        return _result("FAIL", "ycapi_boundary", "ycapi-video-1 must stay out of LiteLLM model_list")
     return _result("PASS", "ycapi_boundary", "config text remains ycapi-only")
 
 

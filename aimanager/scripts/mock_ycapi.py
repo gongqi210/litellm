@@ -19,6 +19,7 @@ def build_mock_response(path: str, payload: dict[str, Any]) -> tuple[int, dict[s
                 {"id": "gemini-2.5-flash", "object": "model", "owned_by": "ycapi"},
                 {"id": "deepseek-chat", "object": "model", "owned_by": "ycapi"},
                 {"id": "ycapi-image-1", "object": "model", "owned_by": "ycapi"},
+                {"id": "ycapi-video-1", "object": "model", "owned_by": "ycapi"},
             ],
         }
         return 200, headers, _json_bytes(body)
@@ -69,6 +70,39 @@ def build_mock_response(path: str, payload: dict[str, Any]) -> tuple[int, dict[s
         body = {
             "created": int(time.time()),
             "data": data,
+        }
+        return 200, headers, _json_bytes(body)
+
+    if normalized_path in {"/v1/videos", "/videos"}:
+        model = _string(payload.get("model"), default="ycapi-video-1")
+        requested_seconds = _string(payload.get("seconds"), default="4")
+        duration_seconds = int(requested_seconds) if requested_seconds.isdigit() else 4
+        created = int(time.time())
+        body = {
+            "id": f"video-aimanager-mock-{created}",
+            "object": "video",
+            "model": model,
+            "status": "completed",
+            "progress": 100,
+            "created_at": created,
+            "completed_at": created,
+            "seconds": str(duration_seconds),
+            "size": _string(payload.get("size"), default="1280x720"),
+            "usage": {"duration_seconds": duration_seconds},
+        }
+        return 200, headers, _json_bytes(body)
+
+    if normalized_path.startswith("/v1/videos/") or normalized_path.startswith("/videos/"):
+        video_id = normalized_path.split("/videos/", 1)[1].split("/", 1)[0]
+        created = int(time.time())
+        body = {
+            "id": video_id,
+            "object": "video",
+            "model": "ycapi-video-1",
+            "status": "completed",
+            "progress": 100,
+            "created_at": created,
+            "completed_at": created,
         }
         return 200, headers, _json_bytes(body)
 

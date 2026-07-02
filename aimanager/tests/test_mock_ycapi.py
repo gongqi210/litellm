@@ -16,8 +16,28 @@ def test_mock_ycapi_returns_openai_compatible_model_list() -> None:
         "gemini-2.5-flash",
         "deepseek-chat",
         "ycapi-image-1",
+        "ycapi-video-1",
     ]
     assert all(model["object"] == "model" for model in payload["data"])
+
+
+def test_mock_ycapi_returns_video_job_with_usage_duration() -> None:
+    status, headers, body = build_mock_response(
+        "/v1/videos", {"model": "ycapi-video-1", "prompt": "a calm ocean", "seconds": "5"}
+    )
+
+    payload = json.loads(body.decode("utf-8"))
+    assert status == 200
+    assert headers["content-type"] == "application/json"
+    assert payload["object"] == "video"
+    assert payload["model"] == "ycapi-video-1"
+    assert payload["usage"]["duration_seconds"] == 5
+
+    poll_status, _headers, poll_body = build_mock_response("/v1/videos/video-mock-1", {})
+    poll = json.loads(poll_body.decode("utf-8"))
+    assert poll_status == 200
+    assert poll["id"] == "video-mock-1"
+    assert poll["status"] == "completed"
 
 
 def test_mock_ycapi_returns_openai_compatible_chat_completion() -> None:
