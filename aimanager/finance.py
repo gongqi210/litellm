@@ -4,7 +4,7 @@ from collections import defaultdict
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 import json
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping, Sequence
 
 
 UNASSIGNED = "unassigned"
@@ -107,7 +107,44 @@ def reconcile_monthly_usage(
             }
         )
 
-    return reconciliation_rows
+    aggregate_material_groups = _aggregate_material_groups(
+        reconciliation_rows, amount_threshold=amount_threshold, rate_threshold=rate_threshold
+    )
+    return [
+        {**row, "status": "needs_review"}
+        if row["status"] == "matched" and (row["month"], row["currency"]) in aggregate_material_groups
+        else row
+        for row in reconciliation_rows
+    ]
+
+
+def _aggregate_material_groups(
+    rows: Sequence[Mapping[str, object]],
+    *,
+    amount_threshold: Decimal,
+    rate_threshold: Decimal,
+) -> frozenset[tuple[str, str]]:
+    def _amount(value: object) -> Decimal:
+        return value if isinstance(value, Decimal) else Decimal(0)
+
+    group_keys = {(str(row["month"]), str(row["currency"])) for row in rows}
+
+    def _is_material(group_key: tuple[str, str]) -> bool:
+        group = [
+            row
+            for row in rows
+            if (str(row["month"]), str(row["currency"])) == group_key and row["status"] == "matched"
+        ]
+        if not group:
+            return False
+        total_difference = sum((abs(_amount(row["difference"])) for row in group), Decimal(0))
+        total_reference = sum(
+            (max(abs(_amount(row["aimanager_amount"])), abs(_amount(row["ycapi_amount"])), Decimal(1)) for row in group),
+            Decimal(0),
+        )
+        return total_difference > max(amount_threshold, total_reference * rate_threshold)
+
+    return frozenset(group_key for group_key in group_keys if _is_material(group_key))
 
 
 def build_finance_export_bundle(

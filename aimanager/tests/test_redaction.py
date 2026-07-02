@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import json
 
-from aimanager.redaction import build_secret_redactions, contains_secret_like, sanitize_value
+from aimanager.redaction import (
+    build_secret_redactions,
+    contains_secret_like,
+    sanitize_text,
+    sanitize_value,
+)
 
 
 def test_sanitize_value_redacts_common_secret_shapes_and_secret_env_values() -> None:
@@ -88,3 +93,17 @@ def test_contains_secret_like_flags_structured_secrets_without_false_substrings(
     )
 
     assert not contains_secret_like("risk-control task-id myBearerLabel")
+
+
+def test_build_secret_redactions_registers_bare_wecom_webhook_key() -> None:
+    bare_key = "7f8b2c4a-1234-4def-9abc-0123456789ab"
+    redactions = build_secret_redactions(
+        {
+            "AIMANAGER_WECOM_WEBHOOK_URL": (
+                "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=" + bare_key
+            ),
+        }
+    )
+
+    assert redactions[bare_key] == "[redacted:AIMANAGER_WECOM_WEBHOOK_URL]"
+    assert sanitize_text(bare_key, redactions) == "[redacted:AIMANAGER_WECOM_WEBHOOK_URL]"

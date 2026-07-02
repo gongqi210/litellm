@@ -63,6 +63,7 @@ def test_capture_trial_evidence_omits_prompt_response_and_secret_values(tmp_path
             "AIMANAGER_LIGHTWEIGHT_TRIAL_EVIDENCE_FILE": str(output_file),
             "AIMANAGER_EMPLOYEE_MONITORING_RESULT_FILE": str(monitoring_file),
         },
+        generated_at="2026-06-30T10:05:00+08:00",
         production_readiness_collector=lambda **kwargs: _production_bundle(ac19_status="PASS"),
     )
     assert next(check for check in bundle["checks"] if check["id"] == "AC-23")["status"] == "PASS"

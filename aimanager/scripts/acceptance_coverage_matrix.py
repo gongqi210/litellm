@@ -491,13 +491,15 @@ def _load_local_test_results(path: Path | None) -> dict[str, object]:
         criterion_id = str(item.get("id") or "")
         if not criterion_id:
             continue
+        returncode = int(item.get("returncode") or 0)
+        status = _coerce_status(item.get("status"))
         criteria_by_id[criterion_id] = {
             "id": criterion_id,
-            "status": _coerce_status(item.get("status")),
+            "status": "FAIL" if status == "PASS" and returncode != 0 else status,
             "detail": str(item.get("detail") or ""),
             "targets": _string_list(item.get("targets")),
             "command": str(item.get("command") or ""),
-            "returncode": int(item.get("returncode") or 0),
+            "returncode": returncode,
         }
     return {
         "supplied": True,

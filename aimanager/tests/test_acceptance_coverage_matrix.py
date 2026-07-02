@@ -391,6 +391,50 @@ def test_acceptance_coverage_matrix_cli_writes_json_and_markdown(tmp_path, capsy
     assert "AC-POLICY" in output_markdown.read_text(encoding="utf-8")
 
 
+def test_acceptance_coverage_matrix_fails_local_test_result_pass_status_with_nonzero_returncode(tmp_path) -> None:
+    doc_file = tmp_path / "acceptance.md"
+    artifact = tmp_path / "test_contract.py"
+    local_results_file = tmp_path / "local-test-results.json"
+    artifact.write_text("# test placeholder\n", encoding="utf-8")
+    doc_file.write_text("| AC-99 | synthetic | test |\n", encoding="utf-8")
+    local_results_file.write_text(
+        json.dumps(
+            _local_test_results(
+                [
+                    {
+                        "id": "AC-99",
+                        "status": "PASS",
+                        "detail": "runner claimed success",
+                        "targets": ["test_contract.py"],
+                        "returncode": 1,
+                    }
+                ]
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    result = collect_acceptance_coverage_matrix(
+        acceptance_doc_file=doc_file,
+        project_directory=tmp_path,
+        local_test_results_file=local_results_file,
+        gate_registry=[
+            AcceptanceGate(
+                criterion_id="AC-99",
+                owner="qa",
+                gate_kind="runtime_smoke",
+                local_artifacts=("test_contract.py",),
+            )
+        ],
+        generated_at="2026-06-30T00:00:00Z",
+    )
+
+    assert result["status"] == "FAIL"
+    assert result["criteria"][0]["status"] == "FAIL"
+    assert result["criteria"][0]["local_test_result"]["status"] == "FAIL"
+    assert result["criteria"][0]["local_test_result"]["returncode"] == 1
+
+
 def _project_root():
     return __import__("pathlib").Path(__file__).resolve().parents[2]
 

@@ -244,6 +244,34 @@ def test_route_observability_alerts_cli_writes_dry_run_payload(tmp_path) -> None
     assert "aimanager_http_429_seen" not in payload["markdown"]["content"]
 
 
+def test_route_observability_alerts_ignores_laxer_report_declared_failure_rate_threshold() -> None:
+    result = route_observability_alerts(
+        report={
+            "metrics": {
+                "request_count": 100,
+                "failed_requests": 90,
+                "failure_rate": "0.900000",
+                "http_429_count": 0,
+                "http_5xx_count": 0,
+                "budget_blocked_count": 0,
+                "passthrough_blocked_count": 0,
+                "enforced_params_blocked_count": 0,
+                "missing_request_id_count": 0,
+            },
+            "alert_policy": {"failure_rate_alert_threshold": "0.950000"},
+            "alerts": [],
+        },
+        webhook_url="",
+        dry_run=True,
+    )
+
+    assert result.status == "FAIL"
+    assert result.alert_count == 0
+    assert result.delivered_count == 0
+    assert "metrics-derived alerts" in result.detail
+    assert "aimanager_failure_rate_high" in result.detail
+
+
 def _report_with_alerts() -> dict[str, Any]:
     return {
         "metrics": {
@@ -261,7 +289,7 @@ def _report_with_alerts() -> dict[str, Any]:
                 "code": "aimanager_failure_rate_high",
                 "severity": "high",
                 "value": "0.500000",
-                "threshold": "0.100000",
+                "threshold": "0.050000",
             },
             {
                 "code": "aimanager_http_429_seen",

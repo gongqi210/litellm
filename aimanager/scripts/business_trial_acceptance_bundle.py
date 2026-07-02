@@ -4,7 +4,7 @@ import argparse
 import json
 import os
 import sys
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Callable, Literal, Mapping, Sequence
@@ -31,6 +31,8 @@ from aimanager.scripts.validate_employee_monitoring_policy import _collect_resul
 
 ProductionReadinessCollector = Callable[..., dict[str, Any]]
 EmployeeMonitoringCollector = Callable[..., dict[str, object]]
+
+_TRIAL_EVIDENCE_MAX_AGE = timedelta(hours=24)
 
 ALLOWED_ENTRY_CHANNELS = {"wecom", "lightweight_web", "department_admin_form"}
 ALLOWED_IDENTITY_SOURCES = {"server_side_default", "sso", "wecom_sso", "vpn_sso", "reverse_proxy_sso"}
@@ -428,6 +430,14 @@ def _lightweight_trial_check(
             name="nontechnical_lightweight_trial",
             status="FAIL",
             detail="trial attestation.captured_at must not be after business trial generated_at",
+            evidence=_trial_safe_evidence(trial),
+        )
+    if generated_at - trial.attestation.captured_at > _TRIAL_EVIDENCE_MAX_AGE:
+        return CheckResult(
+            id="AC-23",
+            name="nontechnical_lightweight_trial",
+            status="FAIL",
+            detail="trial attestation.captured_at is stale relative to business trial generated_at",
             evidence=_trial_safe_evidence(trial),
         )
 

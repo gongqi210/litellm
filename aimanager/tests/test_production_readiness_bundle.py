@@ -1571,5 +1571,21 @@ def _employee_acknowledgment_files(tmp_path) -> tuple:
     return policy_file, roster_file, acknowledgment_file
 
 
+def test_production_policy_flags_shared_identity_across_duplicate_roles() -> None:
+    payload = _valid_policy_attestation()
+    payload["approvals"] = [
+        {"role": "finance", "approver": "Alice Chen", "approval_ref": "FIN-APPROVED"},
+        {"role": "security", "approver": "Alice Chen", "approval_ref": "SEC-APPROVED"},
+        {"role": "legal", "approver": "Bob Li", "approval_ref": "LEGAL-APPROVED"},
+        {"role": "finance", "approver": "Carol Wu", "approval_ref": "FIN-SECOND-APPROVED"},
+    ]
+
+    violations = production_readiness_bundle.production_policy_violations(
+        payload, reference_time=GENERATED_AT
+    )
+
+    assert "approvals.distinct_approvers" in violations
+
+
 def test_module_exports_main() -> None:
     assert production_readiness_bundle.main is main

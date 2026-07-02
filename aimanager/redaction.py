@@ -50,9 +50,12 @@ _COMMON_NON_SECRET_VALUES = {
     "yes",
 }
 
+_WECOM_WEBHOOK_KEY_CHARS = r"[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+"
 _WECOM_WEBHOOK_PATTERN = re.compile(
-    r"https://qyapi\.weixin\.qq\.com/cgi-bin/webhook/send\?key="
-    r"[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+"
+    r"https://qyapi\.weixin\.qq\.com/cgi-bin/webhook/send\?key=" + _WECOM_WEBHOOK_KEY_CHARS
+)
+_WECOM_WEBHOOK_KEY_PATTERN = re.compile(
+    r"https://qyapi\.weixin\.qq\.com/cgi-bin/webhook/send\?key=(" + _WECOM_WEBHOOK_KEY_CHARS + r")"
 )
 _BEARER_PATTERN = re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]+")
 _SECRET_KEY_PATTERN = re.compile(r"\bsk-[A-Za-z0-9._~-]+")
@@ -88,7 +91,15 @@ def build_secret_redactions(env: Mapping[str, str] | None) -> dict[str, str]:
         value = raw_value.strip() if isinstance(raw_value, str) else ""
         if _should_redact_env_value(value):
             redactions[value] = f"[redacted:{name}]"
+            webhook_key = _wecom_webhook_key(value)
+            if webhook_key and _should_redact_env_value(webhook_key):
+                redactions[webhook_key] = f"[redacted:{name}]"
     return redactions
+
+
+def _wecom_webhook_key(value: str) -> str:
+    match = _WECOM_WEBHOOK_KEY_PATTERN.fullmatch(value)
+    return match.group(1) if match else ""
 
 
 def sanitize_value(value: Any, redactions: Mapping[str, str] | None = None) -> Any:

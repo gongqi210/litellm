@@ -200,7 +200,7 @@ def validate_observability_report_alerts(report: dict[str, Any]) -> str:
         provided_alerts = _alerts(report)
         expected_alerts = derive_observability_alerts(
             _metrics(report),
-            failure_rate_alert_threshold=_failure_rate_alert_threshold(report),
+            failure_rate_alert_threshold=_validation_failure_rate_threshold(report),
         )
         alerts_match = _canonical_alerts(provided_alerts) == _canonical_alerts(expected_alerts)
     except ValueError as exc:
@@ -215,17 +215,17 @@ def validate_observability_report_alerts(report: dict[str, Any]) -> str:
     )
 
 
-def _failure_rate_alert_threshold(report: dict[str, Any]) -> Any:
+def _validation_failure_rate_threshold(report: dict[str, Any]) -> Decimal:
     policy = report.get("alert_policy")
     if isinstance(policy, dict):
-        threshold = policy.get("failure_rate_alert_threshold")
-        if threshold not in (None, ""):
-            return threshold
-    for alert in _alerts(report):
-        if _text(alert.get("code"), default="") == "aimanager_failure_rate_high":
-            threshold = alert.get("threshold")
-            if threshold not in (None, ""):
-                return threshold
+        declared = policy.get("failure_rate_alert_threshold")
+        if declared not in (None, ""):
+            try:
+                parsed = Decimal(str(declared))
+            except (InvalidOperation, ValueError, TypeError):
+                return DEFAULT_FAILURE_RATE_ALERT_THRESHOLD
+            if parsed.is_finite() and Decimal(0) <= parsed <= DEFAULT_FAILURE_RATE_ALERT_THRESHOLD:
+                return parsed
     return DEFAULT_FAILURE_RATE_ALERT_THRESHOLD
 
 

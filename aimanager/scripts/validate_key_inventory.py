@@ -310,6 +310,9 @@ def _active_key_violations(
         if _is_missing(metadata.get(field_name)):
             missing_fields.append(f"metadata.{field_name}")
 
+    if "user_id" not in missing_fields and not _text_value(key.get("user_id")):
+        missing_fields.append("user_id")
+
     if missing_fields:
         violations.append(
             {

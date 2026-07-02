@@ -332,6 +332,8 @@ def _permission_boundary(value: object) -> dict[str, object]:
             errors.append(f"permission_boundary.allowed_review_roles.{role}")
         if role not in _ALLOWED_REVIEW_ROLES:
             errors.append(f"permission_boundary.allowed_review_roles.unknown.{role}")
+    for role in sorted(set(allowed_roles) & set(prohibited_roles)):
+        errors.append(f"permission_boundary.contradiction.{role}")
     if not allowed_roles:
         errors.append("permission_boundary.allowed_review_roles")
     if "audit" not in allowed_roles:

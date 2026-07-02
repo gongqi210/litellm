@@ -316,6 +316,20 @@ def test_employee_monitoring_cli_blocks_when_acknowledgment_file_is_missing(tmp_
     assert result["detail"] == "missing acknowledgment file"
 
 
+def test_employee_monitoring_rejects_role_in_both_allowed_and_prohibited() -> None:
+    policy = _policy()
+    policy["permission_boundary"]["prohibited_roles"] = ["direct_manager", "hr"]
+
+    result = validate_employee_monitoring_controls(
+        policy=policy,
+        employee_roster=_employee_roster(),
+        acknowledgments=_acknowledgments(),
+    )
+
+    assert result["status"] == "FAIL"
+    assert "permission_boundary.contradiction.hr" in result["errors"]
+
+
 def _policy() -> dict[str, object]:
     return {
         "policy_id": "aimanager-employee-monitoring-v1",

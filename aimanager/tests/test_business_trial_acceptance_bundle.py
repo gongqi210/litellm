@@ -78,10 +78,12 @@ def test_ac23_valid_trial_requires_same_run_live_ycapi_pass(tmp_path) -> None:
 
     pass_bundle = collect_business_trial_acceptance(
         env=env,
+        generated_at="2026-06-30T10:05:00+08:00",
         production_readiness_collector=lambda **kwargs: _production_bundle(ac19_status="PASS"),
     )
     blocked_bundle = collect_business_trial_acceptance(
         env=env,
+        generated_at="2026-06-30T10:05:00+08:00",
         production_readiness_collector=lambda **kwargs: _production_bundle(ac19_status="BLOCKED"),
     )
 
@@ -194,6 +196,7 @@ def test_ac23_accepts_customer_context_without_project(tmp_path) -> None:
             "AIMANAGER_LIGHTWEIGHT_TRIAL_EVIDENCE_FILE": str(trial_file),
             "AIMANAGER_EMPLOYEE_MONITORING_RESULT_FILE": str(monitoring_file),
         },
+        generated_at="2026-06-30T10:05:00+08:00",
         production_readiness_collector=lambda **kwargs: _production_bundle(ac19_status="PASS"),
     )
 
@@ -332,6 +335,27 @@ def test_business_trial_acceptance_cli_writes_json_and_returns_blocked(monkeypat
     bundle = json.loads(output_file.read_text(encoding="utf-8"))
     assert bundle["status"] == "BLOCKED"
     assert {"AC-23", "AC-26"}.issubset({check["id"] for check in bundle["checks"]})
+
+
+def test_ac23_rejects_trial_evidence_older_than_max_age(tmp_path) -> None:
+    trial_file = tmp_path / "trial.json"
+    monitoring_file = tmp_path / "monitoring.json"
+    trial_file.write_text(json.dumps(_valid_trial_evidence()), encoding="utf-8")
+    monitoring_file.write_text(json.dumps(_monitoring_result("PASS")), encoding="utf-8")
+
+    bundle = collect_business_trial_acceptance(
+        env={
+            "AIMANAGER_LIGHTWEIGHT_TRIAL_EVIDENCE_FILE": str(trial_file),
+            "AIMANAGER_EMPLOYEE_MONITORING_RESULT_FILE": str(monitoring_file),
+        },
+        generated_at="2026-07-02T10:06:00+08:00",
+        production_readiness_collector=lambda **kwargs: _production_bundle(ac19_status="PASS"),
+    )
+
+    ac23 = next(check for check in bundle["checks"] if check["id"] == "AC-23")
+    assert ac23["status"] == "FAIL"
+    assert "stale" in ac23["detail"]
+    assert bundle["status"] == "FAIL"
 
 
 def _production_bundle(*, ac19_status: str, ac19_detail: str = "live ycapi preflight completed") -> dict[str, object]:

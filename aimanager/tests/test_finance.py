@@ -335,3 +335,32 @@ def test_finance_export_bundle_contains_usage_monthly_and_reconciliation_rows() 
     assert reconciliation_row["difference"] == Decimal("0.10")
     assert reconciliation_row["currency"] == "CNY"
     assert reconciliation_row["status"] == "matched"
+
+
+def test_reconcile_monthly_usage_escalates_systematic_underbill_below_per_row_floor() -> None:
+    aimanager_rows = [
+        {
+            "month": "2026-06",
+            "model": f"ycapi-model-{index}",
+            "endpoint": f"/v1/chat/completions/{index}",
+            "spend": Decimal("100.00"),
+            "currency": "CNY",
+        }
+        for index in range(12)
+    ]
+    ycapi_rows = [
+        {
+            "month": "2026-06",
+            "model": f"ycapi-model-{index}",
+            "endpoint": f"/v1/chat/completions/{index}",
+            "spend": Decimal("91.00"),
+            "currency": "CNY",
+        }
+        for index in range(12)
+    ]
+
+    rows = reconcile_monthly_usage(aimanager_rows, ycapi_rows)
+
+    assert len(rows) == 12
+    assert all(abs(row["difference"]) == Decimal("9.00") for row in rows)
+    assert all(row["status"] == "needs_review" for row in rows)

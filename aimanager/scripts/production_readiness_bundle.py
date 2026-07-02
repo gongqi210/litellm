@@ -747,12 +747,20 @@ def production_policy_violations(
     for required_role in ("finance", "security", "legal"):
         if required_role not in approval_roles:
             violations.append(f"approvals.{required_role}")
-    required_approver_identities = {
-        _text(approval.get("role")): _normalized_identity(approval.get("approver"))
-        for approval in approvals
-        if _text(approval.get("role")) in {"finance", "security", "legal"}
+    identities_by_role = {
+        role: frozenset(
+            identity
+            for approval in approvals
+            if _text(approval.get("role")) == role and (identity := _normalized_identity(approval.get("approver")))
+        )
+        for role in ("finance", "security", "legal")
     }
-    if len({approver for approver in required_approver_identities.values() if approver}) < 3:
+    distinct_identities = frozenset[str]().union(*identities_by_role.values())
+    shares_identity_across_roles = any(
+        identities_by_role[left] & identities_by_role[right]
+        for left, right in (("finance", "security"), ("finance", "legal"), ("security", "legal"))
+    )
+    if len(distinct_identities) < 3 or shares_identity_across_roles:
         violations.append("approvals.distinct_approvers")
     for index, approval in enumerate(approvals):
         for key in ("role", "approver", "approval_ref"):

@@ -427,6 +427,40 @@ def test_key_inventory_fails_non_boolean_shared_key_marker(tmp_path) -> None:
     ]
 
 
+def test_key_inventory_fails_non_string_user_id_bypassing_employee_cross_check(tmp_path) -> None:
+    inventory_file = tmp_path / "keys.json"
+    policy_file, roster_file, acknowledgment_file = _employee_acknowledgment_files(tmp_path)
+    key = _governed_key("nonstring-user-id-key", user_id="u_market_1", department_id="dept_market")
+    key["user_id"] = 999
+    inventory_file.write_text(
+        json.dumps(
+            {
+                "keys": [key],
+                **_trusted_export_metadata(expected_total_key_count=1),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = collect_key_inventory_validation(
+        inventory_file=inventory_file,
+        employee_monitoring_policy_file=policy_file,
+        employee_roster_file=roster_file,
+        acknowledgment_file=acknowledgment_file,
+        require_acknowledged_employees=True,
+        generated_at=GENERATED_AT,
+    )
+
+    assert result["status"] == "FAIL"
+    governance_violations = [
+        violation
+        for violation in result["violations"]
+        if violation["reason"] == "active key is missing required governance fields"
+    ]
+    assert governance_violations, result["violations"]
+    assert "user_id" in governance_violations[0]["fields"]
+
+
 def _governed_key(
     key_alias: str,
     *,
